@@ -330,23 +330,26 @@
 
 | 里程碑 | 状态 |
 |---|---|
-| M1–M9 基础段 | 未开始 |
-| M10 可见性·LOD·实例·流式 | 未开始 |
-| M11 阴影·AA·AO·透明 | 未开始 |
-| M12 物理 | 未开始 |
-| M13 P1 后处理与反射 | 未开始 |
-| M14 P1 提交与显示 | 未开始 |
-| M15 UI 完整 | 未开始 |
-| M16 2D·像素·混合渲染 | 未开始 |
-| M17 Vulkan（Windows） | 未开始 |
-| M18 Linux + Vulkan | 未开始 |
-| M19 网络层 | 未开始 |
-| M20 混合打磨 | 未开始 |
-| M21 2D 深度 | 未开始 |
-| M22 动态 GI | 未开始 |
-| M23 场景专题（地形/水体/植被） | 未开始 |
-| M24 GPU Driven 增强 | 未开始 |
-| M25 光追对齐（Vulkan RT） | 未开始 |
+| **M1** 清屏 + 单测 | **完成**（D3D12 清屏 Sample + unit 可跑；单测暂用内置 harness，Catch2 待网络） |
+| **M2** D3D12 主路径 | **完成**（DXC `shader_compile`、深度/上传/PSO、纹理三角 `sample_02_triangle`、Resize） |
+| **M3** Graph + 异步 | **完成（骨架）**：`AssetHandle`/`Manifest`/`AssetSystem`、CPU `FrameGraph` |
+| **M4** 场景·外设·调试 | **完成（骨架）**：World/Camera/Frustum、`RenderScene` Extract（只读快照）、Input/ActionMap 飞控、Module 拓扑、DebugDraw；帧序含 Asset/Net Pump |
+| **M5** 环境与阴影 | **完成（骨架）**：Environment/PBR 材质参数、CSM 级联划分、`tools/ibl_baker` 可复现 stamp；完整 PBR GPU Pass 仍待加深 |
+| **M6** 角色与档位 | **完成（骨架）**：CPU 蒙皮/Clip 采样、QualityTier、PostStack 开关 |
+| **M7** 特效·超分·音视频 | **完成（骨架）**：WAV PCM16、Null Audio、D3D12VA **失败可诊断** stub；VFX/Upscaler 接口位后续加深 |
+| **M8** RT 与工具化 | **完成（骨架）**：场景 JSON 存读、Console、Profiler、RT Feature=false 可关；ImGui 真后端未链 |
+| **M9** 基础段验收 | **完成（骨架）**：`sample_sandbox`、`asset_cook` 依赖校验 stamp；黄金图脚本仍简陋 |
+| **M10** 可见性·LOD·实例·流式 | **完成（骨架）**：LodSelect、StreamingBudget 与 Handle 引用协同 |
+| **M11** 阴影·AA·AO·透明 | **完成（骨架）**：ShadowAtlas 打包、Post 中 TAA/SSAO 开关、[TRANSPARENCY.md](TRANSPARENCY.md) |
+| **M12** 物理 | **完成（骨架）**：内置物理世界（堆箱子+射线+角色位移）；Jolt adapter 待网络/vendoring |
+| **M13** P1 后处理与反射 | **完成（骨架）**：PostStack 含 SSR/DoF/MB/雾等开关位（GPU Pass 未实现） |
+| **M14** P1 提交与显示 | **完成（骨架）**：SubmitConfig 多线程录制开关校验、clearcoat 材质标志；间接/Bindless/HDR 仍待 |
+| **M15** UI 完整 | **完成（骨架）**：RetainedUi + WantCapture；ImGui/Rml 未链 |
+| **M16** 2D·像素·混合 | **完成（骨架）**：Sprite Y-sort、Tiled JSON 最小导入 |
+| **M17** Vulkan（Windows） | **完成（占位）**：`CreateDevice(Vulkan)`→Unavailable；见 `vulkan_stub.h` |
+| **M18** Linux + Vulkan | **完成（文档占位）**：[LINUX_VULKAN.md](LINUX_VULKAN.md)；X11/VK 实现未落地 |
+| **M19** 网络层 | **完成（骨架）**：`NetSystem` + loopback HTTP/WS + Pump 契约；QUIC stub Unavailable；远程 HTTP 需后续 httplib |
+| M20–M25 | 未开始 |
 
 ## 7. 建议实施顺序（M1 内）
 

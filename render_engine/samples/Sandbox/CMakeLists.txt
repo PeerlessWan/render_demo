@@ -1,0 +1,4 @@
+cmake_minimum_required(VERSION 3.24)
+add_executable(sample_sandbox main.cpp)
+target_link_libraries(sample_sandbox PRIVATE engine_app engine_physics engine_media engine_post engine_net)
+target_compile_features(sample_sandbox PRIVATE cxx_std_20)

@@ -33,18 +33,21 @@
 | 项 | 约定 |
 |---|---|
 | 语言 | **C++20**（无特殊理由不降到 C++17 以下） |
+| 风格基线 | **[Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html)**（格式以 clang-format 为准） |
 | 编译器 | Windows：**MSVC**（与目标 SDK 对齐）；Linux：**GCC 或 Clang**（版本在 CMake 中写明下限） |
 | 字符集 | 源文件与文档 **UTF-8**；禁止提交 UTF-16 源/文档 |
-| 格式化 | 统一 clang-format（实现阶段加入仓库配置）；PR 须格式一致 |
+| 格式化 | 工作区根 [`.clang-format`](../../.clang-format)：`BasedOnStyle: Google`；PR 须 `clang-format` 一致 |
+| 头/源扩展名 | 头文件一律 **`.h`**；实现 **`.cpp`**。**禁止 `.hpp` / `.cc` / `.cxx`**（新代码与存量均按此统一） |
 | 静态检查 | 开启合理 Warning 为错误（逐步收紧）；禁止无理由关闭告警 |
 
 ### 1.2 风格要点
 
+- **与 Google 对齐的要点**：2 空格缩进（由 clang-format 执行）、左对齐指针/`&`、短函数/控制流规则以 `.clang-format` 为准。  
 - **RAII**：资源用智能指针 / 引擎句柄；禁止裸 `new`/`delete` 散落业务路径（adapters 内若必须，立即包进 RAII）。  
 - **所有权**：函数参数用 `T*`/`T&` 表示非拥有；拥有用 `std::unique_ptr` / 引擎 `Handle`；共享所有权需书面理由。  
-- **头文件**：公开头自洽、最小依赖；禁止在公开头拉三方或 `windows.h`/`vulkan.h`/`d3d12.h`。  
-- **include 顺序**：对应头 → 工程公开头 → 其它工程头 → 标准库 → 三方（仅 `.cpp` / adapters）。  
-- **禁止**：在头文件中 `using namespace`；异常作为常规控制流（见 §5）；隐式窄化转换。  
+- **头文件**：扩展名 **`.h`**；公开头自洽、最小依赖；禁止在公开头拉三方或 `windows.h`/`vulkan.h`/`d3d12.h`。  
+- **include 顺序**：对应头 → 工程公开头 → 其它工程头 → 标准库 → 三方（仅 `.cpp` / adapters）。`SortIncludes` 当前关闭，人工保持上述顺序。  
+- **禁止**：在头文件中 `using namespace`；异常作为常规控制流（见 §5）；隐式窄化转换；**新增 `.hpp` 头文件**。  
 - **const / [[nodiscard]]**：查询与易误用返回值加 `[[nodiscard]]`；能 const 则 const。  
 - **宏**：优先 `constexpr` / 内联；宏仅用于平台/特性门控，名称带 `ENGINE_` 前缀。
 
@@ -62,6 +65,7 @@
 | 静默吞掉错误（空 `catch`、忽略 `HRESULT`/`VkResult`） | 不可诊断 |
 | 全局可变单例扩散（除明确的 `Application`/`Log` 入口） | 隐式耦合 |
 | 在头文件定义非模板重逻辑 | 编译膨胀与循环依赖 |
+| 使用 `.hpp`（或 `.cc`/`.cxx`） | 统一 Google 惯例：头 `.h`、源 `.cpp` |
 
 ---
 
@@ -153,18 +157,22 @@ Sample / 产品 Module
 
 ## 4. 命名与目录
 
-### 4.1 命名
+### 4.1 命名（Google C++ Style）
 
 | 种类 | 约定 | 例 |
 |---|---|---|
-| 类型 | `PascalCase` | `RenderSystem`、`TextureDesc` |
-| 函数/方法 | `PascalCase` 或 `camelCase`（实现前选定一种并全局统一） | 推荐公开 API **PascalCase** |
-| 变量 | `camelCase` | `frameIndex` |
-| 成员 | `m_` 前缀或尾下划线（选定一种） | `m_device` |
-| 常量/枚举 | `k` 前缀或枚举名嵌套 | `kMaxFramesInFlight`、`Feature::RayTracing` |
-| 接口 | `I` 前缀 | `IModule`、`IHttpClient` |
-| 文件 | 与主类型同名 | `RenderSystem.h/.cpp` |
-| 命名空间 | `engine::` 及子空间 | `engine::rhi`、`engine::net` |
+| 文件 | **全小写 + 下划线** `snake_case`；头 `.h`、源 `.cpp` | `path_resolver.h`、`d3d12_device.cpp` |
+| 类型 | `PascalCase` | `RenderSystem`、`TextureDesc`、`ColorRgba` |
+| 函数 / 方法 | `PascalCase`（动词短语） | `BeginFrame`、`PumpEvents`、`Create` |
+| 访问器 / 简单互变 | 可按变量风格 `snake_case` | `width()`、`set_clear_color()`、`ok()` |
+| 变量 | `snake_case` | `frame_index`、`native_window` |
+| 成员变量 | `snake_case` + **尾下划线** | `device_`、`frame_index_` |
+| 常量 | `k` + `PascalCase` | `kMaxFramesInFlight`、`kFrameCount` |
+| 枚举器 | `PascalCase`（`enum class`） | `ErrorCode::InvalidArgument` |
+| 接口 | `I` 前缀 | `IModule`、`IDevice`、`IHttpClient` |
+| 命名空间 | 全小写，可用下划线 | `engine`、`engine::rhi` |
+
+> 与 [Google C++ Style — Naming](https://google.github.io/styleguide/cppguide.html#Naming) 对齐；格式化仍以 [`.clang-format`](../../.clang-format) 为准。
 
 ### 4.2 目录
 

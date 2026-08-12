@@ -1,0 +1,28 @@
+# C++ / CMake / IDE
+build/
+out/
+cmake-build-*/
+.vs/
+.vscode/
+*.user
+*.suo
+*.sdf
+*.opensdf
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# Artifacts
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+*.exp
+*.log
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -115,7 +115,7 @@
 
 | 里程碑 | 可引入的三方 |
 |---|---|
-| M1–M2 | DXC（着色器，**M2 强制**）、（可选）stb_image、fmt；**Catch2**（FetchContent 推荐）；shader_compile 工具 |
+| M1–M2 | DXC（着色器，**M2 强制**）、（可选）stb_image、fmt；**Catch2**（FetchContent 推荐；**M1 暂用** `tests/unit/mini_test.h`）；shader_compile 工具 |
 | M3–M5 | cgltf/fastgltf；**ibl_baker**；纹理压缩可用 **DirectXTex**；asset 清单约定 |
 | M6–M8 | DLSS + FSR；音频（解码+输出）；**lightmap_baker** |
 | M8 / M15 | Dear ImGui；RmlUi（M15） |
@@ -135,6 +135,7 @@
 
 | 库 | 版本 | 许可证 | 动态/静态 | 再分发注意 |
 |---|---|---|---|---|
+| mini_test（自研） | M1 | 本仓库 | 头文件 | 临时单测 harness；计划替换为 Catch2 |
 | Jolt | TBD | TBD | TBD | |
 | Dear ImGui | TBD | MIT | TBD | |
 | RmlUi | TBD | TBD | TBD | |

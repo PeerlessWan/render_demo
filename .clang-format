@@ -1,0 +1,7 @@
+# Google C++ Style (clang-format). See also render_engine/docs/STANDARDS.md §1.
+BasedOnStyle: Google
+# Project overrides (keep close to Google; change only with STANDARDS update)
+ColumnLimit: 100
+SortIncludes: false
+IncludeBlocks: Preserve
+ReflowComments: false

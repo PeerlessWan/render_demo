@@ -20,9 +20,9 @@
 
 ```text
 include/engine/
-  Application.hpp
-  Module.hpp
-  Result.hpp
+  application.h
+  module.h
+  result.h
   …
 ```
 

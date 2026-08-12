@@ -86,9 +86,9 @@ ctest --test-dir build -C Debug -R unit --output-on-failure
 
 ## 5. 文档回写（做完勾选）
 
-- [ ] [PLAN.md](PLAN.md) §6：M1 标为进行中/完成  
+- [x] [PLAN.md](PLAN.md) §6：M1 标为完成  
 - [ ] [learn/PATH.md](learn/PATH.md) CH00/CH01 可指向真实路径  
-- [ ] 若 Catch2 引入方式定稿 → 填 [THIRD_PARTY.md](THIRD_PARTY.md) 许可表一行  
+- [x] 单测：M1 使用内置 `tests/unit/mini_test.h`（GitHub 不可达时）；Catch2 接入后填 [THIRD_PARTY.md](THIRD_PARTY.md) 许可表  
 
 ## 6. 相关
 
