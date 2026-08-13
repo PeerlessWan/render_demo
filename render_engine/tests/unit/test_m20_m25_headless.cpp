@@ -10,6 +10,7 @@
 #include "engine/rhi/backend.h"
 #include "engine/rhi/i_device.h"
 #include "engine/terrain/heightmap.h"
+#include "engine/vfx/particles.h"
 
 #include <cmath>
 
@@ -119,6 +120,20 @@ TEST_CASE("Heightmap sample and vegetation", "[m23]") {
   const auto veg = engine::terrain::ScatterVegetation(map, 0.5f, 1);
   REQUIRE_FALSE(veg.empty());
   REQUIRE(engine::terrain::SelectTerrainLod(5.f, {10.f, 40.f}) == 0);
+  const auto mesh = engine::terrain::BuildTerrainMesh(map, {0, 0, 0});
+  REQUIRE(mesh.positions.size() == 4 * 4 * 3);
+  REQUIRE(mesh.indices.size() == 3 * 3 * 6);
+}
+
+TEST_CASE("CPU particle emitter steps and expires", "[m7][vfx]") {
+  engine::vfx::ParticleEmitter em;
+  em.Configure({0, 1, 0}, 0.f, 0.5f);
+  em.EmitBurst(8);
+  REQUIRE(em.particles().size() == 8);
+  for (int i = 0; i < 20; ++i) {
+    em.Step(0.1f);
+  }
+  REQUIRE(em.particles().empty());
 }
 
 TEST_CASE("GPU driven path selection", "[m24]") {

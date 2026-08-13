@@ -32,4 +32,14 @@ struct VegetationInstance {
 std::vector<VegetationInstance> ScatterVegetation(const Heightmap& map, float water_level,
                                                   int stride);
 
+struct TerrainMesh {
+  std::vector<float> positions;  // xyz packed
+  std::vector<float> normals;    // xyz packed
+  std::vector<float> uvs;        // uv packed
+  std::vector<std::uint32_t> indices;
+};
+
+// Build a simple grid mesh from height samples (M23 deepen).
+TerrainMesh BuildTerrainMesh(const Heightmap& map, const Vec3& world_origin);
+
 }  // namespace engine::terrain

@@ -189,6 +189,7 @@ class D3D12Device final : public IDevice {
   }
 
   Status Clear(const ColorRgba& color) override {
+    last_clear_ = color;
     const auto index = swapchain_->GetCurrentBackBufferIndex();
     const D3D12_CPU_DESCRIPTOR_HANDLE rtv{rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
                                           static_cast<SIZE_T>(index) * rtv_descriptor_size_};
@@ -243,14 +244,88 @@ class D3D12Device final : public IDevice {
   Status ReadbackTextureStub(std::vector<std::uint8_t>& out_rgba, int& w, int& h) override {
     w = static_cast<int>(width_);
     h = static_cast<int>(height_);
-    out_rgba.assign(static_cast<std::size_t>(w * h * 4), 0);
-    // Stub: solid dark blue (matches typical clear) for pipeline smoke.
-    for (int i = 0; i < w * h; ++i) {
-      out_rgba[static_cast<std::size_t>(i * 4 + 0)] = 13;
-      out_rgba[static_cast<std::size_t>(i * 4 + 1)] = 18;
-      out_rgba[static_cast<std::size_t>(i * 4 + 2)] = 26;
-      out_rgba[static_cast<std::size_t>(i * 4 + 3)] = 255;
+    if (w <= 0 || h <= 0 || !swapchain_ || !command_list_ || !device_) {
+      return Status::Fail("Readback: device not ready");
     }
+    if (auto st = EnsureColorReadbackBuffer(); !st) {
+      return st;
+    }
+
+    const auto bb_index = swapchain_->GetCurrentBackBufferIndex();
+    auto* backbuffer = backbuffers_[bb_index].Get();
+    Transition(backbuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    UINT num_rows = 0;
+    UINT64 row_size = 0;
+    UINT64 total = 0;
+    const D3D12_RESOURCE_DESC src_desc = backbuffer->GetDesc();
+    device_->GetCopyableFootprints(&src_desc, 0, 1, 0, &footprint, &num_rows, &row_size, &total);
+
+    D3D12_TEXTURE_COPY_LOCATION dst{};
+    dst.pResource = color_readback_.Get();
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    dst.PlacedFootprint = footprint;
+    D3D12_TEXTURE_COPY_LOCATION src{};
+    src.pResource = backbuffer;
+    src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    src.SubresourceIndex = 0;
+    command_list_->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    Transition(backbuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+    if (FAILED(command_list_->Close())) {
+      return Status::Fail("Readback Close failed");
+    }
+    ID3D12CommandList* lists[] = {command_list_.Get()};
+    queue_->ExecuteCommandLists(1, lists);
+    WaitGpu();
+
+    const std::size_t pixels = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    out_rgba.assign(pixels * 4, 0);
+    void* mapped = nullptr;
+    D3D12_RANGE range{0, static_cast<SIZE_T>(total)};
+    if (FAILED(color_readback_->Map(0, &range, &mapped)) || !mapped) {
+      return Status::Fail("Readback Map failed");
+    }
+    const auto* src_bytes = static_cast<const std::uint8_t*>(mapped);
+    const std::size_t pitch = footprint.Footprint.RowPitch;
+    for (int y = 0; y < h; ++y) {
+      const auto* row = src_bytes + static_cast<std::size_t>(y) * pitch;
+      for (int x = 0; x < w; ++x) {
+        const std::size_t di = (static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+                                static_cast<std::size_t>(x)) *
+                               4;
+        // DXGI_FORMAT_R8G8B8A8_UNORM
+        out_rgba[di + 0] = row[x * 4 + 0];
+        out_rgba[di + 1] = row[x * 4 + 1];
+        out_rgba[di + 2] = row[x * 4 + 2];
+        out_rgba[di + 3] = row[x * 4 + 3];
+      }
+    }
+    color_readback_->Unmap(0, nullptr);
+
+    const auto frame = frame_index_;
+    if (FAILED(allocators_[frame]->Reset())) {
+      return Status::Fail("Readback allocator Reset failed");
+    }
+    if (FAILED(command_list_->Reset(allocators_[frame].Get(), nullptr))) {
+      return Status::Fail("Readback command list Reset failed");
+    }
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtv{rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
+                                          static_cast<SIZE_T>(bb_index) * rtv_descriptor_size_};
+    if (dsv_) {
+      const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_heap_->GetCPUDescriptorHandleForHeapStart();
+      command_list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+    } else {
+      command_list_->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+    }
+    D3D12_VIEWPORT vp{};
+    vp.Width = static_cast<float>(width_);
+    vp.Height = static_cast<float>(height_);
+    vp.MaxDepth = 1.f;
+    command_list_->RSSetViewports(1, &vp);
+    D3D12_RECT scissor{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
+    command_list_->RSSetScissorRects(1, &scissor);
     return Status::Ok();
   }
 
@@ -2877,6 +2952,46 @@ class D3D12Device final : public IDevice {
     }
   }
 
+  Status EnsureColorReadbackBuffer() {
+    if (color_readback_ && color_readback_w_ == width_ && color_readback_h_ == height_) {
+      return Status::Ok();
+    }
+    color_readback_.Reset();
+    color_readback_w_ = width_;
+    color_readback_h_ = height_;
+    D3D12_RESOURCE_DESC src{};
+    src.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    src.Width = width_;
+    src.Height = height_;
+    src.DepthOrArraySize = 1;
+    src.MipLevels = 1;
+    src.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    src.SampleDesc.Count = 1;
+    src.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    UINT64 total = 0;
+    device_->GetCopyableFootprints(&src, 0, 1, 0, &footprint, nullptr, nullptr, &total);
+
+    D3D12_HEAP_PROPERTIES heap{};
+    heap.Type = D3D12_HEAP_TYPE_READBACK;
+    D3D12_RESOURCE_DESC buf{};
+    buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    buf.Width = total;
+    buf.Height = 1;
+    buf.DepthOrArraySize = 1;
+    buf.MipLevels = 1;
+    buf.SampleDesc.Count = 1;
+    buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    const HRESULT hr =
+        device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buf,
+                                         D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                         IID_PPV_ARGS(&color_readback_));
+    if (FAILED(hr)) {
+      return Status::Fail("Create color readback failed: " + HrToString(hr));
+    }
+    return Status::Ok();
+  }
+
   Status CreateGpuTimestampResources() {
     D3D12_QUERY_HEAP_DESC qh{};
     qh.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
@@ -3006,6 +3121,10 @@ class D3D12Device final : public IDevice {
   std::array<MeshSlotGpu, kMaxMeshSlots> mesh_slots_{};
   ComPtr<ID3D12Resource> scene_color_;
   ComPtr<ID3D12Resource> history_;
+  ComPtr<ID3D12Resource> color_readback_;
+  std::uint32_t color_readback_w_ = 0;
+  std::uint32_t color_readback_h_ = 0;
+  ColorRgba last_clear_{0.14f, 0.16f, 0.20f, 1.f};
   ComPtr<ID3D12Resource> vertex_buffer_;
   ComPtr<ID3D12Resource> texture_;
   ComPtr<ID3D12Resource> texture_upload_;

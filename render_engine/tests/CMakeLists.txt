@@ -29,6 +29,7 @@ target_link_libraries(engine_unit_tests PRIVATE
   engine_mixed
   engine_gi
   engine_terrain
+  engine_vfx
   engine_gpu_driven
   engine_rt
   engine_app

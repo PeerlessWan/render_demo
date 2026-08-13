@@ -31,6 +31,8 @@ class IPhysicsWorld {
   virtual RayHit Raycast(const Vec3& origin, const Vec3& dir, float max_dist) const = 0;
   virtual Status MoveCharacter(int body_id, const Vec3& displacement) = 0;
   [[nodiscard]] virtual Vec3 body_position(int body_id) const = 0;
+  [[nodiscard]] virtual Vec3 body_half_extents(int body_id) const = 0;
+  [[nodiscard]] virtual int body_count() const = 0;
   [[nodiscard]] virtual const char* backend_name() const = 0;
 };
 

@@ -268,7 +268,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       q.y0 = s.position.y;
       q.x1 = s.position.x + s.size.x;
       q.y1 = s.position.y + s.size.y;
-      q.color = {0.2f, 0.85f, 0.35f, 0.9f};
+      q.color = s.color;
       quads.push_back(q);
     }
   }

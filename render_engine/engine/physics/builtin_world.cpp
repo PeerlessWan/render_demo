@@ -110,6 +110,15 @@ class BuiltinWorld final : public IPhysicsWorld {
     return bodies_[static_cast<std::size_t>(body_id)].position;
   }
 
+  Vec3 body_half_extents(int body_id) const override {
+    if (body_id < 0 || body_id >= static_cast<int>(bodies_.size())) {
+      return {};
+    }
+    return bodies_[static_cast<std::size_t>(body_id)].half_extents;
+  }
+
+  int body_count() const override { return static_cast<int>(bodies_.size()); }
+
   const char* backend_name() const override { return "builtin"; }
 
  private:

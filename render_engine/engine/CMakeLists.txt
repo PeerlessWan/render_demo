@@ -231,6 +231,12 @@ add_library(engine_terrain STATIC
 target_include_directories(engine_terrain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_terrain PUBLIC engine_core)
 
+add_library(engine_vfx STATIC
+  vfx/particles.cpp
+)
+target_include_directories(engine_vfx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(engine_vfx PUBLIC engine_core)
+
 add_library(engine_gpu_driven STATIC
   gpu_driven/path.cpp
 )

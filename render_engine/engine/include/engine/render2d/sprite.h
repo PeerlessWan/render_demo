@@ -17,6 +17,7 @@ struct Sprite {
   int sort_layer = 0;
   float sort_y = 0.f;
   bool nearest = true;
+  ColorRgba color{0.2f, 0.85f, 0.35f, 0.9f};
 };
 
 struct TilemapLayer {

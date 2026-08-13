@@ -68,6 +68,18 @@ material::PbrMaterial ResolveMeshMaterial(std::string_view mesh_id) {
     m.mesh_slot = 1;
     m.tex_slot = 1;
     m.uv_scale = 1.f;
+  } else if (mesh_id == "terrain") {
+    m.base_color = {0.35f, 0.55f, 0.28f, 1.f};
+    m.roughness = 0.92f;
+    m.metallic = 0.f;
+    m.mesh_slot = 2;
+    m.uv_scale = 1.f;
+  } else if (mesh_id == "morph") {
+    m.base_color = {0.95f, 0.55f, 0.35f, 1.f};
+    m.roughness = 0.35f;
+    m.metallic = 0.1f;
+    m.mesh_slot = 3;
+    m.uv_scale = 1.f;
   } else {
     m.base_color = {1.f, 1.f, 1.f, 1.f};
     m.roughness = 0.4f;

@@ -188,7 +188,7 @@ class JoltWorld final : public IPhysicsWorld {
       return -1;
     }
     body_ids_.push_back(id);
-    half_extents_y_.push_back(desc.half_extents.y);
+    half_extents_.push_back(desc.half_extents);
     return index;
   }
 
@@ -246,7 +246,7 @@ class JoltWorld final : public IPhysicsWorld {
     }
     const JPH::RVec3 cur = bodies.GetPosition(id);
     float y = static_cast<float>(cur.GetY()) + displacement.y;
-    const float floor_y = half_extents_y_[static_cast<std::size_t>(body_id)];
+    const float floor_y = half_extents_[static_cast<std::size_t>(body_id)].y;
     if (y < floor_y) {
       y = floor_y;
     }
@@ -266,6 +266,15 @@ class JoltWorld final : public IPhysicsWorld {
             static_cast<float>(p.GetZ())};
   }
 
+  Vec3 body_half_extents(int body_id) const override {
+    if (body_id < 0 || body_id >= static_cast<int>(body_ids_.size())) {
+      return {};
+    }
+    return half_extents_[static_cast<std::size_t>(body_id)];
+  }
+
+  int body_count() const override { return static_cast<int>(body_ids_.size()); }
+
   const char* backend_name() const override { return "jolt"; }
 
  private:
@@ -276,7 +285,7 @@ class JoltWorld final : public IPhysicsWorld {
   std::unique_ptr<JPH::TempAllocatorImpl> temp_allocator_;
   std::unique_ptr<JPH::JobSystemSingleThreaded> job_system_;
   std::vector<JPH::BodyID> body_ids_;
-  std::vector<float> half_extents_y_;
+  std::vector<Vec3> half_extents_;
   JPH::BodyID floor_id_;
 };
 

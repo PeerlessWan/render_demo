@@ -1,9 +1,12 @@
 #include "engine/app/application.h"
 
+#include "engine/animation/skeleton.h"
 #include "engine/assets/gltf_loader.h"
 #include "engine/assets/image_loader.h"
+#include "engine/assets/streaming_budget.h"
 #include "engine/core/log.h"
 #include "engine/debug/console.h"
+#include "engine/gi/probe_volume.h"
 #include "engine/media/media.h"
 #include "engine/mixed/pick.h"
 #include "engine/net/net_system.h"
@@ -12,10 +15,14 @@
 #include "engine/render/quality.h"
 #include "engine/render/render_system.h"
 #include "engine/render2d/sprite.h"
+#include "engine/terrain/heightmap.h"
 #include "engine/ui/immediate_ui.h"
 #include "engine/ui/rml_ui.h"
+#include "engine/vfx/particles.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -366,6 +373,98 @@ int main(int argc, char** argv) {
     a.world().set_mesh(phys_node, mesh);
   }
 
+  // M23: small heightfield patch + vegetation cubes
+  engine::terrain::Heightmap heightmap;
+  heightmap.width = 17;
+  heightmap.height = 17;
+  heightmap.cell = 0.75f;
+  heightmap.samples.resize(static_cast<std::size_t>(17 * 17));
+  for (int z = 0; z < 17; ++z) {
+    for (int x = 0; x < 17; ++x) {
+      const float nx = (x - 8) * 0.22f;
+      const float nz = (z - 8) * 0.22f;
+      heightmap.samples[static_cast<std::size_t>(z * 17 + x)] =
+          0.35f * std::sin(nx * 2.1f) * std::cos(nz * 1.7f);
+    }
+  }
+  const auto terrain_mesh =
+      engine::terrain::BuildTerrainMesh(heightmap, {-18.f, -0.2f, -6.f});
+  if (!use_vulkan && !terrain_mesh.indices.empty()) {
+    std::vector<engine::rhi::LitVertex> tverts(terrain_mesh.positions.size() / 3);
+    for (std::size_t i = 0; i < tverts.size(); ++i) {
+      tverts[i] = {terrain_mesh.positions[i * 3 + 0], terrain_mesh.positions[i * 3 + 1],
+                   terrain_mesh.positions[i * 3 + 2], terrain_mesh.normals[i * 3 + 0],
+                   terrain_mesh.normals[i * 3 + 1], terrain_mesh.normals[i * 3 + 2],
+                   terrain_mesh.uvs[i * 2 + 0], terrain_mesh.uvs[i * 2 + 1]};
+    }
+    if (auto st = a.device().UploadLitGeometry(2, tverts, terrain_mesh.indices); st) {
+      auto terrain_node = a.world().CreateNode("terrain");
+      engine::scene::Transform tt;
+      tt.position = {0, 0, 0};
+      a.world().set_local_transform(terrain_node, tt);
+      engine::scene::MeshRenderer tm;
+      tm.mesh_id = "terrain";
+      tm.never_cull = true;
+      a.world().set_mesh(terrain_node, tm);
+      engine::LogInfo("Terrain heightmap mesh uploaded (slot2)");
+    }
+  }
+  const auto veg = engine::terrain::ScatterVegetation(heightmap, 0.05f, 4);
+  std::vector<engine::scene::NodeId> veg_nodes;
+  for (std::size_t i = 0; i < veg.size() && i < 24; ++i) {
+    auto id = a.world().CreateNode("veg" + std::to_string(i));
+    engine::scene::Transform t;
+    t.position = {-18.f + veg[i].position.x, -0.2f + veg[i].position.y + 0.4f,
+                  -6.f + veg[i].position.z};
+    t.scale = {0.25f * veg[i].scale, 0.8f * veg[i].scale, 0.25f * veg[i].scale};
+    a.world().set_local_transform(id, t);
+    engine::scene::MeshRenderer mesh;
+    mesh.mesh_id = "cube";
+    a.world().set_mesh(id, mesh);
+    veg_nodes.push_back(id);
+  }
+
+  // M6/M14: morph demo mesh (bind cube-ish + smile/frown deltas)
+  std::vector<engine::Vec3> morph_bind;
+  std::vector<engine::animation::MorphTarget> morph_targets(2);
+  morph_targets[0].name = "bulge";
+  morph_targets[1].name = "squash";
+  {
+    // Unit cube corners as 8 verts (simplified display mesh via 2 triangles? use 8-corner box)
+    const engine::Vec3 corners[8] = {{-0.5f, -0.5f, -0.5f}, {0.5f, -0.5f, -0.5f},
+                                     {0.5f, 0.5f, -0.5f},  {-0.5f, 0.5f, -0.5f},
+                                     {-0.5f, -0.5f, 0.5f},  {0.5f, -0.5f, 0.5f},
+                                     {0.5f, 0.5f, 0.5f},   {-0.5f, 0.5f, 0.5f}};
+    morph_bind.assign(corners, corners + 8);
+    morph_targets[0].deltas.resize(8);
+    morph_targets[1].deltas.resize(8);
+    for (int i = 0; i < 8; ++i) {
+      morph_targets[0].deltas[static_cast<std::size_t>(i)] = {0, corners[i].y * 0.35f, 0};
+      morph_targets[1].deltas[static_cast<std::size_t>(i)] = {corners[i].x * -0.25f, 0,
+                                                              corners[i].z * -0.25f};
+    }
+  }
+  float morph_w0 = 0.35f;
+  float morph_w1 = 0.15f;
+  auto morph_node = a.world().CreateNode("morph");
+  {
+    engine::scene::Transform t;
+    t.position = {-3.2f, 1.0f, 1.2f};
+    a.world().set_local_transform(morph_node, t);
+    engine::scene::MeshRenderer mesh;
+    mesh.mesh_id = "morph";
+    a.world().set_mesh(morph_node, mesh);
+  }
+
+  engine::gi::ProbeVolume probes;
+  probes.Configure({-4.f, 0.5f, -4.f}, {2.f, 1.5f, 2.f}, 5, 3, 5);
+  bool enable_gi = true;
+
+  engine::vfx::ParticleEmitter particles;
+  particles.Configure({1.8f, 2.6f, 1.0f}, 28.f, 1.1f);
+
+  engine::scene::NodeId picked_node = engine::scene::kInvalidNode;
+
   bool panel_open = true;
   bool profiler_open = false;
   bool show_grid = true;
@@ -422,6 +521,21 @@ int main(int argc, char** argv) {
     if (show_axes) {
       dbg.AddAxes(2.5f, 0.03f);
     }
+    for (int bi = 0; bi < physics->body_count(); ++bi) {
+      const auto p = physics->body_position(bi);
+      const auto he = physics->body_half_extents(bi);
+      engine::Aabb box;
+      box.min = {p.x - he.x, p.y - he.y, p.z - he.z};
+      box.max = {p.x + he.x, p.y + he.y, p.z + he.z};
+      dbg.AddAabb(box, {0.2f, 0.95f, 0.35f, 1.f});
+    }
+    if (picked_node != engine::scene::kInvalidNode) {
+      const auto pos = app_ref.world().world_matrix(picked_node).TransformPoint({0, 0, 0});
+      engine::Aabb box;
+      box.min = {pos.x - 0.6f, pos.y - 0.6f, pos.z - 0.6f};
+      box.max = {pos.x + 0.6f, pos.y + 0.6f, pos.z + 0.6f};
+      dbg.AddAabb(box, {1.f, 0.85f, 0.15f, 1.f});
+    }
 
     const float dw = static_cast<float>(app_ref.window().width());
     const float dh = static_cast<float>(app_ref.window().height());
@@ -429,12 +543,15 @@ int main(int argc, char** argv) {
       imgui.BeginFrame(snap, dw, dh, app_ref.delta_time());
 
       if (panel_open) {
-        if (imgui.BeginWindow("Effects", 16.f, 48.f, 360.f, 720.f)) {
+        if (imgui.BeginWindow("Effects", 16.f, 48.f, 360.f, 760.f)) {
           imgui.Text("LMB/RMB drag look | Wheel zoom | MMB pan");
           imgui.Text("WASD/QE | Shift | F1 FX | F3 grid | F4 axes");
           imgui.Separator();
           imgui.Checkbox("Show grid (F3)", &show_grid);
           imgui.Checkbox("Show axes (F4)", &show_axes);
+          imgui.Checkbox("Probe GI", &enable_gi);
+          imgui.SliderFloat("Morph bulge", &morph_w0, 0.f, 1.f);
+          imgui.SliderFloat("Morph squash", &morph_w1, 0.f, 1.f);
           imgui.Separator();
           imgui.Checkbox("Shadows", &fx.enable_shadows);
           imgui.Checkbox("SSAO", &fx.enable_ssao);
@@ -536,6 +653,59 @@ int main(int argc, char** argv) {
     }
     render.set_effect_tuning(fx);
 
+    // M22: probe irradiance → ambient tint
+    probes.set_enabled(enable_gi);
+    if (enable_gi) {
+      const auto irr = probes.Sample(app_ref.camera().position);
+      env.ambient = {0.12f + irr.r, 0.13f + irr.g, 0.15f + irr.b, 1.f};
+    } else {
+      env.ambient = {0.20f, 0.21f, 0.24f, 1.f};
+    }
+
+    // M7 particles near lamp
+    particles.set_origin({1.8f, 2.6f, 1.0f});
+    particles.Step(app_ref.delta_time());
+
+    // M14 morph upload (expanded box faces from 8 corners)
+    if (!use_vulkan) {
+      std::vector<engine::Vec3> morphed;
+      engine::animation::ApplyMorphTargets(morph_bind, morph_targets, {morph_w0, morph_w1},
+                                           morphed);
+      static const int faces[12][3] = {{0, 1, 2}, {0, 2, 3}, {4, 6, 5}, {4, 7, 6},
+                                       {0, 4, 5}, {0, 5, 1}, {3, 2, 6}, {3, 6, 7},
+                                       {0, 3, 7}, {0, 7, 4}, {1, 5, 6}, {1, 6, 2}};
+      std::vector<engine::rhi::LitVertex> mverts;
+      std::vector<std::uint32_t> minds;
+      mverts.reserve(36);
+      minds.reserve(36);
+      for (const auto& f : faces) {
+        const auto& a0 = morphed[static_cast<std::size_t>(f[0])];
+        const auto& a1 = morphed[static_cast<std::size_t>(f[1])];
+        const auto& a2 = morphed[static_cast<std::size_t>(f[2])];
+        const engine::Vec3 n = engine::Normalize(engine::Cross(a1 - a0, a2 - a0));
+        const std::uint32_t base = static_cast<std::uint32_t>(mverts.size());
+        mverts.push_back({a0.x, a0.y, a0.z, n.x, n.y, n.z, 0, 0});
+        mverts.push_back({a1.x, a1.y, a1.z, n.x, n.y, n.z, 1, 0});
+        mverts.push_back({a2.x, a2.y, a2.z, n.x, n.y, n.z, 0, 1});
+        minds.push_back(base);
+        minds.push_back(base + 1);
+        minds.push_back(base + 2);
+      }
+      (void)app_ref.device().UploadLitGeometry(3, mverts, minds);
+    }
+
+    // M10 LOD: hide far vegetation
+    {
+      const std::vector<float> ranges{8.f, 16.f, 28.f};
+      const auto cam = app_ref.camera().position;
+      for (std::size_t i = 0; i < veg_nodes.size(); ++i) {
+        const auto p = app_ref.world().world_matrix(veg_nodes[i]).TransformPoint({0, 0, 0});
+        const float d = (p - cam).length();
+        const int level = engine::assets::LodSelect::SelectLevel(d, ranges);
+        app_ref.world().set_visible(veg_nodes[i], level < 3);
+      }
+    }
+
     const bool mouse_pressed = snap.mouse_left && !mouse_left_was;
     mouse_left_was = snap.mouse_left;
     {
@@ -571,9 +741,63 @@ int main(int argc, char** argv) {
       retained_quads.push_back(q);
     }
 
+    // M16 sprites + M7 particle screen proxies
+    sprites.clear();
+    {
+      engine::render2d::Sprite s;
+      s.position = {dw - 120.f, 16.f};
+      s.size = {96.f, 48.f};
+      s.color = {0.2f, 0.75f, 0.95f, 0.85f};
+      s.sort_y = s.position.y;
+      sprites.push_back(s);
+    }
+    const float aspect_pre = dh > 0.f ? dw / dh : 1.f;
+    const auto vp = app_ref.camera().view_proj_matrix(aspect_pre);
+    for (const auto& p : particles.particles()) {
+      const auto clip = vp.TransformPoint(p.position);
+      // TransformPoint doesn't do perspective divide - use full mat mul
+      engine::Vec4 c{p.position.x, p.position.y, p.position.z, 1.f};
+      // column-major mul
+      float x = vp.m[0] * c.x + vp.m[4] * c.y + vp.m[8] * c.z + vp.m[12] * c.w;
+      float y = vp.m[1] * c.x + vp.m[5] * c.y + vp.m[9] * c.z + vp.m[13] * c.w;
+      float w = vp.m[3] * c.x + vp.m[7] * c.y + vp.m[11] * c.z + vp.m[15] * c.w;
+      if (w <= 1e-4f) {
+        continue;
+      }
+      x /= w;
+      y /= w;
+      if (x < -1.f || x > 1.f || y < -1.f || y > 1.f) {
+        continue;
+      }
+      engine::render2d::Sprite s;
+      s.position = {(x * 0.5f + 0.5f) * dw - p.size * 0.5f,
+                    (1.f - (y * 0.5f + 0.5f)) * dh - p.size * 0.5f};
+      s.size = {p.size, p.size};
+      s.color = p.color;
+      s.sort_y = s.position.y;
+      sprites.push_back(s);
+    }
+    engine::render2d::SortSprites(sprites);
+
     const float aspect = dh > 0.f ? dw / dh : 1.f;
     const auto scene = engine::render::RenderSceneExtractor::Extract(
         app_ref.world(), app_ref.camera(), aspect);
+
+    // M20 pick on click when UI not capturing
+    if (mouse_pressed && !app_ref.ui_want_capture() && !retained->want_capture()) {
+      engine::mixed::PickQuery pq;
+      pq.screen_px = {snap.mouse_x, snap.mouse_y};
+      pq.viewport_w = dw;
+      pq.viewport_h = dh;
+      pq.inv_view_proj = scene.camera.view_proj_matrix(aspect).Inverse();
+      const auto hit = engine::mixed::Pick(scene.instances, sprites, pq);
+      if (hit.kind == engine::mixed::PickHit::Kind::Scene3D) {
+        picked_node = hit.node;
+      } else {
+        picked_node = engine::scene::kInvalidNode;
+      }
+    }
+
     profiler.Begin("DrawFrame");
     if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites,
                                    retained_quads.empty() ? nullptr : &retained_quads,

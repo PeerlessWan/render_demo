@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace engine::terrain {
 
@@ -56,6 +57,54 @@ std::vector<VegetationInstance> ScatterVegetation(const Heightmap& map, float wa
     }
   }
   return out;
+}
+
+TerrainMesh BuildTerrainMesh(const Heightmap& map, const Vec3& world_origin) {
+  TerrainMesh mesh;
+  if (map.width < 2 || map.height < 2 || map.samples.empty()) {
+    return mesh;
+  }
+  const int w = map.width;
+  const int h = map.height;
+  mesh.positions.resize(static_cast<std::size_t>(w * h * 3));
+  mesh.normals.resize(static_cast<std::size_t>(w * h * 3));
+  mesh.uvs.resize(static_cast<std::size_t>(w * h * 2));
+  for (int z = 0; z < h; ++z) {
+    for (int x = 0; x < w; ++x) {
+      const std::size_t i = static_cast<std::size_t>(z * w + x);
+      const float y = map.samples[i];
+      mesh.positions[i * 3 + 0] = world_origin.x + static_cast<float>(x) * map.cell;
+      mesh.positions[i * 3 + 1] = world_origin.y + y;
+      mesh.positions[i * 3 + 2] = world_origin.z + static_cast<float>(z) * map.cell;
+      mesh.uvs[i * 2 + 0] = static_cast<float>(x) / static_cast<float>(w - 1);
+      mesh.uvs[i * 2 + 1] = static_cast<float>(z) / static_cast<float>(h - 1);
+
+      const float hL = SampleHeight(map, (x - 1) * map.cell, z * map.cell);
+      const float hR = SampleHeight(map, (x + 1) * map.cell, z * map.cell);
+      const float hD = SampleHeight(map, x * map.cell, (z - 1) * map.cell);
+      const float hU = SampleHeight(map, x * map.cell, (z + 1) * map.cell);
+      Vec3 n = Normalize(Vec3{hL - hR, 2.f * map.cell, hD - hU});
+      mesh.normals[i * 3 + 0] = n.x;
+      mesh.normals[i * 3 + 1] = n.y;
+      mesh.normals[i * 3 + 2] = n.z;
+    }
+  }
+  mesh.indices.reserve(static_cast<std::size_t>((w - 1) * (h - 1) * 6));
+  for (int z = 0; z < h - 1; ++z) {
+    for (int x = 0; x < w - 1; ++x) {
+      const std::uint32_t i0 = static_cast<std::uint32_t>(z * w + x);
+      const std::uint32_t i1 = i0 + 1;
+      const std::uint32_t i2 = i0 + static_cast<std::uint32_t>(w);
+      const std::uint32_t i3 = i2 + 1;
+      mesh.indices.push_back(i0);
+      mesh.indices.push_back(i2);
+      mesh.indices.push_back(i1);
+      mesh.indices.push_back(i1);
+      mesh.indices.push_back(i2);
+      mesh.indices.push_back(i3);
+    }
+  }
+  return mesh;
 }
 
 }  // namespace engine::terrain

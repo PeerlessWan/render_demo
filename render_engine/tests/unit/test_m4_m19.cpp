@@ -218,6 +218,8 @@ TEST_CASE("Physics stack and raycast", "[physics]") {
   box.position = {0, 5, 0};
   box.half_extents = {0.5f, 0.5f, 0.5f};
   const int id = world->CreateBox(box);
+  REQUIRE(world->body_count() == 1);
+  REQUIRE(std::fabs(world->body_half_extents(id).x - 0.5f) < 1e-5f);
   for (int i = 0; i < 120; ++i) {
     world->Step(1.f / 60.f);
   }

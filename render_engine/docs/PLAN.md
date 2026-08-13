@@ -333,29 +333,29 @@
 |---|---|
 | **M1** 清屏 + 单测 | **完成**（D3D12 清屏 Sample + unit 可跑；单测暂用内置 harness，Catch2 待网络） |
 | **M2** D3D12 主路径 | **完成**（DXC `shader_compile`、深度/上传/PSO、纹理三角 `sample_02_triangle`、Resize） |
-| **M3** Graph + 异步 | **完成（加深）**：Pump 契约 + `DispatchCompute`/`ReadbackTextureStub`；GPU 屏障仍待 |
+| **M3** Graph + 异步 | **完成（加深）**：Pump 契约 + `DispatchCompute` + **D3D12 真 Readback**；GPU 屏障仍待 |
 | **M4** 场景·外设·调试 | **完成（加深）**：Win32 键鼠→InputSystem、Escape 关闭、RenderScene Extract |
 | **M5** 环境与阴影 | **产品可用**：多级 **CSM**；**文件 albedo/ORM（PNG）** + DDS 加载器；简易 MR；IBL baker 仍待 |
-| **M6** 角色与档位 | **完成（骨架）**：CPU 蒙皮、QualityTier、PostStack |
-| **M7** 特效·超分·音视频 | **可用加深**：WAV 解码 + WinMM `PlayWavFile`/`CreateDefaultAudioDevice`；VA stub |
+| **M6** 角色与档位 | **可用加深**：CPU 蒙皮 + **Sandbox Morph 演示**；QualityTier、PostStack |
+| **M7** 特效·超分·音视频 | **可用加深**：WAV + WinMM；**CPU 粒子**（Sandbox）；VA stub |
 | **M8** RT 与工具化 | **可用加深**：场景 JSON、Console、Profiler、ActionMap 存盘 |
 | **M9** 基础段验收 | **产品可用**：Sandbox lit+shadow+物理；unit/headless 自测绿；屏空间 2D quad |
-| **M10** 可见性·LOD·实例·流式 | **完成（骨架）**：LodSelect、StreamingBudget |
-| **M11** 阴影·AA·AO·透明 | **可用加深**：CSM；点光 **6-face cubemap atlas**（最多 2 灯）；深度 SSAO + 历史 TAA；**AlphaBlend 透明**（glass） |
-| **M12** 物理 | **可用加深**：builtin + **真 Jolt**（`third_party/JoltPhysics` v5.6.0，`CreateDefaultPhysicsWorld` 优先 jolt） |
-| **M13** P1 后处理与反射 | **可用加深**：SSAO/TAA + ACES/Reinhard + AutoExposure + Bloom + 深度雾 + SSR + 轻量 DoF/运动模糊；动态反射仍骨架 |
-| **M14** P1 提交与显示 | **加深**：CPU Morph/BlendShape；`SetSubmitConfig` 校验；bindless/HDR Feature 门控（仍关） |
-| **M15** UI 完整 | **可用加深**：`ImmediateUi` + Sandbox 特效/Profiler；**Retained HUD→ScreenQuad 端到端**；Rml 工厂仍 fallback；真 RmlUi 仍待 |
-| **M16** 2D·像素·混合 | **可用加深**：屏空间 `DrawScreenQuads` + Sprite Y-sort、Tiled 导入 |
-| **M17** Vulkan（Windows） | **可用加深**：清屏 + lit cube + **CSM 方向光阴影**（`--backend=vulkan`）；纹理/UI/Post 仍待 |
+| **M10** 可见性·LOD·实例·流式 | **可用加深**：LodSelect（Sandbox 植被距离消隐）、StreamingBudget |
+| **M11** 阴影·AA·AO·透明 | **可用加深**：CSM；点光 **6-face cubemap atlas**；SSAO/TAA；AlphaBlend glass |
+| **M12** 物理 | **可用加深**：builtin + **真 Jolt**；**碰撞盒 DebugDraw** |
+| **M13** P1 后处理与反射 | **可用加深**：ACES/AutoExposure/Bloom/雾/SSR/DoF/运动模糊；动态反射仍骨架 |
+| **M14** P1 提交与显示 | **加深**：CPU Morph；`SetSubmitConfig`；bindless/HDR Feature 门控（仍关） |
+| **M15** UI 完整 | **可用加深**：ImGui + Retained HUD→ScreenQuad；真 RmlUi 仍待 |
+| **M16** 2D·像素·混合 | **可用加深**：Sprite tint + Sandbox HUD/粒子精灵；Tiled 导入 |
+| **M17** Vulkan（Windows） | **可用加深**：清屏 + lit + CSM（**暂缓追平**） |
 | **M18** Linux + Vulkan | **完成（文档占位）**：[LINUX_VULKAN.md](LINUX_VULKAN.md) |
-| **M19** 网络层 | **可用加深**：loopback + **cpp-httplib** 明文 HTTP；HTTPS 需 OpenSSL；WS loopback；QUIC stub |
-| **M20** 混合打磨 | **完成（加深）**：统一 Pick（3D AABB / 2D Sprite）、整数 DPI 缩放 |
-| **M21** 2D 深度 | **完成（加深）**：TilemapStreamer 预算驻留、Skeleton2D 采样 |
-| **M22** 动态 GI | **完成（加深）**：ProbeVolume 最近邻采样；可关 |
-| **M23** 场景专题 | **完成（加深）**：Heightmap 双线性采样、LOD、植被散射 |
-| **M24** GPU Driven | **完成（加深）**：路径选择（Raster/Indirect/Mesh）+ Feature 门控 |
-| **M25** 光追对齐 | **完成（加深）**：RT Resolve/EnsureSafe（可关 + fallback，不崩） |
+| **M19** 网络层 | **可用加深**：HTTP 明文；HTTPS 需 OpenSSL；QUIC stub |
+| **M20** 混合打磨 | **完成（加深）**：统一 Pick + **Sandbox 点击高亮**；整数 DPI |
+| **M21** 2D 深度 | **完成（加深）**：TilemapStreamer、Skeleton2D 采样 |
+| **M22** 动态 GI | **可用加深**：ProbeVolume → **Sandbox ambient 染色** |
+| **M23** 场景专题 | **可用加深**：Heightmap 网格 + 植被散射进 Sandbox |
+| **M24** GPU Driven | **完成（加深）**：路径选择 + Feature 门控 |
+| **M25** 光追对齐 | **完成（加深）**：RT Resolve/EnsureSafe（可关 + fallback） |
 
 ## 7. 建议实施顺序（M1 内）
 
