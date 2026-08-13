@@ -24,9 +24,10 @@ namespace engine {
 struct ApplicationDesc {
   WindowDesc window{};
   ColorRgba clear_color{0.1f, 0.2f, 0.35f, 1.f};
+  bool headless = false;
+  int headless_frames = 0;  // >0: auto RequestClose after N frames (headless CI)
 };
 
-// HOSTING frame phases (subset): Input → Net.Pump → Asset.PumpAsync → Module → Extract → Present.
 class Application {
  public:
   using FrameCallback = std::function<void(Application&)>;
@@ -54,17 +55,24 @@ class Application {
   [[nodiscard]] const ColorRgba& clear_color() const { return clear_color_; }
   void set_clear_color(const ColorRgba& color) { clear_color_ = color; }
   [[nodiscard]] float delta_time() const { return dt_; }
+  [[nodiscard]] bool is_headless() const { return headless_; }
+  [[nodiscard]] int frame_index() const { return frame_index_; }
 
   Status Run(FrameCallback on_frame = {});
 
  private:
   Application(std::unique_ptr<Window> window, std::unique_ptr<rhi::IDevice> device,
-              ColorRgba clear_color);
+              ColorRgba clear_color, bool headless, int headless_frames);
+
+  void SyncInputFromWindow();
 
   std::unique_ptr<Window> window_;
   std::unique_ptr<rhi::IDevice> device_;
   ColorRgba clear_color_;
   float dt_ = 0.f;
+  bool headless_ = false;
+  int headless_frames_ = 0;
+  int frame_index_ = 0;
 
   scene::World world_;
   render::Camera camera_;

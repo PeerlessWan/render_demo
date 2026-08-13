@@ -18,7 +18,6 @@ add_library(engine_assets STATIC
 )
 target_include_directories(engine_assets PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_assets PUBLIC engine_core)
-target_compile_features(engine_assets PUBLIC cxx_std_20)
 
 add_library(engine_platform STATIC
   platform/win32/window_win32.cpp
@@ -72,6 +71,7 @@ add_library(engine_rhi STATIC
   render/shadow_csm.cpp
   render/shadow_atlas.cpp
   render/quality.cpp
+  backends/headless/headless_device.cpp
 )
 target_include_directories(engine_rhi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_rhi PUBLIC engine_core engine_scene)
@@ -96,9 +96,40 @@ target_link_libraries(engine_ui PUBLIC engine_core)
 
 add_library(engine_render2d STATIC
   render2d/sprite.cpp
+  render2d/tilemap_stream.cpp
 )
 target_include_directories(engine_render2d PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_render2d PUBLIC engine_core)
+
+add_library(engine_mixed STATIC
+  mixed/pick.cpp
+)
+target_include_directories(engine_mixed PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(engine_mixed PUBLIC engine_core engine_rhi engine_render2d)
+
+add_library(engine_gi STATIC
+  gi/probe_volume.cpp
+)
+target_include_directories(engine_gi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(engine_gi PUBLIC engine_core)
+
+add_library(engine_terrain STATIC
+  terrain/heightmap.cpp
+)
+target_include_directories(engine_terrain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(engine_terrain PUBLIC engine_core)
+
+add_library(engine_gpu_driven STATIC
+  gpu_driven/path.cpp
+)
+target_include_directories(engine_gpu_driven PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(engine_gpu_driven PUBLIC engine_core)
+
+add_library(engine_rt STATIC
+  rt/raytracing.cpp
+)
+target_include_directories(engine_rt PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(engine_rt PUBLIC engine_core engine_rhi)
 
 add_library(engine_net STATIC
   net/net_system.cpp

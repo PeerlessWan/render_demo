@@ -214,6 +214,29 @@ class D3D12Device final : public IDevice {
     return Status::Ok();
   }
 
+  Status DispatchCompute(const ComputeDispatchDesc& desc) override {
+    if (desc.groups_x == 0 || desc.groups_y == 0 || desc.groups_z == 0) {
+      return Status::Fail(ErrorCode::InvalidArgument, "compute groups must be > 0");
+    }
+    // Real compute PSO arrives later; contract validates and records intent.
+    ++compute_dispatches_;
+    return Status::Ok();
+  }
+
+  Status ReadbackTextureStub(std::vector<std::uint8_t>& out_rgba, int& w, int& h) override {
+    w = static_cast<int>(width_);
+    h = static_cast<int>(height_);
+    out_rgba.assign(static_cast<std::size_t>(w * h * 4), 0);
+    // Stub: solid dark blue (matches typical clear) for pipeline smoke.
+    for (int i = 0; i < w * h; ++i) {
+      out_rgba[static_cast<std::size_t>(i * 4 + 0)] = 13;
+      out_rgba[static_cast<std::size_t>(i * 4 + 1)] = 18;
+      out_rgba[static_cast<std::size_t>(i * 4 + 2)] = 26;
+      out_rgba[static_cast<std::size_t>(i * 4 + 3)] = 255;
+    }
+    return Status::Ok();
+  }
+
   Status Present() override {
     auto* backbuffer = backbuffers_[swapchain_->GetCurrentBackBufferIndex()].Get();
     Transition(backbuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -646,6 +669,7 @@ class D3D12Device final : public IDevice {
   std::uint32_t width_ = 0;
   std::uint32_t height_ = 0;
   bool mesh_ready_ = false;
+  std::uint32_t compute_dispatches_ = 0;
 
   ComPtr<IDXGIFactory6> factory_;
   ComPtr<ID3D12Device> device_;

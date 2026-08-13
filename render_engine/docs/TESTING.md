@@ -250,6 +250,17 @@ tests/
 | `ENGINE_RUN_GPU_TESTS` | 启用 `[gpu]` 标签 |
 | `ENGINE_GOLDEN_TESTS`  | 启用黄金图脚本目标     |
 
+### Headless CI（已落地）
+
+```bat
+ctest --test-dir build -C Debug -L headless --output-on-failure
+```
+
+- `CreateHeadlessDevice`：无 HWND，支持 Clear / DispatchCompute / ReadbackTextureStub / Present  
+- `ApplicationDesc.headless` + `headless_frames`：固定跑 N 帧后退出  
+- 标签：`headless.engine_unit_tests`（LABELS=headless）；与 `unit.engine_unit_tests` 共用同一二进制  
+
+
 
 ---
 
