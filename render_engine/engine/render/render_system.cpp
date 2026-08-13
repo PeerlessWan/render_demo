@@ -12,10 +12,19 @@ namespace engine::render {
 void RenderSystem::ApplyEffectToQuality() {
   quality_.enable_ssao = effect_.enable_ssao;
   quality_.enable_taa = effect_.enable_taa;
+  quality_.enable_bloom = effect_.enable_bloom;
+  quality_.enable_ssr = effect_.enable_ssr;
   quality_.shadow_cascades = effect_.shadow_cascades;
   post_.Configure(quality_);
   post_.set_enabled("SSAO", effect_.enable_ssao);
   post_.set_enabled("TAA", effect_.enable_taa);
+  post_.set_enabled("Bloom", effect_.enable_bloom);
+  post_.set_enabled("Tonemap", effect_.enable_tonemap);
+  post_.set_enabled("AutoExposure", effect_.enable_auto_exposure);
+  post_.set_enabled("VolumetricFog", effect_.enable_fog);
+  post_.set_enabled("SSR", effect_.enable_ssr);
+  post_.set_enabled("DoF", effect_.enable_dof);
+  post_.set_enabled("MotionBlur", effect_.enable_motion_blur);
   csm_.set_cascade_count(effect_.shadow_cascades);
 }
 
@@ -23,6 +32,8 @@ void RenderSystem::set_quality(const QualitySettings& q) {
   quality_ = q;
   effect_.enable_ssao = q.enable_ssao;
   effect_.enable_taa = q.enable_taa;
+  effect_.enable_bloom = q.enable_bloom;
+  effect_.enable_ssr = q.enable_ssr;
   effect_.shadow_cascades = q.shadow_cascades;
   ApplyEffectToQuality();
 }
@@ -34,6 +45,12 @@ void RenderSystem::set_effect_tuning(const EffectTuning& t) {
   }
   if (effect_.shadow_cascades > 4) {
     effect_.shadow_cascades = 4;
+  }
+  if (effect_.tonemap_mode < 0) {
+    effect_.tonemap_mode = 0;
+  }
+  if (effect_.tonemap_mode > 2) {
+    effect_.tonemap_mode = 2;
   }
   ApplyEffectToQuality();
 }
@@ -52,6 +69,22 @@ void RenderSystem::set_post_enabled(std::string_view name, bool on) {
   } else if (name == "TAA") {
     effect_.enable_taa = on;
     quality_.enable_taa = on;
+  } else if (name == "Bloom") {
+    effect_.enable_bloom = on;
+    quality_.enable_bloom = on;
+  } else if (name == "Tonemap") {
+    effect_.enable_tonemap = on;
+  } else if (name == "AutoExposure") {
+    effect_.enable_auto_exposure = on;
+  } else if (name == "VolumetricFog") {
+    effect_.enable_fog = on;
+  } else if (name == "SSR") {
+    effect_.enable_ssr = on;
+    quality_.enable_ssr = on;
+  } else if (name == "DoF") {
+    effect_.enable_dof = on;
+  } else if (name == "MotionBlur") {
+    effect_.enable_motion_blur = on;
   }
 }
 
@@ -75,7 +108,10 @@ Status RenderSystem::Init(rhi::IDevice& device, const RenderSystemDesc& desc) {
     if (auto st = device.SetupPostMesh(post_shaders); !st) {
       return st;
     }
-    LogInfo("Post mesh ready (SSAO+TAA resolve)");
+    post_ready_ = true;
+    LogInfo("Post mesh ready (SSAO/TAA/tonemap/bloom/fog)");
+  } else {
+    post_ready_ = false;
   }
   max_shadow_distance_ = desc.max_shadow_distance;
   effect_.enable_shadows = desc.enable_shadows;
@@ -320,15 +356,53 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
         }
         device.GpuPassEnd();
       });
-  if (want_ssao || want_taa || std::fabs(effect_.exposure - 1.f) > 1e-4f) {
+  const bool want_tonemap = effect_.enable_tonemap && post_.enabled("Tonemap");
+  const bool want_auto_exp = effect_.enable_auto_exposure && post_.enabled("AutoExposure");
+  const bool want_bloom = effect_.enable_bloom && post_.enabled("Bloom");
+  const bool want_fog = effect_.enable_fog && post_.enabled("VolumetricFog");
+  const bool want_ssr = effect_.enable_ssr && post_.enabled("SSR");
+  const bool want_dof = effect_.enable_dof && post_.enabled("DoF");
+  const bool want_motion_blur = effect_.enable_motion_blur && post_.enabled("MotionBlur");
+  rhi::PostResolveDesc post_probe;
+  post_probe.enable_ssao = want_ssao;
+  post_probe.enable_taa = want_taa;
+  post_probe.exposure = effect_.exposure;
+  post_probe.enable_tonemap = want_tonemap;
+  post_probe.enable_auto_exposure = want_auto_exp;
+  post_probe.enable_bloom = want_bloom;
+  post_probe.enable_fog = want_fog;
+  post_probe.enable_ssr = want_ssr;
+  post_probe.enable_dof = want_dof;
+  post_probe.enable_motion_blur = want_motion_blur;
+  if (post_ready_ && post_probe.NeedsResolve()) {
     graph_.AddPass("PostSSAO_TAA", {"Color", "Depth"}, {"Color"}, [&] {
       device.GpuPassBegin("Post");
       rhi::PostResolveDesc post;
+      post.view_proj = lighting.view_proj;
       post.inv_view_proj = lighting.view_proj.Inverse();
       post.eye = lighting.eye;
       post.enable_ssao = want_ssao;
       post.enable_taa = want_taa;
       post.exposure = effect_.exposure;
+      post.enable_tonemap = want_tonemap;
+      post.tonemap_mode = effect_.tonemap_mode;
+      post.enable_auto_exposure = want_auto_exp;
+      post.auto_exposure_key = effect_.auto_exposure_key;
+      post.enable_bloom = want_bloom;
+      post.bloom_threshold = effect_.bloom_threshold;
+      post.bloom_intensity = effect_.bloom_intensity;
+      post.enable_fog = want_fog;
+      post.fog_density = effect_.fog_density;
+      post.fog_start = effect_.fog_start;
+      post.fog_color = effect_.fog_color;
+      post.enable_ssr = want_ssr;
+      post.ssr_intensity = effect_.ssr_intensity;
+      post.ssr_thickness = effect_.ssr_thickness;
+      post.enable_dof = want_dof;
+      post.dof_focus = effect_.dof_focus;
+      post.dof_scale = effect_.dof_scale;
+      post.enable_motion_blur = want_motion_blur;
+      post.motion_blur_strength = effect_.motion_blur_strength;
       if (auto st = device.ResolvePostEffects(post); !st) {
         LogError(st.message());
       }

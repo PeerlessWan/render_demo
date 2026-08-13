@@ -149,7 +149,7 @@ class HeadlessDevice final : public IDevice {
     if (!post_ready_) {
       return Status::Fail("SetupPostMesh not called");
     }
-    if (!desc.enable_ssao && !desc.enable_taa && std::fabs(desc.exposure - 1.f) < 1e-4f) {
+    if (!desc.NeedsResolve()) {
       return Status::Ok();
     }
     ++post_resolves_;

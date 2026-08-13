@@ -2,6 +2,7 @@
 
 #include "engine/core/math.h"
 #include "engine/core/result.h"
+#include "engine/rhi/submit_config.h"
 
 #include <array>
 #include <cstdint>
@@ -43,6 +44,7 @@ struct PostShaders {
 
 struct PostResolveDesc {
   Mat4 inv_view_proj = Mat4::Identity();
+  Mat4 view_proj = Mat4::Identity();
   Vec3 eye{0, 1, 4};
   bool enable_ssao = false;
   bool enable_taa = false;
@@ -50,6 +52,31 @@ struct PostResolveDesc {
   float ssao_intensity = 0.85f;
   float taa_blend = 0.88f;
   float exposure = 1.15f;
+  bool enable_tonemap = true;
+  int tonemap_mode = 2;  // 0=none 1=reinhard 2=ACES
+  bool enable_auto_exposure = true;
+  float auto_exposure_key = 0.18f;
+  bool enable_bloom = false;
+  float bloom_threshold = 0.85f;
+  float bloom_intensity = 0.4f;
+  bool enable_fog = false;
+  float fog_density = 0.02f;
+  float fog_start = 12.f;
+  Vec3 fog_color{0.62f, 0.70f, 0.78f};
+  bool enable_ssr = false;
+  float ssr_intensity = 0.55f;
+  float ssr_thickness = 0.015f;
+  bool enable_dof = false;
+  float dof_focus = 8.f;
+  float dof_scale = 0.08f;
+  bool enable_motion_blur = false;
+  float motion_blur_strength = 0.35f;
+
+  [[nodiscard]] bool NeedsResolve() const {
+    return enable_ssao || enable_taa || enable_tonemap || enable_auto_exposure || enable_bloom ||
+           enable_fog || enable_ssr || enable_dof || enable_motion_blur ||
+           (exposure > 1.0001f || exposure < 0.9999f);
+  }
 };
 
 struct LitVertex {
@@ -204,6 +231,9 @@ class IDevice {
 
   virtual Status DispatchCompute(const ComputeDispatchDesc& desc) = 0;
   virtual Status ReadbackTextureStub(std::vector<std::uint8_t>& out_rgba, int& w, int& h) = 0;
+
+  // M14: parallel submit preference (validated; backends may still fall back to single-thread).
+  virtual Status SetSubmitConfig(const SubmitConfig& cfg) { return ValidateSubmitConfig(cfg); }
 };
 
 Result<std::unique_ptr<IDevice>> CreateD3D12Device(const DeviceDesc& desc);

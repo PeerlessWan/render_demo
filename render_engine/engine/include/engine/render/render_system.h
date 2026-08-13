@@ -47,7 +47,26 @@ struct EffectTuning {
   bool enable_shadows = true;
   bool enable_ssao = true;
   bool enable_taa = true;
+  bool enable_tonemap = true;
+  bool enable_auto_exposure = true;
+  bool enable_bloom = true;
+  bool enable_fog = false;
+  bool enable_ssr = false;
+  int tonemap_mode = 2;  // 0=none 1=reinhard 2=ACES
   int shadow_cascades = 2;
+  float auto_exposure_key = 0.18f;
+  float bloom_threshold = 0.85f;
+  float bloom_intensity = 0.4f;
+  float fog_density = 0.02f;
+  float fog_start = 12.f;
+  Vec3 fog_color{0.62f, 0.70f, 0.78f};
+  float ssr_intensity = 0.55f;
+  float ssr_thickness = 0.015f;
+  bool enable_dof = false;
+  float dof_focus = 8.f;
+  float dof_scale = 0.08f;
+  bool enable_motion_blur = false;
+  float motion_blur_strength = 0.35f;
 };
 
 class RenderSystem {
@@ -76,6 +95,7 @@ class RenderSystem {
   void ApplyEffectToQuality();
 
   bool ready_ = false;
+  bool post_ready_ = false;
   float max_shadow_distance_ = 80.f;
   std::uint32_t frame_index_ = 0;
   QualitySettings quality_{};

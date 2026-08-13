@@ -90,4 +90,24 @@ Vec3 SkinVertexCpu(const Vec3& pos, const SkinPose& pose, const int bones[4],
   return out;
 }
 
+void ApplyMorphTargets(const std::vector<Vec3>& bind_positions,
+                       const std::vector<MorphTarget>& targets,
+                       const std::vector<float>& weights,
+                       std::vector<Vec3>& out_positions) {
+  out_positions = bind_positions;
+  const std::size_t n = targets.size() < weights.size() ? targets.size() : weights.size();
+  for (std::size_t t = 0; t < n; ++t) {
+    const float w = weights[t];
+    if (std::fabs(w) < 1e-8f) {
+      continue;
+    }
+    const auto& deltas = targets[t].deltas;
+    const std::size_t count =
+        deltas.size() < out_positions.size() ? deltas.size() : out_positions.size();
+    for (std::size_t i = 0; i < count; ++i) {
+      out_positions[i] = out_positions[i] + deltas[i] * w;
+    }
+  }
+}
+
 }  // namespace engine::animation

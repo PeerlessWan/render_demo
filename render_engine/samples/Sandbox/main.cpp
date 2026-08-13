@@ -354,6 +354,8 @@ int main(int argc, char** argv) {
   engine::LogInfo(std::string("Physics backend: ") + physics->backend_name());
   engine::LogInfo(std::string("Retained UI backend: ") +
                   engine::ui::QueryRetainedUiBackend().name);
+  auto retained = engine::ui::CreateRetainedUiBackend();
+  bool mouse_left_was = false;
   engine::physics::RigidBodyDesc falling;
   falling.position = {0, 4, -2};
   const int phys_id = physics->CreateBox(falling);
@@ -427,7 +429,7 @@ int main(int argc, char** argv) {
       imgui.BeginFrame(snap, dw, dh, app_ref.delta_time());
 
       if (panel_open) {
-        if (imgui.BeginWindow("Effects", 16.f, 48.f, 340.f, 500.f)) {
+        if (imgui.BeginWindow("Effects", 16.f, 48.f, 360.f, 720.f)) {
           imgui.Text("LMB/RMB drag look | Wheel zoom | MMB pan");
           imgui.Text("WASD/QE | Shift | F1 FX | F3 grid | F4 axes");
           imgui.Separator();
@@ -437,10 +439,26 @@ int main(int argc, char** argv) {
           imgui.Checkbox("Shadows", &fx.enable_shadows);
           imgui.Checkbox("SSAO", &fx.enable_ssao);
           imgui.Checkbox("TAA", &fx.enable_taa);
+          imgui.Checkbox("SSR", &fx.enable_ssr);
+          imgui.Checkbox("DoF", &fx.enable_dof);
+          imgui.Checkbox("MotionBlur", &fx.enable_motion_blur);
+          imgui.Checkbox("Tonemap", &fx.enable_tonemap);
+          imgui.Checkbox("AutoExposure", &fx.enable_auto_exposure);
+          imgui.Checkbox("Bloom", &fx.enable_bloom);
+          imgui.Checkbox("Fog", &fx.enable_fog);
           imgui.Separator();
           imgui.SliderFloat("Sun intensity", &fx.sun_intensity, 0.f, 10.f);
           imgui.SliderFloat("Ambient scale", &fx.ambient_scale, 0.f, 3.f);
           imgui.SliderFloat("Exposure", &fx.exposure, 0.2f, 3.f);
+          imgui.SliderInt("Tonemap mode", &fx.tonemap_mode, 0, 2);
+          imgui.SliderFloat("SSR intensity", &fx.ssr_intensity, 0.f, 1.5f);
+          imgui.SliderFloat("DoF focus", &fx.dof_focus, 1.f, 40.f);
+          imgui.SliderFloat("DoF scale", &fx.dof_scale, 0.f, 0.3f);
+          imgui.SliderFloat("Motion blur", &fx.motion_blur_strength, 0.f, 0.9f);
+          imgui.SliderFloat("Bloom thr", &fx.bloom_threshold, 0.2f, 2.f);
+          imgui.SliderFloat("Bloom int", &fx.bloom_intensity, 0.f, 2.f);
+          imgui.SliderFloat("Fog density", &fx.fog_density, 0.f, 0.1f);
+          imgui.SliderFloat("Fog start", &fx.fog_start, 0.f, 40.f);
           imgui.SliderFloat("Shadow bias", &fx.shadow_bias, 0.0001f, 0.02f);
           imgui.SliderFloat("Specular power", &fx.specular_power, 1.f, 128.f);
           imgui.SliderFloat("Local light scale", &fx.local_intensity_scale, 0.f, 4.f);
@@ -451,6 +469,8 @@ int main(int argc, char** argv) {
                 engine::render::QualitySettings::FromTier(engine::render::QualityTier::Low);
             fx.enable_ssao = q.enable_ssao;
             fx.enable_taa = q.enable_taa;
+            fx.enable_bloom = q.enable_bloom;
+            fx.enable_ssr = q.enable_ssr;
             fx.shadow_cascades = q.shadow_cascades;
           }
           if (imgui.Button("Med", 90.f, 0.f)) {
@@ -458,6 +478,8 @@ int main(int argc, char** argv) {
                 engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
             fx.enable_ssao = q.enable_ssao;
             fx.enable_taa = q.enable_taa;
+            fx.enable_bloom = q.enable_bloom;
+            fx.enable_ssr = q.enable_ssr;
             fx.shadow_cascades = q.shadow_cascades;
           }
           if (imgui.Button("High", 90.f, 0.f)) {
@@ -465,6 +487,8 @@ int main(int argc, char** argv) {
                 engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
             fx.enable_ssao = q.enable_ssao;
             fx.enable_taa = q.enable_taa;
+            fx.enable_bloom = q.enable_bloom;
+            fx.enable_ssr = q.enable_ssr;
             fx.shadow_cascades = q.shadow_cascades;
           }
           imgui.Separator();
@@ -512,11 +536,47 @@ int main(int argc, char** argv) {
     }
     render.set_effect_tuning(fx);
 
+    const bool mouse_pressed = snap.mouse_left && !mouse_left_was;
+    mouse_left_was = snap.mouse_left;
+    {
+      const float hx = 16.f;
+      const float hy = (std::max)(16.f, dh - 130.f);
+      retained->Clear();
+      retained->Panel("hud", hx, hy, 220.f, 110.f, {0.06f, 0.07f, 0.1f, 0.82f});
+      retained->Label("hud_title", "Retained HUD", hx + 12.f, hy + 12.f);
+      retained->Toggle("hud_fog", "Fog", hx + 12.f, hy + 40.f, 180.f, 26.f, fx.enable_fog);
+      retained->Toggle("hud_bloom", "Bloom", hx + 12.f, hy + 72.f, 180.f, 26.f, fx.enable_bloom);
+    }
+    const auto retained_events =
+        retained->Pump(snap.mouse_x, snap.mouse_y, snap.mouse_left, mouse_pressed);
+    for (const auto& ev : retained_events) {
+      if (ev.id == "hud_fog" && ev.type == engine::ui::UiEventType::Toggle) {
+        fx.enable_fog = ev.bool_value;
+      } else if (ev.id == "hud_bloom" && ev.type == engine::ui::UiEventType::Toggle) {
+        fx.enable_bloom = ev.bool_value;
+      }
+    }
+    retained->set_bool("hud_fog", fx.enable_fog);
+    retained->set_bool("hud_bloom", fx.enable_bloom);
+    render.set_effect_tuning(fx);
+
+    std::vector<engine::rhi::ScreenQuad> retained_quads;
+    for (const auto& r : retained->BuildDrawList()) {
+      engine::rhi::ScreenQuad q;
+      q.x0 = r.x0;
+      q.y0 = r.y0;
+      q.x1 = r.x1;
+      q.y1 = r.y1;
+      q.color = r.color;
+      retained_quads.push_back(q);
+    }
+
     const float aspect = dh > 0.f ? dw / dh : 1.f;
     const auto scene = engine::render::RenderSceneExtractor::Extract(
         app_ref.world(), app_ref.camera(), aspect);
     profiler.Begin("DrawFrame");
-    if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites, nullptr,
+    if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites,
+                                   retained_quads.empty() ? nullptr : &retained_quads,
                                    use_vulkan ? nullptr : &dbg);
         !st) {
       engine::LogError(st.message());
@@ -529,6 +589,7 @@ int main(int argc, char** argv) {
       }
       profiler.End("ImGui");
     }
+    app_ref.set_ui_want_capture(app_ref.ui_want_capture() || retained->want_capture());
     profiler.End("Frame");
   });
   return status ? 0 : 1;

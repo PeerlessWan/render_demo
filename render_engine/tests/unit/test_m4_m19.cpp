@@ -15,6 +15,7 @@
 #include "engine/render/render_scene.h"
 #include "engine/render/shadow_atlas.h"
 #include "engine/render/shadow_csm.h"
+#include "engine/rhi/submit_config.h"
 #include "engine/render2d/sprite.h"
 #include "engine/scene/serialization.h"
 #include "engine/scene/world.h"
@@ -160,6 +161,34 @@ TEST_CASE("CPU skinning moves vertex", "[animation]") {
   const float weights[4] = {1, 0, 0, 0};
   const auto v = engine::animation::SkinVertexCpu({0, 0, 0}, pose, bones, weights);
   REQUIRE(v.x > 1.5f);
+}
+
+TEST_CASE("CPU morph targets blend deltas", "[animation]") {
+  const std::vector<engine::Vec3> bind{{0, 0, 0}, {1, 0, 0}};
+  engine::animation::MorphTarget smile;
+  smile.name = "smile";
+  smile.deltas = {{0, 0.5f, 0}, {0, 0.25f, 0}};
+  engine::animation::MorphTarget frown;
+  frown.name = "frown";
+  frown.deltas = {{0, -0.5f, 0}, {0, 0, 0}};
+  std::vector<engine::Vec3> out;
+  engine::animation::ApplyMorphTargets(bind, {smile, frown}, {1.f, 0.5f}, out);
+  REQUIRE(out.size() == 2);
+  REQUIRE(out[0].y > 0.2f);   // 0.5 + 0.5*(-0.5) = 0.25
+  REQUIRE(out[1].y > 0.2f);   // 0.25
+}
+
+TEST_CASE("SubmitConfig validates multithread workers", "[rhi]") {
+  engine::rhi::SubmitConfig ok;
+  ok.multithread = true;
+  ok.worker_count = 2;
+  REQUIRE(engine::rhi::ValidateSubmitConfig(ok));
+  engine::rhi::SubmitConfig bad;
+  bad.multithread = true;
+  bad.worker_count = 0;
+  REQUIRE_FALSE(engine::rhi::ValidateSubmitConfig(bad));
+  REQUIRE_FALSE(engine::QueryFeature("bindless"));
+  REQUIRE_FALSE(engine::QueryFeature("hdr_output"));
 }
 
 TEST_CASE("PostStack respects quality", "[post]") {

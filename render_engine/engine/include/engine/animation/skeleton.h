@@ -37,4 +37,17 @@ SkinPose SampleClip(const Skeleton& skel, const AnimationClip& clip, float time)
 Vec3 SkinVertexCpu(const Vec3& pos, const SkinPose& pose, const int bones[4],
                    const float weights[4]);
 
+// M14: morph / blend-shape target (delta from bind pose).
+struct MorphTarget {
+  std::string name;
+  std::vector<Vec3> deltas;  // per-vertex position deltas
+};
+
+// Apply weighted morph deltas onto bind positions. weights[i] multiplies targets[i].
+// Output size matches bind_positions; missing deltas treated as zero.
+void ApplyMorphTargets(const std::vector<Vec3>& bind_positions,
+                       const std::vector<MorphTarget>& targets,
+                       const std::vector<float>& weights,
+                       std::vector<Vec3>& out_positions);
+
 }  // namespace engine::animation

@@ -17,6 +17,8 @@ FeatureSet QueryFeatures() {
   f.video_decode = false;    // D3D12VA stub reports unavailable
   f.quic = false;
   f.multithread_submit = true;
+  f.bindless = false;   // M14: descriptor heap bindless not wired
+  f.hdr_output = false; // M14: display HDR path not wired
   return f;
 }
 
@@ -28,6 +30,8 @@ bool QueryFeature(std::string_view name) {
   if (name == "video_decode") return f.video_decode;
   if (name == "quic") return f.quic;
   if (name == "multithread_submit") return f.multithread_submit;
+  if (name == "bindless") return f.bindless;
+  if (name == "hdr_output") return f.hdr_output;
   return false;
 }
 

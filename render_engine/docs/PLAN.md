@@ -343,9 +343,9 @@
 | **M10** 可见性·LOD·实例·流式 | **完成（骨架）**：LodSelect、StreamingBudget |
 | **M11** 阴影·AA·AO·透明 | **可用加深**：CSM；点光 **6-face cubemap atlas**（最多 2 灯）；深度 SSAO + 历史 TAA；**AlphaBlend 透明**（glass） |
 | **M12** 物理 | **可用加深**：builtin + **真 Jolt**（`third_party/JoltPhysics` v5.6.0，`CreateDefaultPhysicsWorld` 优先 jolt） |
-| **M13** P1 后处理与反射 | **完成（骨架）**：PostStack 开关位 |
-| **M14** P1 提交与显示 | **完成（骨架）**：SubmitConfig |
-| **M15** UI 完整 | **可用加深**：`ImmediateUi` + Sandbox 特效/Profiler；RetainedUi + Rml 工厂 fallback；真 RmlUi 仍待 |
+| **M13** P1 后处理与反射 | **可用加深**：SSAO/TAA + ACES/Reinhard + AutoExposure + Bloom + 深度雾 + SSR + 轻量 DoF/运动模糊；动态反射仍骨架 |
+| **M14** P1 提交与显示 | **加深**：CPU Morph/BlendShape；`SetSubmitConfig` 校验；bindless/HDR Feature 门控（仍关） |
+| **M15** UI 完整 | **可用加深**：`ImmediateUi` + Sandbox 特效/Profiler；**Retained HUD→ScreenQuad 端到端**；Rml 工厂仍 fallback；真 RmlUi 仍待 |
 | **M16** 2D·像素·混合 | **可用加深**：屏空间 `DrawScreenQuads` + Sprite Y-sort、Tiled 导入 |
 | **M17** Vulkan（Windows） | **可用加深**：清屏 + lit cube + **CSM 方向光阴影**（`--backend=vulkan`）；纹理/UI/Post 仍待 |
 | **M18** Linux + Vulkan | **完成（文档占位）**：[LINUX_VULKAN.md](LINUX_VULKAN.md) |

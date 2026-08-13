@@ -12,6 +12,7 @@
 #include "engine/rhi/i_device.h"
 #include "engine/ui/immediate_ui.h"
 #include "engine/ui/retained_ui.h"
+#include "engine/ui/rml_ui.h"
 #include "engine/platform/window.h"
 
 #include <array>
@@ -119,6 +120,16 @@ TEST_CASE("RetainedUi HitTest", "[usable]") {
   REQUIRE(hit);
   REQUIRE(*hit == "b");
   REQUIRE_FALSE(ui.HitTest(200, 200));
+}
+
+TEST_CASE("RetainedUi backend factory fallback", "[usable][ui]") {
+  const auto info = engine::ui::QueryRetainedUiBackend();
+  REQUIRE(info.name != nullptr);
+  REQUIRE_FALSE(info.is_rml);
+  auto backend = engine::ui::CreateRetainedUiBackend();
+  REQUIRE(backend);
+  backend->Button("ok", "OK", 0, 0, 40, 20);
+  REQUIRE(backend->HitTest(10, 10));
 }
 
 TEST_CASE("ImmediateUi available with ImGui", "[usable][ui]") {

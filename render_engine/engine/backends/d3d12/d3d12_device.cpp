@@ -1225,7 +1225,7 @@ class D3D12Device final : public IDevice {
     upload.Type = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_RESOURCE_DESC buf{};
     buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    buf.Width = 256;
+    buf.Width = 512;
     buf.Height = 1;
     buf.DepthOrArraySize = 1;
     buf.MipLevels = 1;
@@ -1271,7 +1271,7 @@ class D3D12Device final : public IDevice {
     if (!post_ready_) {
       return Status::Fail("SetupPostMesh not called");
     }
-    if (!desc.enable_ssao && !desc.enable_taa && std::fabs(desc.exposure - 1.f) < 1e-4f) {
+    if (!desc.NeedsResolve()) {
       return Status::Ok();
     }
     if (!scene_color_ || !history_ || !dsv_ || !post_pso_ || !post_cb_ || !post_srv_heap_) {
@@ -1306,7 +1306,7 @@ class D3D12Device final : public IDevice {
 
     Transition(backbuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
-    // 3) PostCB
+    // 3) PostCB (must match post_ssao_taa.hlsl packing)
     struct PostCB {
       float inv_res[2];
       float enable_ssao;
@@ -1316,9 +1316,29 @@ class D3D12Device final : public IDevice {
       float taa_blend;
       float exposure;
       float inv_view_proj[16];
+      float view_proj[16];
       float eye[3];
-      float pad2;
+      float tonemap_mode;
+      float enable_auto_exposure;
+      float auto_exposure_key;
+      float enable_bloom;
+      float bloom_threshold;
+      float bloom_intensity;
+      float enable_fog;
+      float fog_density;
+      float fog_start;
+      float fog_color[3];
+      float enable_tonemap;
+      float enable_ssr;
+      float ssr_intensity;
+      float ssr_thickness;
+      float enable_dof;
+      float dof_focus;
+      float dof_scale;
+      float enable_motion_blur;
+      float motion_blur_strength;
     } cb{};
+    static_assert(sizeof(PostCB) <= 512, "post CB exceeds upload buffer");
     cb.inv_res[0] = 1.f / static_cast<float>((std::max)(1u, width_));
     cb.inv_res[1] = 1.f / static_cast<float>((std::max)(1u, height_));
     cb.enable_ssao = desc.enable_ssao ? 1.f : 0.f;
@@ -1328,9 +1348,31 @@ class D3D12Device final : public IDevice {
     cb.taa_blend = desc.taa_blend;
     cb.exposure = desc.exposure;
     std::memcpy(cb.inv_view_proj, desc.inv_view_proj.m.data(), sizeof(cb.inv_view_proj));
+    std::memcpy(cb.view_proj, desc.view_proj.m.data(), sizeof(cb.view_proj));
     cb.eye[0] = desc.eye.x;
     cb.eye[1] = desc.eye.y;
     cb.eye[2] = desc.eye.z;
+    cb.tonemap_mode = static_cast<float>(desc.tonemap_mode);
+    cb.enable_auto_exposure = desc.enable_auto_exposure ? 1.f : 0.f;
+    cb.auto_exposure_key = desc.auto_exposure_key;
+    cb.enable_bloom = desc.enable_bloom ? 1.f : 0.f;
+    cb.bloom_threshold = desc.bloom_threshold;
+    cb.bloom_intensity = desc.bloom_intensity;
+    cb.enable_fog = desc.enable_fog ? 1.f : 0.f;
+    cb.fog_density = desc.fog_density;
+    cb.fog_start = desc.fog_start;
+    cb.fog_color[0] = desc.fog_color.x;
+    cb.fog_color[1] = desc.fog_color.y;
+    cb.fog_color[2] = desc.fog_color.z;
+    cb.enable_tonemap = desc.enable_tonemap ? 1.f : 0.f;
+    cb.enable_ssr = desc.enable_ssr ? 1.f : 0.f;
+    cb.ssr_intensity = desc.ssr_intensity;
+    cb.ssr_thickness = desc.ssr_thickness;
+    cb.enable_dof = desc.enable_dof ? 1.f : 0.f;
+    cb.dof_focus = desc.dof_focus;
+    cb.dof_scale = desc.dof_scale;
+    cb.enable_motion_blur = desc.enable_motion_blur ? 1.f : 0.f;
+    cb.motion_blur_strength = desc.motion_blur_strength;
 
     void* mapped = nullptr;
     if (FAILED(post_cb_->Map(0, nullptr, &mapped))) {

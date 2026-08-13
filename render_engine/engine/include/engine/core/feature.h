@@ -13,6 +13,8 @@ struct FeatureSet {
   bool video_decode = false;
   bool quic = false;
   bool multithread_submit = true;
+  bool bindless = false;
+  bool hdr_output = false;
   FeatureLevel level = FeatureLevel::L0;
 };
 
