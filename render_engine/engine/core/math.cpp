@@ -85,10 +85,25 @@ Mat4 Mat4::LookAt(const Vec3& eye, const Vec3& target, const Vec3& up) {
 }
 
 Mat4 Mat4::Perspective(float fovy_rad, float aspect, float z_near, float z_far) {
+  // Right-handed, clip Z in [0,1] (D3D12 / Vulkan). View space looks down -Z.
   const float f = 1.f / std::tan(fovy_rad * 0.5f);
   Mat4 m{};
-  m.m = {f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (z_far + z_near) / (z_near - z_far), -1, 0, 0,
-         (2.f * z_far * z_near) / (z_near - z_far), 0};
+  m.m = {f / aspect,
+         0,
+         0,
+         0,
+         0,
+         f,
+         0,
+         0,
+         0,
+         0,
+         z_far / (z_near - z_far),
+         -1,
+         0,
+         0,
+         (z_far * z_near) / (z_near - z_far),
+         0};
   return m;
 }
 
@@ -203,7 +218,8 @@ Frustum Frustum::FromViewProj(const Mat4& vp) {
   set(1, m[3] - m[0], m[7] - m[4], m[11] - m[8], m[15] - m[12]);
   set(2, m[3] + m[1], m[7] + m[5], m[11] + m[9], m[15] + m[13]);
   set(3, m[3] - m[1], m[7] - m[5], m[11] - m[9], m[15] - m[13]);
-  set(4, m[3] + m[2], m[7] + m[6], m[11] + m[10], m[15] + m[14]);
+  // Near uses clip Z=0 (D3D/Vulkan), not OpenGL's Z=-1 (row3+row2).
+  set(4, m[2], m[6], m[10], m[14]);
   set(5, m[3] - m[2], m[7] - m[6], m[11] - m[10], m[15] - m[14]);
   return f;
 }

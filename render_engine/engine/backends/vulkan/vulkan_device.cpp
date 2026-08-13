@@ -388,18 +388,8 @@ class VulkanDevice final : public IDevice {
     if (!lit_ready_ || !frame_ub_) {
       return Status::Fail("SetupLitMesh not called");
     }
-    // Engine Mat4::Perspective is OpenGL NDC Z [-1,1]; Vulkan depth is [0,1].
-    Mat4 clip_fix = Mat4::Identity();
-    clip_fix.m[10] = 0.5f;
-    clip_fix.m[14] = 0.5f;
-
+    // Mat4::Perspective already outputs clip Z in [0,1] for D3D/Vulkan.
     lighting_ = lighting;
-    lighting_.view_proj = clip_fix * lighting.view_proj;
-    lighting_.light_view_proj = clip_fix * lighting.light_view_proj;
-    for (int i = 0; i < 4; ++i) {
-      lighting_.cascade_view_proj[static_cast<std::size_t>(i)] =
-          clip_fix * lighting.cascade_view_proj[static_cast<std::size_t>(i)];
-    }
 
     FrameGpu data{};
     std::memcpy(data.view_proj, lighting_.view_proj.m.data(), sizeof(data.view_proj));
