@@ -33,6 +33,8 @@ class WindowHeadless final : public Window {
     input_.mouse_dy = 0.f;
   }
 
+  void ConsumeMouseWheel() override { input_.mouse_wheel = 0.f; }
+
   WindowInputSnapshot& mutable_input() { return input_; }
 
  private:
@@ -84,6 +86,8 @@ class WindowWin32 final : public Window {
     input_.mouse_dy = 0.f;
   }
 
+  void ConsumeMouseWheel() override { input_.mouse_wheel = 0.f; }
+
   void OnDestroy() { should_close_ = true; }
 
   void OnSize(std::uint32_t width, std::uint32_t height) {
@@ -114,6 +118,54 @@ class WindowWin32 final : public Window {
       input_.mouse_left = down;
     } else if (button == 1) {
       input_.mouse_right = down;
+    } else if (button == 2) {
+      input_.mouse_middle = down;
+    }
+    // Avoid first-frame jump when starting a drag.
+    if (down) {
+      input_.mouse_dx = 0.f;
+      input_.mouse_dy = 0.f;
+    }
+  }
+
+  void OnMouseWheel(float notches) { input_.mouse_wheel += notches; }
+
+  void SetCursorCaptured(bool captured) override {
+    if (!hwnd_ || soft_captured_ == captured) {
+      return;
+    }
+    soft_captured_ = captured;
+    if (captured) {
+      SetCapture(hwnd_);
+    } else if (GetCapture() == hwnd_ && !cursor_locked_) {
+      ReleaseCapture();
+    }
+  }
+
+  void SetCursorLocked(bool locked) override {
+    if (!hwnd_ || cursor_locked_ == locked) {
+      return;
+    }
+    cursor_locked_ = locked;
+    if (locked) {
+      SetCapture(hwnd_);
+      RECT rc{};
+      GetClientRect(hwnd_, &rc);
+      POINT ul{rc.left, rc.top};
+      POINT lr{rc.right, rc.bottom};
+      ClientToScreen(hwnd_, &ul);
+      ClientToScreen(hwnd_, &lr);
+      RECT clip{ul.x, ul.y, lr.x, lr.y};
+      ClipCursor(&clip);
+      while (ShowCursor(FALSE) >= 0) {
+      }
+    } else {
+      ClipCursor(nullptr);
+      while (ShowCursor(TRUE) < 0) {
+      }
+      if (GetCapture() == hwnd_ && !soft_captured_) {
+        ReleaseCapture();
+      }
     }
   }
 
@@ -126,6 +178,8 @@ class WindowWin32 final : public Window {
   int last_mouse_x_ = 0;
   int last_mouse_y_ = 0;
   bool have_mouse_ = false;
+  bool soft_captured_ = false;
+  bool cursor_locked_ = false;
 };
 
 WindowWin32* WindowFromHwnd(HWND hwnd) {
@@ -172,6 +226,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
       case WM_RBUTTONUP:
         self->OnMouseButton(1, false);
         return 0;
+      case WM_MBUTTONDOWN:
+        self->OnMouseButton(2, true);
+        return 0;
+      case WM_MBUTTONUP:
+        self->OnMouseButton(2, false);
+        return 0;
+      case WM_MOUSEWHEEL: {
+        const int delta = GET_WHEEL_DELTA_WPARAM(wparam);
+        self->OnMouseWheel(static_cast<float>(delta) / static_cast<float>(WHEEL_DELTA));
+        return 0;
+      }
       case WM_CLOSE:
         self->OnDestroy();
         DestroyWindow(hwnd);

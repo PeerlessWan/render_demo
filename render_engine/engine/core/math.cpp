@@ -209,10 +209,13 @@ Frustum Frustum::FromViewProj(const Mat4& vp) {
 }
 
 bool Frustum::ContainsAabb(const Aabb& box) const {
+  // Small absolute slack avoids false rejects for large/thin AABBs at grazing angles
+  // (e.g. scaled ground plane intermittently culled while orbiting).
+  constexpr float kSlack = 0.25f;
   for (const auto& p : planes) {
     const Vec3 positive{p.n.x >= 0 ? box.max.x : box.min.x, p.n.y >= 0 ? box.max.y : box.min.y,
                         p.n.z >= 0 ? box.max.z : box.min.z};
-    if (Dot(p.n, positive) + p.d < 0.f) {
+    if (Dot(p.n, positive) + p.d < -kSlack) {
       return false;
     }
   }

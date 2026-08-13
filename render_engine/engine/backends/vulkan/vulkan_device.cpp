@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -43,12 +44,6 @@ Result<std::vector<std::uint8_t>> ReadFileBytes(const std::filesystem::path& pat
   f.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(size));
   return Result<std::vector<std::uint8_t>>::Ok(std::move(data));
 }
-
-struct LitVertex {
-  float px, py, pz;
-  float nx, ny, nz;
-  float u, v;
-};
 
 struct FrameGpu {
   float view_proj[16];
@@ -475,14 +470,33 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
 
-  Status UploadLitAlbedoRgba(const std::uint8_t*, int, int) override {
+  Status UploadLitAlbedoRgba(const std::uint8_t* rgba, int width, int height,
+                             int slot) override {
+    (void)rgba;
+    (void)width;
+    (void)height;
+    (void)slot;
     return Status::Fail("Vulkan lit not ready");
   }
-  Status UploadLitOrmRgba(const std::uint8_t*, int, int) override {
+  Status UploadLitOrmRgba(const std::uint8_t* rgba, int width, int height, int slot) override {
+    (void)rgba;
+    (void)width;
+    (void)height;
+    (void)slot;
     return Status::Fail("Vulkan lit not ready");
+  }
+  Status UploadLitGeometry(int mesh_slot, std::span<const LitVertex> vertices,
+                           std::span<const std::uint32_t> indices) override {
+    (void)mesh_slot;
+    (void)vertices;
+    (void)indices;
+    return Status::Fail("Vulkan lit geometry not ready");
   }
   Status DrawScreenQuads(std::span<const ScreenQuad>) override {
     return Status::Fail("Vulkan lit not ready");
+  }
+  Status DrawDebugLines(std::span<const DebugLineVertex>) override {
+    return Status::Ok();  // no-op until Vulkan debug path
   }
   Status SetupUiMesh(const SimpleMeshShaders&) override {
     return Status::Fail("Vulkan lit not ready");

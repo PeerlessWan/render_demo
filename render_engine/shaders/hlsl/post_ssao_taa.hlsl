@@ -6,7 +6,7 @@ cbuffer PostCB : register(b0) {
   float g_ssao_radius;
   float g_ssao_intensity;
   float g_taa_blend;
-  float g_pad;
+  float g_exposure;
   float4x4 g_inv_view_proj;
   float3 g_eye;
   float g_pad2;
@@ -94,5 +94,8 @@ float4 PSMain(VSOut input) : SV_Target {
     color = lerp(color, hist, g_taa_blend);
   }
 
+  color *= max(g_exposure, 0.0);
+  // Reinhard tone map keeps bright areas from clipping after exposure.
+  color = color / (1.0 + color);
   return float4(color, 1.0);
 }

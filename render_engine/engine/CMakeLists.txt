@@ -22,6 +22,7 @@ add_library(engine_assets STATIC
   assets/streaming_budget.cpp
   assets/image_loader_stb.cpp
   assets/texture_loader_dds.cpp
+  assets/gltf_loader.cpp
 )
 target_include_directories(engine_assets PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_assets PUBLIC engine_core)
@@ -44,6 +45,16 @@ if(ENGINE_WITH_DDSKTX)
   message(STATUS "dds-ktx enabled: ${ENGINE_DDSKTX_DIR}")
 else()
   target_compile_definitions(engine_assets PUBLIC ENGINE_WITH_DDSKTX=0)
+endif()
+if(ENGINE_WITH_CGLTF)
+  if(NOT EXISTS "${ENGINE_CGLTF_DIR}/cgltf.h")
+    message(FATAL_ERROR "ENGINE_WITH_CGLTF=ON but cgltf.h not found at ${ENGINE_CGLTF_DIR}")
+  endif()
+  target_include_directories(engine_assets PRIVATE "${ENGINE_CGLTF_DIR}")
+  target_compile_definitions(engine_assets PUBLIC ENGINE_WITH_CGLTF=1)
+  message(STATUS "cgltf enabled: ${ENGINE_CGLTF_DIR}")
+else()
+  target_compile_definitions(engine_assets PUBLIC ENGINE_WITH_CGLTF=0)
 endif()
 
 add_library(engine_platform STATIC

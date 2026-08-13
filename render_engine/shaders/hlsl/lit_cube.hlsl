@@ -34,12 +34,17 @@ cbuffer ObjectCB : register(b1) {
   float g_roughness;
   float g_use_albedo;
   float g_use_orm;
+  float g_tex_slot;
+  float g_uv_scale;
+  float2 g_pad;
 };
 
 Texture2D g_shadow_map : register(t0);
 Texture2D g_albedo_map : register(t1);
 Texture2D g_local_shadow_map : register(t2);
 Texture2D g_orm_map : register(t3);
+Texture2D g_albedo_map2 : register(t4);
+Texture2D g_orm_map2 : register(t5);
 SamplerComparisonState g_shadow_samp : register(s0);
 SamplerState g_linear_samp : register(s1);
 
@@ -151,17 +156,22 @@ float4 PSMain(VSOutput input) : SV_Target {
   float3 h = normalize(l + v);
   float ndotl = saturate(dot(n, l));
 
-  float2 uv = input.uv * 2.0;
+  float2 uv = input.uv * max(g_uv_scale, 1.0);
   float3 base = g_base_color.rgb;
   if (g_use_albedo > 0.5) {
-    base *= g_albedo_map.Sample(g_linear_samp, uv).rgb;
+    if (g_tex_slot > 0.5) {
+      base *= g_albedo_map2.Sample(g_linear_samp, uv).rgb;
+    } else {
+      base *= g_albedo_map.Sample(g_linear_samp, uv).rgb;
+    }
   }
 
   float metallic = g_metallic;
   float roughness = g_roughness;
   float tex_ao = 1.0;
   if (g_use_orm > 0.5) {
-    float3 orm = g_orm_map.Sample(g_linear_samp, uv).rgb;
+    float3 orm = (g_tex_slot > 0.5) ? g_orm_map2.Sample(g_linear_samp, uv).rgb
+                                    : g_orm_map.Sample(g_linear_samp, uv).rgb;
     tex_ao = orm.r;
     roughness = orm.g;
     metallic = orm.b;

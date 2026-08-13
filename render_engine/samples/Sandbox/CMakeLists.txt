@@ -8,6 +8,7 @@ file(MAKE_DIRECTORY "${_shader_out}")
 set(_src "${CMAKE_SOURCE_DIR}/shaders/hlsl/lit_cube.hlsl")
 set(_ui_src "${CMAKE_SOURCE_DIR}/shaders/hlsl/ui_imgui.hlsl")
 set(_post_src "${CMAKE_SOURCE_DIR}/shaders/hlsl/post_ssao_taa.hlsl")
+set(_dbg_src "${CMAKE_SOURCE_DIR}/shaders/hlsl/debug_line.hlsl")
 
 set(_lit_vs "${_shader_out}/lit_cube.vs.cso")
 set(_lit_ps "${_shader_out}/lit_cube.ps.cso")
@@ -19,9 +20,12 @@ set(_ui_vs "${_shader_out}/ui_imgui.vs.cso")
 set(_ui_ps "${_shader_out}/ui_imgui.ps.cso")
 set(_post_vs "${_shader_out}/post_ssao_taa.vs.cso")
 set(_post_ps "${_shader_out}/post_ssao_taa.ps.cso")
+set(_dbg_vs "${_shader_out}/debug_line.vs.cso")
+set(_dbg_ps "${_shader_out}/debug_line.ps.cso")
 
 add_custom_command(
-  OUTPUT "${_lit_vs}" "${_lit_ps}" "${_sh_vs}" "${_sh_ps}" "${_qd_vs}" "${_qd_ps}" "${_ui_vs}" "${_ui_ps}" "${_post_vs}" "${_post_ps}"
+  OUTPUT "${_lit_vs}" "${_lit_ps}" "${_sh_vs}" "${_sh_ps}" "${_qd_vs}" "${_qd_ps}"
+         "${_ui_vs}" "${_ui_ps}" "${_post_vs}" "${_post_ps}" "${_dbg_vs}" "${_dbg_ps}"
   COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E VSMain -Fo "${_lit_vs}" "${_src}"
   COMMAND "${DXC_EXECUTABLE}" -T ps_6_0 -E PSMain -Fo "${_lit_ps}" "${_src}"
   COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E ShadowVS -Fo "${_sh_vs}" "${_src}"
@@ -32,12 +36,15 @@ add_custom_command(
   COMMAND "${DXC_EXECUTABLE}" -T ps_6_0 -E PSMain -Fo "${_ui_ps}" "${_ui_src}"
   COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E VSMain -Fo "${_post_vs}" "${_post_src}"
   COMMAND "${DXC_EXECUTABLE}" -T ps_6_0 -E PSMain -Fo "${_post_ps}" "${_post_src}"
-  DEPENDS "${_src}" "${_ui_src}" "${_post_src}"
-  COMMENT "DXC compile lit/shadow/quad/ui/post shaders"
+  COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E VSMain -Fo "${_dbg_vs}" "${_dbg_src}"
+  COMMAND "${DXC_EXECUTABLE}" -T ps_6_0 -E PSMain -Fo "${_dbg_ps}" "${_dbg_src}"
+  DEPENDS "${_src}" "${_ui_src}" "${_post_src}" "${_dbg_src}"
+  COMMENT "DXC compile lit/shadow/quad/ui/post/debug shaders"
   VERBATIM
 )
 add_custom_target(sample_sandbox_shaders DEPENDS
-  "${_lit_vs}" "${_lit_ps}" "${_sh_vs}" "${_sh_ps}" "${_qd_vs}" "${_qd_ps}" "${_ui_vs}" "${_ui_ps}" "${_post_vs}" "${_post_ps}"
+  "${_lit_vs}" "${_lit_ps}" "${_sh_vs}" "${_sh_ps}" "${_qd_vs}" "${_qd_ps}"
+  "${_ui_vs}" "${_ui_ps}" "${_post_vs}" "${_post_ps}" "${_dbg_vs}" "${_dbg_ps}"
 )
 
 file(TO_CMAKE_PATH "${_shader_out}" _shader_out_def)

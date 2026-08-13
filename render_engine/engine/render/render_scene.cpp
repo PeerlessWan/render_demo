@@ -34,7 +34,7 @@ void Visit(const scene::World& world, scene::NodeId id, const Frustum& frustum, 
     if (mesh->visible) {
       const Mat4& wm = world.world_matrix(id);
       const Aabb wb = TransformAabb(mesh->local_bounds, wm);
-      if (frustum.ContainsAabb(wb)) {
+      if (mesh->never_cull || frustum.ContainsAabb(wb)) {
         RenderInstance inst;
         inst.node = id;
         inst.world = wm;

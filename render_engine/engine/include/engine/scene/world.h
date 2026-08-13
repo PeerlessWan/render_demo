@@ -23,6 +23,7 @@ struct MeshRenderer {
   std::string mesh_id;
   Aabb local_bounds{Vec3{-0.5f, -0.5f, -0.5f}, Vec3{0.5f, 0.5f, 0.5f}};
   bool visible = true;
+  bool never_cull = false;  // skip frustum cull (large ground / helpers)
 };
 
 class World {

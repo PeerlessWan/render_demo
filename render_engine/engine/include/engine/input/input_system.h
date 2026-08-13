@@ -48,6 +48,7 @@ class InputSystem {
  public:
   void set_key(Key key, bool down);
   void set_mouse_delta(float dx, float dy);
+  void set_mouse_wheel(float notches) { mouse_wheel_ = notches; }
   void set_gamepad_axis(int axis, float value);  // 0=LX 1=LY
   void set_gamepad_button(int button, bool down);
 
@@ -59,6 +60,7 @@ class InputSystem {
 
   [[nodiscard]] bool key_down(Key key) const;
   [[nodiscard]] Vec2 mouse_delta() const { return mouse_delta_; }
+  [[nodiscard]] float mouse_wheel() const { return mouse_wheel_; }
   [[nodiscard]] float axis(std::string_view action) const;
   [[nodiscard]] bool pressed(std::string_view action) const;
 
@@ -69,6 +71,7 @@ class InputSystem {
   std::array<bool, static_cast<std::size_t>(Key::Count)> keys_{};
   std::array<bool, static_cast<std::size_t>(Key::Count)> keys_prev_{};
   Vec2 mouse_delta_{};
+  float mouse_wheel_ = 0.f;
   float pad_axes_[2]{};
   bool pad_buttons_[8]{};
   ActionMap actions_;

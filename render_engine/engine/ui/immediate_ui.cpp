@@ -6,6 +6,7 @@
 #include "imgui.h"
 #endif
 
+#include <cmath>
 #include <cstring>
 #include <cstdint>
 #include <vector>
@@ -101,6 +102,10 @@ void ImmediateUi::BeginFrame(const WindowInputSnapshot& input, float display_w, 
   io.AddMousePosEvent(input.mouse_x, input.mouse_y);
   io.AddMouseButtonEvent(0, input.mouse_left);
   io.AddMouseButtonEvent(1, input.mouse_right);
+  io.AddMouseButtonEvent(2, input.mouse_middle);
+  if (std::fabs(input.mouse_wheel) > 1e-6f) {
+    io.AddMouseWheelEvent(0.f, input.mouse_wheel);
+  }
 
   auto map_key = [](int vk) -> ImGuiKey {
     switch (vk) {

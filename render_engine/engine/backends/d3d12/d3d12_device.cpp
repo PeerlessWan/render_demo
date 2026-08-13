@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
@@ -447,10 +448,10 @@ class D3D12Device final : public IDevice {
       return shadow_ps.status();
     }
 
-    // Lit root: CBV b0, CBV b1, table t0..t3, static samplers s0 (shadow), s1 (albedo/orm).
+    // Lit root: CBV b0, CBV b1, table t0..t5, static samplers s0 (shadow), s1 (albedo/orm).
     D3D12_DESCRIPTOR_RANGE srv_range{};
     srv_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    srv_range.NumDescriptors = 4;
+    srv_range.NumDescriptors = 6;
     srv_range.BaseShaderRegister = 0;
     srv_range.RegisterSpace = 0;
     srv_range.OffsetInDescriptorsFromTableStart = 0;
@@ -630,6 +631,12 @@ class D3D12Device final : public IDevice {
     if (auto st = CreateLitOrmTexture(); !st) {
       return st;
     }
+    if (auto st = CreateLitAlbedoTextureSlot1(); !st) {
+      return st;
+    }
+    if (auto st = CreateLitOrmTextureSlot1(); !st) {
+      return st;
+    }
     if (auto st = CreateLocalShadowMap(); !st) {
       return st;
     }
@@ -644,6 +651,12 @@ class D3D12Device final : public IDevice {
     quad_ready_ = false;
     if (!shaders.quad_vs_dxil.empty() && !shaders.quad_ps_dxil.empty()) {
       if (auto st = SetupScreenQuads(shaders.quad_vs_dxil, shaders.quad_ps_dxil); !st) {
+        return st;
+      }
+    }
+    debug_ready_ = false;
+    if (!shaders.debug_vs_dxil.empty() && !shaders.debug_ps_dxil.empty()) {
+      if (auto st = SetupDebugLines(shaders.debug_vs_dxil, shaders.debug_ps_dxil); !st) {
         return st;
       }
     }
@@ -841,10 +854,15 @@ class D3D12Device final : public IDevice {
     command_list_->SetGraphicsRootSignature(shadow_root_.Get());
     command_list_->SetGraphicsRootConstantBufferView(0, shadow_frame_cb_->GetGPUVirtualAddress());
     command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    command_list_->IASetVertexBuffers(0, 1, &cube_vbv_);
-    command_list_->IASetIndexBuffer(&cube_ibv_);
 
     for (std::size_t i = 0; i < items.size(); ++i) {
+      const int slot = items[i].mesh_slot;
+      if (slot < 0 || slot >= kMaxMeshSlots || mesh_slots_[slot].index_count == 0) {
+        continue;
+      }
+      command_list_->IASetVertexBuffers(0, 1, &mesh_slots_[slot].vbv);
+      command_list_->IASetIndexBuffer(&mesh_slots_[slot].ibv);
+
       float world[16]{};
       std::memcpy(world, items[i].world.m.data(), sizeof(world));
       const auto offset = static_cast<UINT64>(i % kMaxLitDraws) * 256ull;
@@ -857,7 +875,7 @@ class D3D12Device final : public IDevice {
 
       command_list_->SetGraphicsRootConstantBufferView(
           1, object_cb_->GetGPUVirtualAddress() + offset);
-      command_list_->DrawIndexedInstanced(36, 1, 0, 0, 0);
+      command_list_->DrawIndexedInstanced(mesh_slots_[slot].index_count, 1, 0, 0, 0);
     }
     shadow_draws_ += static_cast<std::uint32_t>(items.size());
     return Status::Ok();
@@ -1059,8 +1077,6 @@ class D3D12Device final : public IDevice {
     command_list_->SetGraphicsRootDescriptorTable(
         2, shadow_srv_heap_->GetGPUDescriptorHandleForHeapStart());
     command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    command_list_->IASetVertexBuffers(0, 1, &cube_vbv_);
-    command_list_->IASetIndexBuffer(&cube_ibv_);
 
     struct ObjectData {
       float world[16];
@@ -1069,9 +1085,19 @@ class D3D12Device final : public IDevice {
       float roughness;
       float use_albedo;
       float use_orm;
+      float tex_slot;
+      float uv_scale;
+      float pad[2];
     };
 
     for (std::size_t i = 0; i < items.size(); ++i) {
+      const int slot = items[i].mesh_slot;
+      if (slot < 0 || slot >= kMaxMeshSlots || mesh_slots_[slot].index_count == 0) {
+        continue;
+      }
+      command_list_->IASetVertexBuffers(0, 1, &mesh_slots_[slot].vbv);
+      command_list_->IASetIndexBuffer(&mesh_slots_[slot].ibv);
+
       ObjectData od{};
       std::memcpy(od.world, items[i].world.m.data(), sizeof(od.world));
       od.color[0] = items[i].color.r;
@@ -1082,6 +1108,8 @@ class D3D12Device final : public IDevice {
       od.roughness = items[i].roughness;
       od.use_albedo = items[i].use_albedo ? 1.f : 0.f;
       od.use_orm = items[i].use_orm ? 1.f : 0.f;
+      od.tex_slot = static_cast<float>(items[i].tex_slot);
+      od.uv_scale = items[i].uv_scale > 0.f ? items[i].uv_scale : 1.f;
 
       const auto offset = static_cast<UINT64>(i % kMaxLitDraws) * 256ull;
       void* ptr = nullptr;
@@ -1093,7 +1121,7 @@ class D3D12Device final : public IDevice {
 
       command_list_->SetGraphicsRootConstantBufferView(
           1, object_cb_->GetGPUVirtualAddress() + offset);
-      command_list_->DrawIndexedInstanced(36, 1, 0, 0, 0);
+      command_list_->DrawIndexedInstanced(mesh_slots_[slot].index_count, 1, 0, 0, 0);
     }
     lit_draws_ += static_cast<std::uint32_t>(items.size());
     return Status::Ok();
@@ -1242,7 +1270,7 @@ class D3D12Device final : public IDevice {
     if (!post_ready_) {
       return Status::Fail("SetupPostMesh not called");
     }
-    if (!desc.enable_ssao && !desc.enable_taa) {
+    if (!desc.enable_ssao && !desc.enable_taa && std::fabs(desc.exposure - 1.f) < 1e-4f) {
       return Status::Ok();
     }
     if (!scene_color_ || !history_ || !dsv_ || !post_pso_ || !post_cb_ || !post_srv_heap_) {
@@ -1285,7 +1313,7 @@ class D3D12Device final : public IDevice {
       float ssao_radius;
       float ssao_intensity;
       float taa_blend;
-      float pad;
+      float exposure;
       float inv_view_proj[16];
       float eye[3];
       float pad2;
@@ -1297,6 +1325,7 @@ class D3D12Device final : public IDevice {
     cb.ssao_radius = desc.ssao_radius;
     cb.ssao_intensity = desc.ssao_intensity;
     cb.taa_blend = desc.taa_blend;
+    cb.exposure = desc.exposure;
     std::memcpy(cb.inv_view_proj, desc.inv_view_proj.m.data(), sizeof(cb.inv_view_proj));
     cb.eye[0] = desc.eye.x;
     cb.eye[1] = desc.eye.y;
@@ -1429,6 +1458,93 @@ class D3D12Device final : public IDevice {
     command_list_->IASetVertexBuffers(0, 1, &vbv);
     command_list_->DrawInstanced(static_cast<UINT>(verts.size()), 1, 0, 0);
     screen_quad_draws_ += static_cast<std::uint32_t>(quads.size());
+    return Status::Ok();
+  }
+
+  Status DrawDebugLines(std::span<const DebugLineVertex> lines_as_segments) override {
+    if (!debug_ready_) {
+      return lines_as_segments.empty()
+                 ? Status::Ok()
+                 : Status::Fail("Debug line PSO not set up (missing debug shader paths)");
+    }
+    if (lines_as_segments.empty()) {
+      return Status::Ok();
+    }
+    if (lines_as_segments.size() % 2 != 0) {
+      return Status::Fail("Debug lines require an even vertex count (segments)");
+    }
+
+    const UINT bytes =
+        static_cast<UINT>(lines_as_segments.size() * sizeof(DebugLineVertex));
+    if (!debug_vb_ || debug_vb_capacity_ < bytes) {
+      WaitGpu();
+      debug_vb_.Reset();
+      D3D12_HEAP_PROPERTIES upload{};
+      upload.Type = D3D12_HEAP_TYPE_UPLOAD;
+      D3D12_RESOURCE_DESC buf{};
+      buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+      buf.Width = bytes;
+      buf.Height = 1;
+      buf.DepthOrArraySize = 1;
+      buf.MipLevels = 1;
+      buf.SampleDesc.Count = 1;
+      buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+      const HRESULT hr = device_->CreateCommittedResource(
+          &upload, D3D12_HEAP_FLAG_NONE, &buf, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+          IID_PPV_ARGS(&debug_vb_));
+      if (FAILED(hr)) {
+        return Status::Fail("Create debug VB failed");
+      }
+      debug_vb_capacity_ = bytes;
+    }
+
+    void* mapped = nullptr;
+    if (FAILED(debug_vb_->Map(0, nullptr, &mapped))) {
+      return Status::Fail("Map debug VB failed");
+    }
+    std::memcpy(mapped, lines_as_segments.data(), bytes);
+    debug_vb_->Unmap(0, nullptr);
+
+    float vp[16]{};
+    std::memcpy(vp, lighting_.view_proj.m.data(), sizeof(vp));
+    void* cb_ptr = nullptr;
+    if (FAILED(debug_cb_->Map(0, nullptr, &cb_ptr))) {
+      return Status::Fail("Map debug CB failed");
+    }
+    std::memcpy(cb_ptr, vp, sizeof(vp));
+    debug_cb_->Unmap(0, nullptr);
+
+    // Ensure color+depth targets (post restores them; BeginFrame also binds).
+    const auto index = swapchain_->GetCurrentBackBufferIndex();
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtv{rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
+                                          static_cast<SIZE_T>(index) * rtv_descriptor_size_};
+    if (dsv_ && depth_state_ != D3D12_RESOURCE_STATE_DEPTH_WRITE) {
+      Transition(dsv_.Get(), depth_state_, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+      depth_state_ = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    }
+    const D3D12_CPU_DESCRIPTOR_HANDLE dsv =
+        dsv_ ? dsv_heap_->GetCPUDescriptorHandleForHeapStart() : D3D12_CPU_DESCRIPTOR_HANDLE{};
+    command_list_->OMSetRenderTargets(1, &rtv, FALSE, dsv_ ? &dsv : nullptr);
+
+    D3D12_VIEWPORT viewport{};
+    viewport.Width = static_cast<float>(width_);
+    viewport.Height = static_cast<float>(height_);
+    viewport.MaxDepth = 1.f;
+    command_list_->RSSetViewports(1, &viewport);
+    D3D12_RECT scissor{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
+    command_list_->RSSetScissorRects(1, &scissor);
+
+    D3D12_VERTEX_BUFFER_VIEW vbv{};
+    vbv.BufferLocation = debug_vb_->GetGPUVirtualAddress();
+    vbv.SizeInBytes = bytes;
+    vbv.StrideInBytes = sizeof(DebugLineVertex);
+
+    command_list_->SetPipelineState(debug_pso_.Get());
+    command_list_->SetGraphicsRootSignature(debug_root_.Get());
+    command_list_->SetGraphicsRootConstantBufferView(0, debug_cb_->GetGPUVirtualAddress());
+    command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
+    command_list_->IASetVertexBuffers(0, 1, &vbv);
+    command_list_->DrawInstanced(static_cast<UINT>(lines_as_segments.size()), 1, 0, 0);
     return Status::Ok();
   }
 
@@ -1790,8 +1906,17 @@ class D3D12Device final : public IDevice {
 
  private:
   static constexpr UINT kMaxLitDraws = 64;
+  static constexpr int kMaxMeshSlots = 4;
   static constexpr UINT kShadowMapSize = 2048;
   static constexpr UINT kLocalShadowMapSize = 2048;
+
+  struct MeshSlotGpu {
+    ComPtr<ID3D12Resource> vb;
+    ComPtr<ID3D12Resource> ib;
+    D3D12_VERTEX_BUFFER_VIEW vbv{};
+    D3D12_INDEX_BUFFER_VIEW ibv{};
+    UINT index_count = 0;
+  };
 
   Status CreateShadowMap() {
     shadow_map_.Reset();
@@ -1807,7 +1932,7 @@ class D3D12Device final : public IDevice {
     }
 
     D3D12_DESCRIPTOR_HEAP_DESC srv_heap{};
-    srv_heap.NumDescriptors = 4;
+    srv_heap.NumDescriptors = 6;
     srv_heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     srv_heap.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     hr = device_->CreateDescriptorHeap(&srv_heap, IID_PPV_ARGS(&shadow_srv_heap_));
@@ -1857,6 +1982,8 @@ class D3D12Device final : public IDevice {
     shadow_map_state_ = D3D12_RESOURCE_STATE_DEPTH_WRITE;
     lit_albedo_.Reset();
     lit_orm_.Reset();
+    lit_albedo2_.Reset();
+    lit_orm2_.Reset();
     local_shadow_map_.Reset();
     local_shadow_dsv_heap_.Reset();
     return Status::Ok();
@@ -2043,18 +2170,51 @@ class D3D12Device final : public IDevice {
     return UploadRgbaTexture(lit_orm_, 3, pixels.data(), static_cast<int>(w), static_cast<int>(h));
   }
 
-  Status UploadLitAlbedoRgba(const std::uint8_t* rgba, int width, int height) override {
-    if (!lit_ready_) {
-      return Status::Fail("SetupLitMesh not called");
-    }
-    return UploadRgbaTexture(lit_albedo_, 1, rgba, width, height);
+  Status CreateLitAlbedoTextureSlot1() {
+    constexpr UINT w = 4;
+    constexpr UINT h = 4;
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(w * h * 4), 255);
+    return UploadRgbaTexture(lit_albedo2_, 4, pixels.data(), static_cast<int>(w),
+                             static_cast<int>(h));
   }
 
-  Status UploadLitOrmRgba(const std::uint8_t* rgba, int width, int height) override {
+  Status CreateLitOrmTextureSlot1() {
+    constexpr UINT w = 4;
+    constexpr UINT h = 4;
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(w * h * 4));
+    for (std::size_t i = 0; i < pixels.size(); i += 4) {
+      pixels[i + 0] = 255;
+      pixels[i + 1] = 128;
+      pixels[i + 2] = 0;
+      pixels[i + 3] = 255;
+    }
+    return UploadRgbaTexture(lit_orm2_, 5, pixels.data(), static_cast<int>(w), static_cast<int>(h));
+  }
+
+  Status UploadLitAlbedoRgba(const std::uint8_t* rgba, int width, int height, int slot) override {
     if (!lit_ready_) {
       return Status::Fail("SetupLitMesh not called");
     }
-    return UploadRgbaTexture(lit_orm_, 3, rgba, width, height);
+    if (slot == 0) {
+      return UploadRgbaTexture(lit_albedo_, 1, rgba, width, height);
+    }
+    if (slot == 1) {
+      return UploadRgbaTexture(lit_albedo2_, 4, rgba, width, height);
+    }
+    return Status::Fail("Invalid albedo slot");
+  }
+
+  Status UploadLitOrmRgba(const std::uint8_t* rgba, int width, int height, int slot) override {
+    if (!lit_ready_) {
+      return Status::Fail("SetupLitMesh not called");
+    }
+    if (slot == 0) {
+      return UploadRgbaTexture(lit_orm_, 3, rgba, width, height);
+    }
+    if (slot == 1) {
+      return UploadRgbaTexture(lit_orm2_, 5, rgba, width, height);
+    }
+    return Status::Fail("Invalid ORM slot");
   }
 
   Status SetupScreenQuads(const std::filesystem::path& vs_path,
@@ -2121,13 +2281,94 @@ class D3D12Device final : public IDevice {
     return Status::Ok();
   }
 
-  Status CreateCubeMesh() {
-    struct LitVertex {
-      float px, py, pz;
-      float nx, ny, nz;
-      float u, v;
+  Status SetupDebugLines(const std::filesystem::path& vs_path,
+                         const std::filesystem::path& ps_path) {
+    auto vs = ReadFileBytes(vs_path);
+    if (!vs) {
+      return vs.status();
+    }
+    auto ps = ReadFileBytes(ps_path);
+    if (!ps) {
+      return ps.status();
+    }
+
+    D3D12_ROOT_PARAMETER param{};
+    param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    param.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    param.Descriptor.ShaderRegister = 0;
+
+    D3D12_ROOT_SIGNATURE_DESC rs{};
+    rs.NumParameters = 1;
+    rs.pParameters = &param;
+    rs.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+    ComPtr<ID3DBlob> sig;
+    ComPtr<ID3DBlob> err;
+    HRESULT hr = D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err);
+    if (FAILED(hr)) {
+      const char* msg = err ? static_cast<const char*>(err->GetBufferPointer()) : "";
+      return Status::Fail(std::string("Debug root sig failed: ") + msg);
+    }
+    hr = device_->CreateRootSignature(0, sig->GetBufferPointer(), sig->GetBufferSize(),
+                                      IID_PPV_ARGS(&debug_root_));
+    if (FAILED(hr)) {
+      return Status::Fail("Create debug root signature failed");
+    }
+
+    D3D12_INPUT_ELEMENT_DESC layout[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
+         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12,
+         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     };
-    // Unit cube centered at origin, 24 verts (unique normals + UVs), 36 indices.
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
+    pso.pRootSignature = debug_root_.Get();
+    pso.VS = {vs->data(), vs->size()};
+    pso.PS = {ps->data(), ps->size()};
+    pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    pso.SampleMask = UINT_MAX;
+    pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    pso.RasterizerState.DepthClipEnable = TRUE;
+    pso.DepthStencilState.DepthEnable = TRUE;
+    pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    pso.InputLayout = {layout, 2};
+    pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
+    pso.NumRenderTargets = 1;
+    pso.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    pso.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+    pso.SampleDesc.Count = 1;
+    hr = device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&debug_pso_));
+    if (FAILED(hr)) {
+      return Status::Fail("Create debug PSO failed: " + HrToString(hr));
+    }
+
+    debug_cb_.Reset();
+    D3D12_HEAP_PROPERTIES upload{};
+    upload.Type = D3D12_HEAP_TYPE_UPLOAD;
+    D3D12_RESOURCE_DESC buf{};
+    buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    buf.Width = 256;
+    buf.Height = 1;
+    buf.DepthOrArraySize = 1;
+    buf.MipLevels = 1;
+    buf.SampleDesc.Count = 1;
+    buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    hr = device_->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buf,
+                                          D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                          IID_PPV_ARGS(&debug_cb_));
+    if (FAILED(hr)) {
+      return Status::Fail("Create debug CB failed");
+    }
+
+    debug_ready_ = true;
+    LogInfo("Debug line path ready");
+    return Status::Ok();
+  }
+
+  Status CreateCubeMesh() {
     const LitVertex verts[] = {
         // +Z
         {-0.5f, -0.5f, 0.5f, 0, 0, 1, 0, 0},  {0.5f, -0.5f, 0.5f, 0, 0, 1, 1, 0},
@@ -2148,12 +2389,28 @@ class D3D12Device final : public IDevice {
         {-0.5f, -0.5f, -0.5f, 0, -1, 0, 0, 0},{0.5f, -0.5f, -0.5f, 0, -1, 0, 1, 0},
         {0.5f, -0.5f, 0.5f, 0, -1, 0, 1, 1},  {-0.5f, -0.5f, 0.5f, 0, -1, 0, 0, 1},
     };
-    const std::uint16_t indices[] = {
+    const std::uint32_t indices[] = {
         0,  1,  2,  0,  2,  3,  4,  5,  6,  4,  6,  7,  8,  9,  10, 8,  10, 11,
         12, 13, 14, 12, 14, 15, 16, 17, 18, 16, 18, 19, 20, 21, 22, 20, 22, 23,
     };
+    return UploadLitGeometry(0, std::span<const LitVertex>(verts, 24),
+                             std::span<const std::uint32_t>(indices, 36));
+  }
+
+  Status UploadLitGeometry(int mesh_slot, std::span<const LitVertex> vertices,
+                           std::span<const std::uint32_t> indices) override {
+    if (mesh_slot < 0 || mesh_slot >= kMaxMeshSlots) {
+      return Status::Fail("Invalid mesh slot");
+    }
+    if (vertices.empty() || indices.empty()) {
+      return Status::Fail("Empty lit geometry");
+    }
+    if (!device_) {
+      return Status::Fail("Device not ready");
+    }
 
     auto create_upload = [&](const void* data, UINT size, ComPtr<ID3D12Resource>& out) -> Status {
+      out.Reset();
       D3D12_HEAP_PROPERTIES upload{};
       upload.Type = D3D12_HEAP_TYPE_UPLOAD;
       D3D12_RESOURCE_DESC buf{};
@@ -2168,7 +2425,7 @@ class D3D12Device final : public IDevice {
           &upload, D3D12_HEAP_FLAG_NONE, &buf, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
           IID_PPV_ARGS(&out));
       if (FAILED(hr)) {
-        return Status::Fail("Create cube buffer failed");
+        return Status::Fail("Create lit mesh buffer failed");
       }
       void* mapped = nullptr;
       out->Map(0, nullptr, &mapped);
@@ -2177,18 +2434,22 @@ class D3D12Device final : public IDevice {
       return Status::Ok();
     };
 
-    if (auto st = create_upload(verts, sizeof(verts), cube_vb_); !st) {
+    MeshSlotGpu& slot = mesh_slots_[mesh_slot];
+    const UINT vb_size = static_cast<UINT>(vertices.size() * sizeof(LitVertex));
+    const UINT ib_size = static_cast<UINT>(indices.size() * sizeof(std::uint32_t));
+    if (auto st = create_upload(vertices.data(), vb_size, slot.vb); !st) {
       return st;
     }
-    if (auto st = create_upload(indices, sizeof(indices), cube_ib_); !st) {
+    if (auto st = create_upload(indices.data(), ib_size, slot.ib); !st) {
       return st;
     }
-    cube_vbv_.BufferLocation = cube_vb_->GetGPUVirtualAddress();
-    cube_vbv_.SizeInBytes = sizeof(verts);
-    cube_vbv_.StrideInBytes = sizeof(LitVertex);
-    cube_ibv_.BufferLocation = cube_ib_->GetGPUVirtualAddress();
-    cube_ibv_.SizeInBytes = sizeof(indices);
-    cube_ibv_.Format = DXGI_FORMAT_R16_UINT;
+    slot.vbv.BufferLocation = slot.vb->GetGPUVirtualAddress();
+    slot.vbv.SizeInBytes = vb_size;
+    slot.vbv.StrideInBytes = sizeof(LitVertex);
+    slot.ibv.BufferLocation = slot.ib->GetGPUVirtualAddress();
+    slot.ibv.SizeInBytes = ib_size;
+    slot.ibv.Format = DXGI_FORMAT_R32_UINT;
+    slot.index_count = static_cast<UINT>(indices.size());
     return Status::Ok();
   }
 
@@ -2655,6 +2916,7 @@ class D3D12Device final : public IDevice {
   bool mesh_ready_ = false;
   bool lit_ready_ = false;
   bool quad_ready_ = false;
+  bool debug_ready_ = false;
   bool ui_ready_ = false;
   bool ui_font_uploaded_ = false;
   bool post_ready_ = false;
@@ -2696,6 +2958,9 @@ class D3D12Device final : public IDevice {
   ComPtr<ID3D12Resource> local_shadow_map_;
   ComPtr<ID3D12Resource> lit_albedo_;
   ComPtr<ID3D12Resource> lit_orm_;
+  ComPtr<ID3D12Resource> lit_albedo2_;
+  ComPtr<ID3D12Resource> lit_orm2_;
+  std::array<MeshSlotGpu, kMaxMeshSlots> mesh_slots_{};
   ComPtr<ID3D12Resource> scene_color_;
   ComPtr<ID3D12Resource> history_;
   ComPtr<ID3D12Resource> vertex_buffer_;
@@ -2711,10 +2976,13 @@ class D3D12Device final : public IDevice {
   ComPtr<ID3D12PipelineState> shadow_pso_;
   ComPtr<ID3D12RootSignature> quad_root_;
   ComPtr<ID3D12PipelineState> quad_pso_;
+  ComPtr<ID3D12RootSignature> debug_root_;
+  ComPtr<ID3D12PipelineState> debug_pso_;
+  ComPtr<ID3D12Resource> debug_cb_;
+  ComPtr<ID3D12Resource> debug_vb_;
+  UINT debug_vb_capacity_ = 0;
   ComPtr<ID3D12RootSignature> post_root_;
   ComPtr<ID3D12PipelineState> post_pso_;
-  ComPtr<ID3D12Resource> cube_vb_;
-  ComPtr<ID3D12Resource> cube_ib_;
   ComPtr<ID3D12Resource> frame_cb_;
   ComPtr<ID3D12Resource> shadow_frame_cb_;
   ComPtr<ID3D12Resource> object_cb_;
@@ -2728,8 +2996,6 @@ class D3D12Device final : public IDevice {
   ComPtr<ID3D12DescriptorHeap> ui_srv_heap_;
   ComPtr<ID3D12Resource> ui_vb_;
   ComPtr<ID3D12Resource> ui_ib_;
-  D3D12_VERTEX_BUFFER_VIEW cube_vbv_{};
-  D3D12_INDEX_BUFFER_VIEW cube_ibv_{};
   ComPtr<ID3D12Fence> fence_;
   HANDLE fence_event_ = nullptr;
   UINT64 fence_value_ = 0;

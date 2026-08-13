@@ -1,0 +1,10 @@
+Content sources (downloaded for Sandbox polish):
+
+models/DamagedHelmet.glb
+  Khronos glTF-Sample-Models (DamagedHelmet)
+  https://github.com/KhronosGroup/glTF-Sample-Models
+
+textures/ph/*
+  Poly Haven CC0 textures (1k JPEG)
+  red_brick_03, metal_plate
+  https://polyhaven.com/

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/result.h"
+#include "engine/debug/debug_draw.h"
 #include "engine/post/post_stack.h"
 #include "engine/render/camera.h"
 #include "engine/render/environment.h"
@@ -28,6 +29,8 @@ struct RenderSystemDesc {
   std::filesystem::path quad_ps;
   std::filesystem::path post_vs;
   std::filesystem::path post_ps;
+  std::filesystem::path debug_vs;
+  std::filesystem::path debug_ps;
   bool enable_shadows = true;
   float max_shadow_distance = 80.f;
   QualitySettings quality = QualitySettings::FromTier(QualityTier::Medium);
@@ -35,11 +38,12 @@ struct RenderSystemDesc {
 
 // Runtime-tunable lighting / FX knobs (Sandbox UI writes these).
 struct EffectTuning {
-  float sun_intensity = 2.8f;
-  float ambient_scale = 1.f;
+  float sun_intensity = 4.2f;
+  float ambient_scale = 1.35f;
   float shadow_bias = 0.0015f;
   float specular_power = 64.f;
-  float local_intensity_scale = 1.f;
+  float local_intensity_scale = 1.15f;
+  float exposure = 1.2f;
   bool enable_shadows = true;
   bool enable_ssao = true;
   bool enable_taa = true;
@@ -51,7 +55,8 @@ class RenderSystem {
   Status Init(rhi::IDevice& device, const RenderSystemDesc& desc);
   Status DrawFrame(rhi::IDevice& device, const RenderScene& scene, const Environment& env,
                    float aspect, const std::vector<render2d::Sprite>* sprites = nullptr,
-                   const std::vector<rhi::ScreenQuad>* ui_quads = nullptr);
+                   const std::vector<rhi::ScreenQuad>* ui_quads = nullptr,
+                   const debug::DebugDraw* debug_draw = nullptr);
 
   [[nodiscard]] const FrameGraph& frame_graph() const { return graph_; }
   [[nodiscard]] std::uint32_t last_draw_count() const { return last_draw_count_; }

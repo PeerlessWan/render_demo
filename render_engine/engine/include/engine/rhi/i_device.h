@@ -32,6 +32,8 @@ struct LitMeshShaders {
   std::filesystem::path shadow_ps_dxil;
   std::filesystem::path quad_vs_dxil;
   std::filesystem::path quad_ps_dxil;
+  std::filesystem::path debug_vs_dxil;
+  std::filesystem::path debug_ps_dxil;
 };
 
 struct PostShaders {
@@ -45,8 +47,15 @@ struct PostResolveDesc {
   bool enable_ssao = false;
   bool enable_taa = false;
   float ssao_radius = 12.f;
-  float ssao_intensity = 1.15f;
+  float ssao_intensity = 0.85f;
   float taa_blend = 0.88f;
+  float exposure = 1.15f;
+};
+
+struct LitVertex {
+  float px = 0, py = 0, pz = 0;
+  float nx = 0, ny = 1, nz = 0;
+  float u = 0, v = 0;
 };
 
 struct ComputeDispatchDesc {
@@ -96,6 +105,9 @@ struct LitDrawItem {
   bool use_albedo = true;
   bool use_orm = false;  // sample ORM map (R=AO, G=roughness, B=metallic)
   bool transparent = false;
+  int mesh_slot = 0;   // 0 = unit cube; custom via UploadLitGeometry
+  int tex_slot = 0;    // 0 = primary albedo/ORM; 1 = secondary
+  float uv_scale = 1.f;
 };
 
 struct GpuPassTiming {
@@ -119,6 +131,11 @@ struct UiDrawCmd {
   std::uint32_t index_offset = 0;
   std::uint32_t index_count = 0;
   float clip_x0 = 0, clip_y0 = 0, clip_x1 = 0, clip_y1 = 0;
+};
+
+struct DebugLineVertex {
+  float x = 0, y = 0, z = 0;
+  float r = 1, g = 1, b = 1, a = 1;
 };
 
 class IDevice {
@@ -153,8 +170,14 @@ class IDevice {
   virtual Status DrawTransparentLitCubes(std::span<const LitDrawItem> items) = 0;
 
   // Replace default procedural albedo / ORM (RGBA8, row-major). Call after SetupLitMesh.
-  virtual Status UploadLitAlbedoRgba(const std::uint8_t* rgba, int width, int height) = 0;
-  virtual Status UploadLitOrmRgba(const std::uint8_t* rgba, int width, int height) = 0;
+  // slot: 0 = primary (t1/t3), 1 = secondary (t4/t5).
+  virtual Status UploadLitAlbedoRgba(const std::uint8_t* rgba, int width, int height,
+                                     int slot = 0) = 0;
+  virtual Status UploadLitOrmRgba(const std::uint8_t* rgba, int width, int height,
+                                  int slot = 0) = 0;
+  // Replace/add lit mesh geometry (slot 0 reserved for unit cube after SetupLitMesh).
+  virtual Status UploadLitGeometry(int mesh_slot, std::span<const LitVertex> vertices,
+                                   std::span<const std::uint32_t> indices) = 0;
 
   // Depth SSAO + history TAA resolve (after opaque, before UI).
   virtual Status SetupPostMesh(const PostShaders& shaders) = 0;
@@ -167,6 +190,9 @@ class IDevice {
 
   // Screen-space UI/2D quads (NDC via pixel→viewport).
   virtual Status DrawScreenQuads(std::span<const ScreenQuad> quads) = 0;
+
+  // World-space debug lines (grid/axes). Call after SetupLitMesh with debug shaders set.
+  virtual Status DrawDebugLines(std::span<const DebugLineVertex> lines_as_segments) = 0;
 
   // Immediate UI (font atlas + indexed textured triangles).
   virtual Status SetupUiMesh(const SimpleMeshShaders& shaders) = 0;

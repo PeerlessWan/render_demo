@@ -46,6 +46,14 @@ else()
 endif()
 option(ENGINE_WITH_DDSKTX "DDS/KTX texture parse via dds-ktx" ${ENGINE_WITH_DDSKTX_DEFAULT})
 
+set(ENGINE_CGLTF_DIR "${CMAKE_SOURCE_DIR}/third_party/cgltf" CACHE PATH "cgltf directory")
+if(EXISTS "${ENGINE_CGLTF_DIR}/cgltf.h")
+  set(ENGINE_WITH_CGLTF_DEFAULT ON)
+else()
+  set(ENGINE_WITH_CGLTF_DEFAULT OFF)
+endif()
+option(ENGINE_WITH_CGLTF "glTF/GLB mesh load via cgltf" ${ENGINE_WITH_CGLTF_DEFAULT})
+
 # Jolt sources not vendored yet — keep OFF until M12 full link.
 option(ENGINE_WITH_JOLT "Physics via Jolt (stub when OFF)" OFF)
 

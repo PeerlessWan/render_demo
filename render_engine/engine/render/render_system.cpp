@@ -4,6 +4,7 @@
 #include "engine/render/local_lights.h"
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 
 namespace engine::render {
@@ -62,6 +63,8 @@ Status RenderSystem::Init(rhi::IDevice& device, const RenderSystemDesc& desc) {
   shaders.shadow_ps_dxil = desc.shadow_ps;
   shaders.quad_vs_dxil = desc.quad_vs;
   shaders.quad_ps_dxil = desc.quad_ps;
+  shaders.debug_vs_dxil = desc.debug_vs;
+  shaders.debug_ps_dxil = desc.debug_ps;
   if (auto st = device.SetupLitMesh(shaders); !st) {
     return st;
   }
@@ -76,7 +79,7 @@ Status RenderSystem::Init(rhi::IDevice& device, const RenderSystemDesc& desc) {
   }
   max_shadow_distance_ = desc.max_shadow_distance;
   effect_.enable_shadows = desc.enable_shadows;
-  effect_.sun_intensity = 2.8f;
+  effect_.sun_intensity = 4.2f;
   set_quality(desc.quality);
   ready_ = true;
   LogInfo(effect_.enable_shadows ? "RenderSystem ready (lit+CSM)" : "RenderSystem ready (lit)");
@@ -86,7 +89,8 @@ Status RenderSystem::Init(rhi::IDevice& device, const RenderSystemDesc& desc) {
 Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
                                const Environment& env, float aspect,
                                const std::vector<render2d::Sprite>* sprites,
-                               const std::vector<rhi::ScreenQuad>* ui_quads) {
+                               const std::vector<rhi::ScreenQuad>* ui_quads,
+                               const debug::DebugDraw* debug_draw) {
   if (!ready_) {
     return Status::Fail("RenderSystem not initialized");
   }
@@ -105,6 +109,9 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
     item.use_albedo = !mat.albedo_tex.empty();
     item.use_orm = !mat.orm_tex.empty();
     item.transparent = mat.transparent;
+    item.mesh_slot = mat.mesh_slot;
+    item.tex_slot = mat.tex_slot;
+    item.uv_scale = mat.uv_scale > 0.f ? mat.uv_scale : 1.f;
     if (mat.transparent) {
       transparent.push_back(item);
     } else {
@@ -305,7 +312,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
         }
         device.GpuPassEnd();
       });
-  if (want_ssao || want_taa) {
+  if (want_ssao || want_taa || std::fabs(effect_.exposure - 1.f) > 1e-4f) {
     graph_.AddPass("PostSSAO_TAA", {"Color", "Depth"}, {"Color"}, [&] {
       device.GpuPassBegin("Post");
       rhi::PostResolveDesc post;
@@ -313,6 +320,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       post.eye = lighting.eye;
       post.enable_ssao = want_ssao;
       post.enable_taa = want_taa;
+      post.exposure = effect_.exposure;
       if (auto st = device.ResolvePostEffects(post); !st) {
         LogError(st.message());
       }
@@ -328,6 +336,21 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
         return;
       }
       if (auto st = device.DrawTransparentLitCubes(transparent); !st) {
+        LogError(st.message());
+      }
+      device.GpuPassEnd();
+    });
+  }
+  if (debug_draw && !debug_draw->lines().empty()) {
+    graph_.AddPass("DebugLines", {"Color", "Depth"}, {"Color"}, [&] {
+      device.GpuPassBegin("Debug");
+      std::vector<rhi::DebugLineVertex> verts;
+      verts.reserve(debug_draw->lines().size() * 2);
+      for (const auto& ln : debug_draw->lines()) {
+        verts.push_back({ln.a.x, ln.a.y, ln.a.z, ln.color.r, ln.color.g, ln.color.b, ln.color.a});
+        verts.push_back({ln.b.x, ln.b.y, ln.b.z, ln.color.r, ln.color.g, ln.color.b, ln.color.a});
+      }
+      if (auto st = device.DrawDebugLines(verts); !st) {
         LogError(st.message());
       }
       device.GpuPassEnd();

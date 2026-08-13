@@ -146,7 +146,7 @@ class HeadlessDevice final : public IDevice {
     if (!post_ready_) {
       return Status::Fail("SetupPostMesh not called");
     }
-    if (!desc.enable_ssao && !desc.enable_taa) {
+    if (!desc.enable_ssao && !desc.enable_taa && std::fabs(desc.exposure - 1.f) < 1e-4f) {
       return Status::Ok();
     }
     ++post_resolves_;
@@ -170,7 +170,7 @@ class HeadlessDevice final : public IDevice {
     return DrawLitCubes(items);
   }
 
-  Status UploadLitAlbedoRgba(const std::uint8_t*, int width, int height) override {
+  Status UploadLitAlbedoRgba(const std::uint8_t*, int width, int height, int) override {
     if (!lit_ready_) {
       return Status::Fail("SetupLitMesh not called");
     }
@@ -181,7 +181,7 @@ class HeadlessDevice final : public IDevice {
     return Status::Ok();
   }
 
-  Status UploadLitOrmRgba(const std::uint8_t*, int width, int height) override {
+  Status UploadLitOrmRgba(const std::uint8_t*, int width, int height, int) override {
     if (!lit_ready_) {
       return Status::Fail("SetupLitMesh not called");
     }
@@ -192,8 +192,21 @@ class HeadlessDevice final : public IDevice {
     return Status::Ok();
   }
 
+  Status UploadLitGeometry(int mesh_slot, std::span<const LitVertex> vertices,
+                           std::span<const std::uint32_t> indices) override {
+    if (mesh_slot < 0 || vertices.empty() || indices.empty()) {
+      return Status::Fail("Invalid lit geometry");
+    }
+    return Status::Ok();
+  }
+
   Status DrawScreenQuads(std::span<const ScreenQuad> quads) override {
     screen_quad_draws_ += static_cast<std::uint32_t>(quads.size());
+    return Status::Ok();
+  }
+
+  Status DrawDebugLines(std::span<const DebugLineVertex> lines) override {
+    (void)lines;
     return Status::Ok();
   }
 

@@ -1,5 +1,6 @@
 #include "engine/app/application.h"
 
+#include "engine/assets/gltf_loader.h"
 #include "engine/assets/image_loader.h"
 #include "engine/core/log.h"
 #include "engine/debug/console.h"
@@ -31,12 +32,25 @@
 #error "ENGINE_SHADER_DIR_A must be set by CMake"
 #endif
 
+namespace {
+
+engine::assets::ImageRgba8 ArmToOrm(const engine::assets::ImageRgba8& arm) {
+  // Poly Haven ARM is already AO/Rough/Metal — keep channels, force opaque alpha.
+  engine::assets::ImageRgba8 orm = arm;
+  for (std::size_t i = 3; i < orm.rgba.size(); i += 4) {
+    orm.rgba[i] = 255;
+  }
+  return orm;
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
   engine::ApplicationDesc desc;
-  desc.window.title = "Sandbox — FX(F1) Profiler(F2) WASD/mouse Esc";
+  desc.window.title = "Sandbox — LMB/RMB look | Wheel zoom | MMB pan | WASD | F1/F2";
   desc.window.width = 1280;
   desc.window.height = 720;
-  desc.clear_color = {0.05f, 0.07f, 0.1f, 1.f};
+  desc.clear_color = {0.14f, 0.16f, 0.20f, 1.f};
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i] ? argv[i] : "";
     if (arg == "--headless") {
@@ -59,41 +73,63 @@ int main(int argc, char** argv) {
   }
   auto& a = *app.value();
   a.set_net(std::make_shared<engine::net::NetSystem>());
-  a.camera().position = {0.f, 2.f, 6.f};
+  a.set_move_speed(6.5f);
+  a.set_look_sensitivity(0.0026f);
+  a.set_zoom_sensitivity(0.65f);
+  a.set_pan_sensitivity(0.005f);
+  a.set_look_with_lmb(true);
+  a.set_look_with_rmb(true);
+  a.set_hide_cursor_on_look(false);
+  a.camera().position = {0.f, 1.8f, 5.5f};
 
   auto ground = a.world().CreateNode("ground");
   {
     engine::scene::Transform t;
     t.position = {0, -0.5f, 0};
-    t.scale = {8.f, 1.f, 8.f};
+    t.scale = {12.f, 1.f, 12.f};
     a.world().set_local_transform(ground, t);
     engine::scene::MeshRenderer mesh;
     mesh.mesh_id = "ground";
+    mesh.never_cull = true;  // large thin floor must not flicker-cull while orbiting
     a.world().set_mesh(ground, mesh);
   }
-  for (int i = 0; i < 4; ++i) {
+  for (int i = 0; i < 3; ++i) {
     auto id = a.world().CreateNode("box" + std::to_string(i));
     engine::scene::Transform t;
-    t.position = {static_cast<float>(i) * 1.5f - 2.f, 0.5f, 0.f};
+    t.position = {static_cast<float>(i) * 1.6f - 2.4f, 0.5f, -1.2f};
     a.world().set_local_transform(id, t);
     engine::scene::MeshRenderer mesh;
-    mesh.mesh_id = "cube";
+    mesh.mesh_id = (i == 1) ? "metal" : "cube";
     a.world().set_mesh(id, mesh);
   }
   {
     auto glass = a.world().CreateNode("glass");
     engine::scene::Transform t;
-    t.position = {0.f, 1.2f, 2.f};
-    t.scale = {1.2f, 1.2f, 1.2f};
+    t.position = {2.2f, 1.0f, 1.4f};
+    t.scale = {1.1f, 1.1f, 1.1f};
     a.world().set_local_transform(glass, t);
     engine::scene::MeshRenderer mesh;
     mesh.mesh_id = "glass";
     a.world().set_mesh(glass, mesh);
   }
+  {
+    auto helmet = a.world().CreateNode("helmet");
+    engine::scene::Transform t;
+    t.position = {0.f, 1.05f, 0.4f};
+    t.scale = {1.15f, 1.15f, 1.15f};
+    // Slight turn for a better default silhouette.
+    t.rotation = engine::Quat::FromEulerYxz(0.35f, 0.f, 0.f);
+    a.world().set_local_transform(helmet, t);
+    engine::scene::MeshRenderer mesh;
+    mesh.mesh_id = "helmet";
+    a.world().set_mesh(helmet, mesh);
+  }
 
   engine::render::Environment env;
-  env.sun_direction = {0.35f, -1.f, 0.25f};
-  env.sun_intensity = 2.8f;
+  env.ambient = {0.20f, 0.21f, 0.24f, 1.f};
+  env.sun_direction = {0.45f, -1.f, 0.35f};
+  env.sun_intensity = 4.8f;
+  env.sun_color = {1.f, 0.97f, 0.92f, 1.f};
 
   engine::render::RenderSystem render;
   engine::render::RenderSystemDesc rdesc;
@@ -106,6 +142,8 @@ int main(int argc, char** argv) {
   rdesc.quad_ps = shader_dir / "quad.ps.cso";
   rdesc.post_vs = shader_dir / "post_ssao_taa.vs.cso";
   rdesc.post_ps = shader_dir / "post_ssao_taa.ps.cso";
+  rdesc.debug_vs = shader_dir / "debug_line.vs.cso";
+  rdesc.debug_ps = shader_dir / "debug_line.ps.cso";
   rdesc.enable_shadows = true;
   rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
   if (auto st = render.Init(a.device(), rdesc); !st) {
@@ -118,24 +156,87 @@ int main(int argc, char** argv) {
 #endif
     const auto content = std::filesystem::path(ENGINE_CONTENT_DIR_A);
     auto loader = engine::assets::CreateDefaultImageLoader();
-    if (auto alb = loader->LoadFile(content / "textures" / "albedo_brick.png")) {
-      if (auto st = a.device().UploadLitAlbedoRgba(alb->rgba.data(), alb->width, alb->height); !st) {
+
+    const auto brick_diff = content / "textures" / "ph" / "brick_diff.jpg";
+    const auto brick_arm = content / "textures" / "ph" / "brick_arm.jpg";
+    bool albedo_ok = false;
+    if (auto alb = loader->LoadFile(brick_diff)) {
+      if (auto st = a.device().UploadLitAlbedoRgba(alb->rgba.data(), alb->width, alb->height, 0);
+          !st) {
         engine::LogError(st.message());
         return 1;
       }
-      engine::LogInfo(std::string("Albedo from file (") + loader->backend_name() + ")");
-    } else {
-      engine::LogError(alb.status().message());
+      engine::LogInfo("Albedo slot0: Poly Haven red_brick_03");
+      albedo_ok = true;
+    } else if (auto alb_fallback = loader->LoadFile(content / "textures" / "albedo_brick.png")) {
+      if (auto st = a.device().UploadLitAlbedoRgba(alb_fallback->rgba.data(), alb_fallback->width,
+                                                    alb_fallback->height, 0);
+          !st) {
+        engine::LogError(st.message());
+        return 1;
+      }
+      engine::LogInfo("Albedo slot0: fallback albedo_brick.png");
+      albedo_ok = true;
+    }
+    if (!albedo_ok) {
+      engine::LogError("Failed to load any albedo texture");
       return 1;
     }
-    if (auto orm = loader->LoadFile(content / "textures" / "orm_brick.png")) {
-      if (auto st = a.device().UploadLitOrmRgba(orm->rgba.data(), orm->width, orm->height); !st) {
+
+    bool orm_ok = false;
+    if (auto arm = loader->LoadFile(brick_arm)) {
+      auto orm = ArmToOrm(arm.value());
+      if (auto st = a.device().UploadLitOrmRgba(orm.rgba.data(), orm.width, orm.height, 0); !st) {
         engine::LogError(st.message());
         return 1;
       }
-      engine::LogInfo("ORM from file (R=AO G=rough B=metal)");
+      engine::LogInfo("ORM slot0: Poly Haven brick ARM");
+      orm_ok = true;
+    } else if (auto orm_fallback = loader->LoadFile(content / "textures" / "orm_brick.png")) {
+      if (auto st = a.device().UploadLitOrmRgba(orm_fallback->rgba.data(), orm_fallback->width,
+                                                orm_fallback->height, 0);
+          !st) {
+        engine::LogError(st.message());
+        return 1;
+      }
+      engine::LogInfo("ORM slot0: fallback orm_brick.png");
+      orm_ok = true;
+    }
+    if (!orm_ok) {
+      engine::LogError("Failed to load any ORM texture");
+      return 1;
+    }
+
+    const auto helmet_path = content / "models" / "DamagedHelmet.glb";
+    if (auto mesh = engine::assets::LoadGltfMeshFile(helmet_path, *loader)) {
+      std::vector<engine::rhi::LitVertex> verts(mesh->vertices.size());
+      for (std::size_t i = 0; i < mesh->vertices.size(); ++i) {
+        const auto& v = mesh->vertices[i];
+        verts[i] = {v.px, v.py, v.pz, v.nx, v.ny, v.nz, v.u, v.v};
+      }
+      if (auto st = a.device().UploadLitGeometry(1, verts, mesh->indices); !st) {
+        engine::LogError(st.message());
+        return 1;
+      }
+      if (mesh->has_albedo) {
+        if (auto st = a.device().UploadLitAlbedoRgba(mesh->albedo.rgba.data(), mesh->albedo.width,
+                                                     mesh->albedo.height, 1);
+            !st) {
+          engine::LogError(st.message());
+          return 1;
+        }
+      }
+      if (mesh->has_orm) {
+        if (auto st = a.device().UploadLitOrmRgba(mesh->orm.rgba.data(), mesh->orm.width,
+                                                 mesh->orm.height, 1);
+            !st) {
+          engine::LogError(st.message());
+          return 1;
+        }
+      }
+      engine::LogInfo("DamagedHelmet.glb uploaded (mesh slot1 + tex slot1)");
     } else {
-      engine::LogError(orm.status().message());
+      engine::LogError(std::string("Helmet load failed: ") + mesh.status().message());
       return 1;
     }
   }
@@ -143,19 +244,19 @@ int main(int argc, char** argv) {
     std::vector<engine::render::LocalLight> lights;
     engine::render::LocalLight lamp;
     lamp.id = 1;
-    lamp.position = {1.5f, 2.5f, 0.5f};
-    lamp.range = 12.f;
-    lamp.color = {1.f, 0.55f, 0.25f, 1.f};
-    lamp.intensity = 6.f;
+    lamp.position = {1.8f, 2.8f, 1.0f};
+    lamp.range = 14.f;
+    lamp.color = {1.f, 0.72f, 0.45f, 1.f};
+    lamp.intensity = 9.f;
     lamp.shadow_resolution = 512;
     lamp.cast_shadows = true;
     lights.push_back(lamp);
     engine::render::LocalLight cool;
     cool.id = 2;
-    cool.position = {-2.f, 2.2f, 1.5f};
-    cool.range = 10.f;
-    cool.color = {0.35f, 0.55f, 1.f, 1.f};
-    cool.intensity = 4.5f;
+    cool.position = {-2.2f, 2.6f, 1.8f};
+    cool.range = 12.f;
+    cool.color = {0.45f, 0.65f, 1.f, 1.f};
+    cool.intensity = 7.f;
     cool.shadow_resolution = 512;
     cool.cast_shadows = true;
     lights.push_back(cool);
@@ -164,6 +265,8 @@ int main(int argc, char** argv) {
 
   engine::render::EffectTuning fx = render.effect_tuning();
   fx.sun_intensity = env.sun_intensity;
+  fx.ambient_scale = 1.4f;
+  fx.exposure = 1.25f;
   fx.enable_ssao = rdesc.quality.enable_ssao;
   fx.enable_taa = rdesc.quality.enable_taa;
   fx.shadow_cascades = rdesc.quality.shadow_cascades;
@@ -200,15 +303,19 @@ int main(int argc, char** argv) {
 
   bool panel_open = true;
   bool profiler_open = false;
+  bool show_grid = true;
+  bool show_axes = true;
   bool f1_was_down = false;
   bool f2_was_down = false;
+  bool f3_was_down = false;
+  bool f4_was_down = false;
   engine::debug::Profiler profiler;
 
   std::vector<engine::render2d::Sprite> sprites;
 
   auto audio = engine::media::CreateDefaultAudioDevice();
   engine::LogInfo(std::string("Audio backend: ") + audio->backend_name());
-  engine::LogInfo("Sandbox: F1 Effects | F2 Profiler | WASD/mouse | Esc quit");
+  engine::LogInfo("Sandbox: LMB/RMB look | Wheel zoom | MMB pan | F1 FX | F3 grid | F4 axes");
 
   const auto status = a.Run([&](engine::Application& app_ref) {
     profiler.Begin("Frame");
@@ -231,21 +338,45 @@ int main(int argc, char** argv) {
       profiler_open = !profiler_open;
     }
     f2_was_down = f2_down;
+    const bool f3_down = snap.keys[VK_F3];
+    if (f3_down && !f3_was_down) {
+      show_grid = !show_grid;
+    }
+    f3_was_down = f3_down;
+    const bool f4_down = snap.keys[VK_F4];
+    if (f4_down && !f4_was_down) {
+      show_axes = !show_axes;
+    }
+    f4_was_down = f4_down;
+
+    auto& dbg = app_ref.debug_draw();
+    dbg.Clear();
+    if (show_grid) {
+      dbg.AddGrid(8.f, 1.f, 0.02f);
+    }
+    if (show_axes) {
+      dbg.AddAxes(2.5f, 0.03f);
+    }
 
     const float dw = static_cast<float>(app_ref.window().width());
     const float dh = static_cast<float>(app_ref.window().height());
     imgui.BeginFrame(snap, dw, dh, app_ref.delta_time());
 
     if (panel_open) {
-      if (imgui.BeginWindow("Effects", 16.f, 48.f, 340.f, 460.f)) {
-        imgui.Text("WASD/QE | mouse | F1/F2 | Esc");
+      if (imgui.BeginWindow("Effects", 16.f, 48.f, 340.f, 500.f)) {
+        imgui.Text("LMB/RMB drag look | Wheel zoom | MMB pan");
+        imgui.Text("WASD/QE | Shift | F1 FX | F3 grid | F4 axes");
+        imgui.Separator();
+        imgui.Checkbox("Show grid (F3)", &show_grid);
+        imgui.Checkbox("Show axes (F4)", &show_axes);
         imgui.Separator();
         imgui.Checkbox("Shadows", &fx.enable_shadows);
         imgui.Checkbox("SSAO", &fx.enable_ssao);
         imgui.Checkbox("TAA", &fx.enable_taa);
         imgui.Separator();
-        imgui.SliderFloat("Sun intensity", &fx.sun_intensity, 0.f, 8.f);
+        imgui.SliderFloat("Sun intensity", &fx.sun_intensity, 0.f, 10.f);
         imgui.SliderFloat("Ambient scale", &fx.ambient_scale, 0.f, 3.f);
+        imgui.SliderFloat("Exposure", &fx.exposure, 0.2f, 3.f);
         imgui.SliderFloat("Shadow bias", &fx.shadow_bias, 0.0001f, 0.02f);
         imgui.SliderFloat("Specular power", &fx.specular_power, 1.f, 128.f);
         imgui.SliderFloat("Local light scale", &fx.local_intensity_scale, 0.f, 4.f);
@@ -279,8 +410,8 @@ int main(int argc, char** argv) {
       }
       imgui.EndWindow();
     } else {
-      if (imgui.BeginWindow("Hint", 16.f, 16.f, 240.f, 72.f)) {
-        imgui.Text("F1 Effects | F2 Profiler");
+      if (imgui.BeginWindow("Hint", 16.f, 16.f, 280.f, 72.f)) {
+        imgui.Text("F1 FX | F2 Profiler | F3 Grid | F4 Axes");
       }
       imgui.EndWindow();
     }
@@ -318,7 +449,8 @@ int main(int argc, char** argv) {
     const auto scene = engine::render::RenderSceneExtractor::Extract(
         app_ref.world(), app_ref.camera(), aspect);
     profiler.Begin("DrawFrame");
-    if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites, nullptr); !st) {
+    if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites, nullptr, &dbg);
+        !st) {
       engine::LogError(st.message());
     }
     profiler.End("DrawFrame");

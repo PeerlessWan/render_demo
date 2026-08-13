@@ -58,6 +58,25 @@ class Application {
   void set_ui_want_capture(bool v) { ui_want_capture_ = v; }
   [[nodiscard]] bool ui_want_capture() const { return ui_want_capture_; }
 
+  // Fly camera tuning (Sandbox can raise ambient/scene separately).
+  void set_move_speed(float units_per_sec) { move_speed_ = units_per_sec; }
+  void set_look_sensitivity(float rad_per_pixel) { look_sensitivity_ = rad_per_pixel; }
+  void set_zoom_sensitivity(float units_per_notch) { zoom_sensitivity_ = units_per_notch; }
+  void set_pan_sensitivity(float units_per_pixel) { pan_sensitivity_ = units_per_pixel; }
+  // Drag look: LMB and/or RMB (editor-style). Defaults: both enabled.
+  void set_look_with_lmb(bool v) { look_with_lmb_ = v; }
+  void set_look_with_rmb(bool v) { look_with_rmb_ = v; }
+  // Deprecated alias: if true, only RMB looks (disables LMB look).
+  void set_look_requires_rmb(bool v) {
+    look_requires_rmb_ = v;
+    if (v) {
+      look_with_lmb_ = false;
+      look_with_rmb_ = true;
+    }
+  }
+  // If true, hide+clip cursor while dragging look (FPS). Default false = visible drag.
+  void set_hide_cursor_on_look(bool v) { hide_cursor_on_look_ = v; }
+
   [[nodiscard]] const ColorRgba& clear_color() const { return clear_color_; }
   void set_clear_color(const ColorRgba& color) { clear_color_ = color; }
   [[nodiscard]] float delta_time() const { return dt_; }
@@ -89,6 +108,15 @@ class Application {
   debug::DebugDraw debug_draw_;
   std::shared_ptr<net::NetSystem> net_;
   bool ui_want_capture_ = false;
+  float move_speed_ = 5.5f;
+  float look_sensitivity_ = 0.0024f;
+  float zoom_sensitivity_ = 0.55f;
+  float pan_sensitivity_ = 0.0045f;
+  bool look_with_lmb_ = true;
+  bool look_with_rmb_ = true;
+  bool look_requires_rmb_ = false;
+  bool hide_cursor_on_look_ = false;
+  bool was_looking_ = false;
 };
 
 }  // namespace engine

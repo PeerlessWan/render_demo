@@ -14,6 +14,9 @@ struct PbrMaterial {
   std::string normal_tex;
   std::string orm_tex;
   bool transparent = false;
+  int mesh_slot = 0;
+  int tex_slot = 0;
+  float uv_scale = 1.f;
 };
 
 }  // namespace engine::material

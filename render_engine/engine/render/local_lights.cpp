@@ -40,28 +40,41 @@ bool LocalLightShadowScheduler::Pack(ShadowAtlas& atlas) {
 material::PbrMaterial ResolveMeshMaterial(std::string_view mesh_id) {
   material::PbrMaterial m;
   if (mesh_id == "ground") {
-    m.base_color = {0.42f, 0.45f, 0.38f, 1.f};
+    m.base_color = {1.f, 1.f, 1.f, 1.f};
     m.roughness = 0.9f;
     m.metallic = 0.f;
-    m.albedo_tex = "textures/albedo_brick.png";
-    m.orm_tex = "textures/orm_brick.png";
+    m.albedo_tex = "textures/ph/brick_diff.jpg";
+    m.orm_tex = "textures/ph/brick_arm.jpg";
+    m.uv_scale = 6.f;
+    m.tex_slot = 0;
   } else if (mesh_id == "metal") {
-    m.base_color = {0.9f, 0.9f, 0.92f, 1.f};
-    m.roughness = 0.2f;
-    m.metallic = 0.85f;
-    m.albedo_tex = "textures/albedo_brick.png";
-    m.orm_tex = "textures/orm_brick.png";
+    m.base_color = {0.86f, 0.87f, 0.9f, 1.f};
+    m.roughness = 0.18f;
+    m.metallic = 0.95f;
+    m.uv_scale = 1.f;
   } else if (mesh_id == "glass") {
     m.base_color = {0.55f, 0.75f, 0.95f, 0.35f};
     m.roughness = 0.08f;
     m.metallic = 0.f;
     m.transparent = true;
+    m.uv_scale = 1.f;
+  } else if (mesh_id == "helmet") {
+    m.base_color = {1.f, 1.f, 1.f, 1.f};
+    m.roughness = 0.45f;
+    m.metallic = 0.2f;
+    m.albedo_tex = "models/DamagedHelmet";
+    m.orm_tex = "models/DamagedHelmet";
+    m.mesh_slot = 1;
+    m.tex_slot = 1;
+    m.uv_scale = 1.f;
   } else {
-    m.base_color = {0.82f, 0.78f, 0.72f, 1.f};
-    m.roughness = 0.35f;
-    m.metallic = 0.12f;
-    m.albedo_tex = "textures/albedo_brick.png";
-    m.orm_tex = "textures/orm_brick.png";
+    m.base_color = {1.f, 1.f, 1.f, 1.f};
+    m.roughness = 0.4f;
+    m.metallic = 0.05f;
+    m.albedo_tex = "textures/ph/brick_diff.jpg";
+    m.orm_tex = "textures/ph/brick_arm.jpg";
+    m.uv_scale = 2.f;
+    m.tex_slot = 0;
   }
   return m;
 }
