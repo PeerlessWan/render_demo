@@ -16,6 +16,10 @@ bool RayAabb(const Vec3& origin, const Vec3& dir, const Aabb& box, float& t_hit)
   const float* mn = &box.min.x;
   const float* mx = &box.max.x;
   for (int a = 0; a < 3; ++a) {
+    if (!std::isfinite(o[a]) || !std::isfinite(d[a]) || !std::isfinite(mn[a]) ||
+        !std::isfinite(mx[a])) {
+      return false;
+    }
     if (std::fabs(d[a]) < 1e-8f) {
       if (o[a] < mn[a] || o[a] > mx[a]) {
         return false;
@@ -34,7 +38,7 @@ bool RayAabb(const Vec3& origin, const Vec3& dir, const Aabb& box, float& t_hit)
     }
   }
   t_hit = tmin;
-  return tmin >= 0.f;
+  return tmin >= 0.f && std::isfinite(tmin);
 }
 
 }  // namespace
@@ -48,7 +52,11 @@ PickHit Pick(const std::vector<render::RenderInstance>& instances,
   const float ndc_y = 1.f - (q.screen_px.y / q.viewport_h) * 2.f;
   const Vec3 near_p = q.inv_view_proj.TransformPoint({ndc_x, ndc_y, 0.f});
   const Vec3 far_p = q.inv_view_proj.TransformPoint({ndc_x, ndc_y, 1.f});
-  const Vec3 dir = Normalize(far_p - near_p);
+  Vec3 dir = far_p - near_p;
+  if (!std::isfinite(near_p.x) || !std::isfinite(far_p.x) || dir.length_squared() < 1e-12f) {
+    return best;
+  }
+  dir = Normalize(dir);
 
   float best_t = 1e9f;
   for (const auto& inst : instances) {

@@ -154,10 +154,7 @@ Status Application::Run(FrameCallback on_frame) {
         camera_.AddYawPitch(-input_.axis("LookX") * look_sensitivity_,
                             -input_.axis("LookY") * look_sensitivity_);
       }
-      if (std::fabs(input_.mouse_wheel()) > 1e-6f) {
-        // Wheel dolly along look direction (zoom).
-        camera_.MoveLocal(input_.mouse_wheel() * zoom_sensitivity_, 0.f, 0.f);
-      }
+      // Wheel zoom applied after on_frame so UI WantCapture (this frame) wins.
     } else {
       window_->SetCursorLocked(false);
       window_->SetCursorCaptured(false);
@@ -193,6 +190,10 @@ Status Application::Run(FrameCallback on_frame) {
     }
     if (on_frame) {
       on_frame(*this);
+    }
+    // Apply wheel after UI has updated WantCapture for this hover frame.
+    if (!ui_want_capture_ && std::fabs(input_.mouse_wheel()) > 1e-6f) {
+      camera_.MoveLocal(input_.mouse_wheel() * zoom_sensitivity_, 0.f, 0.f);
     }
     if (auto st = device_->Present(); !st) {
       LogError(st.message());

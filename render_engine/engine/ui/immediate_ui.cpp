@@ -147,7 +147,21 @@ void ImmediateUi::BeginFrame(const WindowInputSnapshot& input, float display_w, 
   }
 
   ImGui::NewFrame();
+  // Preliminary capture from previous frame; RefreshCapture() after widgets for same-frame hover.
   impl_->capture_mouse = io.WantCaptureMouse;
+  impl_->capture_keyboard = io.WantCaptureKeyboard;
+#endif
+}
+
+void ImmediateUi::RefreshCapture() {
+#if defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI
+  if (!impl_->ready) {
+    return;
+  }
+  ImGuiIO& io = ImGui::GetIO();
+  // Prefer live hover so wheel over the settings panel is captured this frame.
+  impl_->capture_mouse =
+      io.WantCaptureMouse || ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
   impl_->capture_keyboard = io.WantCaptureKeyboard;
 #endif
 }

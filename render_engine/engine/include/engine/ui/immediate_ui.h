@@ -31,6 +31,8 @@ class ImmediateUi {
   Status Init(rhi::IDevice& device, const ImmediateUiDesc& desc);
   void BeginFrame(const WindowInputSnapshot& input, float display_w, float display_h,
                   float delta_time);
+  // Call after building widgets so WantCapture reflects this frame's hover (e.g. wheel).
+  void RefreshCapture();
   Status Render(rhi::IDevice& device);
 
   [[nodiscard]] bool want_capture_mouse() const;

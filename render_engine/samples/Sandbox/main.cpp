@@ -363,6 +363,9 @@ int main(int argc, char** argv) {
                   engine::ui::QueryRetainedUiBackend().name);
   auto retained = engine::ui::CreateRetainedUiBackend();
   bool mouse_left_was = false;
+  float pick_press_x = 0.f;
+  float pick_press_y = 0.f;
+  bool pick_tracking = false;
   engine::physics::RigidBodyDesc falling;
   falling.position = {0, 4, -2};
   const int phys_id = physics->CreateBox(falling);
@@ -405,6 +408,8 @@ int main(int argc, char** argv) {
       engine::scene::MeshRenderer tm;
       tm.mesh_id = "terrain";
       tm.never_cull = true;
+      // Geometry is authored in world space; match AABB to patch extent.
+      tm.local_bounds = {{-18.f, -1.f, -6.f}, {-18.f + 16.f * 0.75f, 2.f, -6.f + 16.f * 0.75f}};
       a.world().set_mesh(terrain_node, tm);
       engine::LogInfo("Terrain heightmap mesh uploaded (slot2)");
     }
@@ -446,6 +451,8 @@ int main(int argc, char** argv) {
   }
   float morph_w0 = 0.35f;
   float morph_w1 = 0.15f;
+  float morph_w0_uploaded = -1.f;
+  float morph_w1_uploaded = -1.f;
   auto morph_node = a.world().CreateNode("morph");
   {
     engine::scene::Transform t;
@@ -453,6 +460,7 @@ int main(int argc, char** argv) {
     a.world().set_local_transform(morph_node, t);
     engine::scene::MeshRenderer mesh;
     mesh.mesh_id = "morph";
+    mesh.local_bounds = {{-0.7f, -0.7f, -0.7f}, {0.7f, 0.7f, 0.7f}};
     a.world().set_mesh(morph_node, mesh);
   }
 
@@ -529,12 +537,14 @@ int main(int argc, char** argv) {
       box.max = {p.x + he.x, p.y + he.y, p.z + he.z};
       dbg.AddAabb(box, {0.2f, 0.95f, 0.35f, 1.f});
     }
-    if (picked_node != engine::scene::kInvalidNode) {
+    if (picked_node != engine::scene::kInvalidNode && app_ref.world().valid(picked_node)) {
       const auto pos = app_ref.world().world_matrix(picked_node).TransformPoint({0, 0, 0});
       engine::Aabb box;
       box.min = {pos.x - 0.6f, pos.y - 0.6f, pos.z - 0.6f};
       box.max = {pos.x + 0.6f, pos.y + 0.6f, pos.z + 0.6f};
       dbg.AddAabb(box, {1.f, 0.85f, 0.15f, 1.f});
+    } else {
+      picked_node = engine::scene::kInvalidNode;
     }
 
     const float dw = static_cast<float>(app_ref.window().width());
@@ -647,6 +657,7 @@ int main(int argc, char** argv) {
         imgui.EndWindow();
       }
 
+      imgui.RefreshCapture();
       app_ref.set_ui_want_capture(imgui.want_capture_mouse() || imgui.want_capture_keyboard());
     } else {
       app_ref.set_ui_want_capture(false);
@@ -666,8 +677,10 @@ int main(int argc, char** argv) {
     particles.set_origin({1.8f, 2.6f, 1.0f});
     particles.Step(app_ref.delta_time());
 
-    // M14 morph upload (expanded box faces from 8 corners)
-    if (!use_vulkan) {
+    // M14 morph upload only when weights change (avoid per-frame GPU buffer destroy).
+    if (!use_vulkan &&
+        (std::fabs(morph_w0 - morph_w0_uploaded) > 1e-4f ||
+         std::fabs(morph_w1 - morph_w1_uploaded) > 1e-4f)) {
       std::vector<engine::Vec3> morphed;
       engine::animation::ApplyMorphTargets(morph_bind, morph_targets, {morph_w0, morph_w1},
                                            morphed);
@@ -691,7 +704,10 @@ int main(int argc, char** argv) {
         minds.push_back(base + 1);
         minds.push_back(base + 2);
       }
-      (void)app_ref.device().UploadLitGeometry(3, mverts, minds);
+      if (auto st = app_ref.device().UploadLitGeometry(3, mverts, minds); st) {
+        morph_w0_uploaded = morph_w0;
+        morph_w1_uploaded = morph_w1;
+      }
     }
 
     // M10 LOD: hide far vegetation
@@ -707,7 +723,13 @@ int main(int argc, char** argv) {
     }
 
     const bool mouse_pressed = snap.mouse_left && !mouse_left_was;
+    const bool mouse_released = !snap.mouse_left && mouse_left_was;
     mouse_left_was = snap.mouse_left;
+    if (mouse_pressed && !app_ref.ui_want_capture()) {
+      pick_tracking = true;
+      pick_press_x = snap.mouse_x;
+      pick_press_y = snap.mouse_y;
+    }
     {
       const float hx = 16.f;
       const float hy = (std::max)(16.f, dh - 130.f);
@@ -753,11 +775,13 @@ int main(int argc, char** argv) {
     }
     const float aspect_pre = dh > 0.f ? dw / dh : 1.f;
     const auto vp = app_ref.camera().view_proj_matrix(aspect_pre);
+    // Cap on-screen particle sprites to keep ScreenQuad load bounded.
+    int particle_sprites = 0;
     for (const auto& p : particles.particles()) {
-      const auto clip = vp.TransformPoint(p.position);
-      // TransformPoint doesn't do perspective divide - use full mat mul
+      if (particle_sprites >= 48) {
+        break;
+      }
       engine::Vec4 c{p.position.x, p.position.y, p.position.z, 1.f};
-      // column-major mul
       float x = vp.m[0] * c.x + vp.m[4] * c.y + vp.m[8] * c.z + vp.m[12] * c.w;
       float y = vp.m[1] * c.x + vp.m[5] * c.y + vp.m[9] * c.z + vp.m[13] * c.w;
       float w = vp.m[3] * c.x + vp.m[7] * c.y + vp.m[11] * c.z + vp.m[15] * c.w;
@@ -776,6 +800,7 @@ int main(int argc, char** argv) {
       s.color = p.color;
       s.sort_y = s.position.y;
       sprites.push_back(s);
+      ++particle_sprites;
     }
     engine::render2d::SortSprites(sprites);
 
@@ -783,19 +808,30 @@ int main(int argc, char** argv) {
     const auto scene = engine::render::RenderSceneExtractor::Extract(
         app_ref.world(), app_ref.camera(), aspect);
 
-    // M20 pick on click when UI not capturing
-    if (mouse_pressed && !app_ref.ui_want_capture() && !retained->want_capture()) {
-      engine::mixed::PickQuery pq;
-      pq.screen_px = {snap.mouse_x, snap.mouse_y};
-      pq.viewport_w = dw;
-      pq.viewport_h = dh;
-      pq.inv_view_proj = scene.camera.view_proj_matrix(aspect).Inverse();
-      const auto hit = engine::mixed::Pick(scene.instances, sprites, pq);
-      if (hit.kind == engine::mixed::PickHit::Kind::Scene3D) {
-        picked_node = hit.node;
-      } else {
-        picked_node = engine::scene::kInvalidNode;
+    // M20 pick on click-release without drag (LMB look must not fight pick).
+    if (mouse_released && pick_tracking && !app_ref.ui_want_capture() &&
+        !retained->want_capture()) {
+      const float dx = snap.mouse_x - pick_press_x;
+      const float dy = snap.mouse_y - pick_press_y;
+      if (dx * dx + dy * dy < 16.f * 16.f) {
+        engine::mixed::PickQuery pq;
+        pq.screen_px = {pick_press_x, pick_press_y};
+        pq.viewport_w = dw;
+        pq.viewport_h = dh;
+        if (pq.viewport_w > 1.f && pq.viewport_h > 1.f) {
+          pq.inv_view_proj = scene.camera.view_proj_matrix(aspect).Inverse();
+          const auto hit = engine::mixed::Pick(scene.instances, sprites, pq);
+          if (hit.kind == engine::mixed::PickHit::Kind::Scene3D &&
+              app_ref.world().valid(hit.node)) {
+            picked_node = hit.node;
+          } else {
+            picked_node = engine::scene::kInvalidNode;
+          }
+        }
       }
+    }
+    if (mouse_released || !snap.mouse_left) {
+      pick_tracking = false;
     }
 
     profiler.Begin("DrawFrame");

@@ -1537,45 +1537,36 @@ class D3D12Device final : public IDevice {
     }
 
     const UINT bytes = static_cast<UINT>(verts.size() * sizeof(QuadVertex));
-    if (!quad_vb_ || quad_vb_capacity_ < bytes) {
-      quad_vb_.Reset();
-      D3D12_HEAP_PROPERTIES upload{};
-      upload.Type = D3D12_HEAP_TYPE_UPLOAD;
-      D3D12_RESOURCE_DESC buf{};
-      buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-      buf.Width = bytes;
-      buf.Height = 1;
-      buf.DepthOrArraySize = 1;
-      buf.MipLevels = 1;
-      buf.SampleDesc.Count = 1;
-      buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-      const HRESULT hr = device_->CreateCommittedResource(
-          &upload, D3D12_HEAP_FLAG_NONE, &buf, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-          IID_PPV_ARGS(&quad_vb_));
-      if (FAILED(hr)) {
-        return Status::Fail("Create quad VB failed");
-      }
-      quad_vb_capacity_ = bytes;
+    // Never grow mid-frame (WaitGpu-full would poison frame fences). Clip if over capacity.
+    if (!quad_vb_) {
+      return Status::Fail("Screen quad VB not preallocated");
+    }
+    const UINT draw_bytes = (std::min)(bytes, quad_vb_capacity_);
+    const UINT draw_verts =
+        draw_bytes / static_cast<UINT>(sizeof(QuadVertex));
+    const UINT draw_verts_aligned = draw_verts - (draw_verts % 6);  // keep whole quads
+    if (draw_verts_aligned == 0) {
+      return Status::Ok();
     }
 
     void* mapped = nullptr;
     if (FAILED(quad_vb_->Map(0, nullptr, &mapped))) {
       return Status::Fail("Map quad VB failed");
     }
-    std::memcpy(mapped, verts.data(), bytes);
+    std::memcpy(mapped, verts.data(), draw_verts_aligned * sizeof(QuadVertex));
     quad_vb_->Unmap(0, nullptr);
 
     D3D12_VERTEX_BUFFER_VIEW vbv{};
     vbv.BufferLocation = quad_vb_->GetGPUVirtualAddress();
-    vbv.SizeInBytes = bytes;
+    vbv.SizeInBytes = draw_verts_aligned * sizeof(QuadVertex);
     vbv.StrideInBytes = sizeof(QuadVertex);
 
     command_list_->SetPipelineState(quad_pso_.Get());
     command_list_->SetGraphicsRootSignature(quad_root_.Get());
     command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     command_list_->IASetVertexBuffers(0, 1, &vbv);
-    command_list_->DrawInstanced(static_cast<UINT>(verts.size()), 1, 0, 0);
-    screen_quad_draws_ += static_cast<std::uint32_t>(quads.size());
+    command_list_->DrawInstanced(draw_verts_aligned, 1, 0, 0);
+    screen_quad_draws_ += draw_verts_aligned / 6;
     return Status::Ok();
   }
 
@@ -1595,7 +1586,7 @@ class D3D12Device final : public IDevice {
     const UINT bytes =
         static_cast<UINT>(lines_as_segments.size() * sizeof(DebugLineVertex));
     if (!debug_vb_ || debug_vb_capacity_ < bytes) {
-      WaitGpu();
+      WaitGpuSubmitted();
       debug_vb_.Reset();
       D3D12_HEAP_PROPERTIES upload{};
       upload.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -1781,6 +1772,38 @@ class D3D12Device final : public IDevice {
       return Status::Fail("Create UI CB failed: " + HrToString(hr));
     }
 
+    // Preallocate ImGui mesh so scroll/hover growth is rare and never races GPU.
+    constexpr UINT kUiVerts = 16384;
+    constexpr UINT kUiIdx = 49152;
+    auto create_ui_buf = [&](UINT bytes, ComPtr<ID3D12Resource>& out) -> Status {
+      out.Reset();
+      D3D12_HEAP_PROPERTIES hp{};
+      hp.Type = D3D12_HEAP_TYPE_UPLOAD;
+      D3D12_RESOURCE_DESC bd{};
+      bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+      bd.Width = bytes;
+      bd.Height = 1;
+      bd.DepthOrArraySize = 1;
+      bd.MipLevels = 1;
+      bd.SampleDesc.Count = 1;
+      bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+      const HRESULT chr = device_->CreateCommittedResource(
+          &hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+          IID_PPV_ARGS(&out));
+      if (FAILED(chr)) {
+        return Status::Fail("Create UI mesh buffer failed: " + HrToString(chr));
+      }
+      return Status::Ok();
+    };
+    if (auto st = create_ui_buf(kUiVerts * static_cast<UINT>(sizeof(UiVertex)), ui_vb_); !st) {
+      return st;
+    }
+    ui_vb_capacity_ = kUiVerts * static_cast<UINT>(sizeof(UiVertex));
+    if (auto st = create_ui_buf(kUiIdx * static_cast<UINT>(sizeof(std::uint16_t)), ui_ib_); !st) {
+      return st;
+    }
+    ui_ib_capacity_ = kUiIdx * static_cast<UINT>(sizeof(std::uint16_t));
+
     ui_ready_ = true;
     return Status::Ok();
   }
@@ -1925,25 +1948,41 @@ class D3D12Device final : public IDevice {
     ui_cb_->Unmap(0, nullptr);
 
     const UINT vb_bytes = static_cast<UINT>(vertices.size() * sizeof(UiVertex));
-    if (!ui_vb_ || ui_vb_capacity_ < vb_bytes) {
-      ui_vb_.Reset();
-      D3D12_HEAP_PROPERTIES upload{};
-      upload.Type = D3D12_HEAP_TYPE_UPLOAD;
-      D3D12_RESOURCE_DESC buf{};
-      buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-      buf.Width = vb_bytes;
-      buf.Height = 1;
-      buf.DepthOrArraySize = 1;
-      buf.MipLevels = 1;
-      buf.SampleDesc.Count = 1;
-      buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-      const HRESULT hr = device_->CreateCommittedResource(
-          &upload, D3D12_HEAP_FLAG_NONE, &buf, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-          IID_PPV_ARGS(&ui_vb_));
-      if (FAILED(hr)) {
-        return Status::Fail("Create UI VB failed: " + HrToString(hr));
+    const UINT ib_bytes = static_cast<UINT>(indices.size() * sizeof(std::uint16_t));
+    if (!ui_vb_ || ui_vb_capacity_ < vb_bytes || !ui_ib_ || ui_ib_capacity_ < ib_bytes) {
+      // Previous Present may still read these upload buffers — never Reset mid-flight.
+      WaitGpuSubmitted();
+      auto grow = [&](UINT need, UINT& capacity, ComPtr<ID3D12Resource>& res) -> Status {
+        if (res && capacity >= need) {
+          return Status::Ok();
+        }
+        const UINT alloc = (std::max)(need, capacity + capacity / 2 + 1);
+        res.Reset();
+        D3D12_HEAP_PROPERTIES upload{};
+        upload.Type = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC buf{};
+        buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        buf.Width = alloc;
+        buf.Height = 1;
+        buf.DepthOrArraySize = 1;
+        buf.MipLevels = 1;
+        buf.SampleDesc.Count = 1;
+        buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        const HRESULT hr = device_->CreateCommittedResource(
+            &upload, D3D12_HEAP_FLAG_NONE, &buf, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+            IID_PPV_ARGS(&res));
+        if (FAILED(hr)) {
+          return Status::Fail("Grow UI mesh buffer failed: " + HrToString(hr));
+        }
+        capacity = alloc;
+        return Status::Ok();
+      };
+      if (auto st = grow(vb_bytes, ui_vb_capacity_, ui_vb_); !st) {
+        return st;
       }
-      ui_vb_capacity_ = vb_bytes;
+      if (auto st = grow(ib_bytes, ui_ib_capacity_, ui_ib_); !st) {
+        return st;
+      }
     }
 
     if (FAILED(ui_vb_->Map(0, nullptr, &mapped))) {
@@ -1951,28 +1990,6 @@ class D3D12Device final : public IDevice {
     }
     std::memcpy(mapped, vertices.data(), vb_bytes);
     ui_vb_->Unmap(0, nullptr);
-
-    const UINT ib_bytes = static_cast<UINT>(indices.size() * sizeof(std::uint16_t));
-    if (!ui_ib_ || ui_ib_capacity_ < ib_bytes) {
-      ui_ib_.Reset();
-      D3D12_HEAP_PROPERTIES upload{};
-      upload.Type = D3D12_HEAP_TYPE_UPLOAD;
-      D3D12_RESOURCE_DESC buf{};
-      buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-      buf.Width = ib_bytes;
-      buf.Height = 1;
-      buf.DepthOrArraySize = 1;
-      buf.MipLevels = 1;
-      buf.SampleDesc.Count = 1;
-      buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-      const HRESULT hr = device_->CreateCommittedResource(
-          &upload, D3D12_HEAP_FLAG_NONE, &buf, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-          IID_PPV_ARGS(&ui_ib_));
-      if (FAILED(hr)) {
-        return Status::Fail("Create UI IB failed: " + HrToString(hr));
-      }
-      ui_ib_capacity_ = ib_bytes;
-    }
 
     if (FAILED(ui_ib_->Map(0, nullptr, &mapped))) {
       return Status::Fail("Map UI IB failed");
@@ -2395,6 +2412,29 @@ class D3D12Device final : public IDevice {
     if (FAILED(hr)) {
       return Status::Fail("Create quad PSO failed: " + HrToString(hr));
     }
+
+    // Preallocate once so DrawScreenQuads never grows mid-frame.
+    constexpr UINT kMaxQuads = 1024;
+    constexpr UINT kVertBytes = kMaxQuads * 6 * (2 + 4) * sizeof(float);  // pos2 + color4
+    quad_vb_.Reset();
+    D3D12_HEAP_PROPERTIES upload{};
+    upload.Type = D3D12_HEAP_TYPE_UPLOAD;
+    D3D12_RESOURCE_DESC buf{};
+    buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    buf.Width = kVertBytes;
+    buf.Height = 1;
+    buf.DepthOrArraySize = 1;
+    buf.MipLevels = 1;
+    buf.SampleDesc.Count = 1;
+    buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    hr = device_->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buf,
+                                          D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                          IID_PPV_ARGS(&quad_vb_));
+    if (FAILED(hr)) {
+      return Status::Fail("Create quad VB failed: " + HrToString(hr));
+    }
+    quad_vb_capacity_ = kVertBytes;
+
     quad_ready_ = true;
     return Status::Ok();
   }
@@ -2527,6 +2567,12 @@ class D3D12Device final : public IDevice {
       return Status::Fail("Device not ready");
     }
 
+    MeshSlotGpu& slot = mesh_slots_[mesh_slot];
+    // Previous frames may still reference these upload buffers on the GPU.
+    if (slot.vb || slot.ib) {
+      WaitGpuSubmitted();
+    }
+
     auto create_upload = [&](const void* data, UINT size, ComPtr<ID3D12Resource>& out) -> Status {
       out.Reset();
       D3D12_HEAP_PROPERTIES upload{};
@@ -2552,7 +2598,6 @@ class D3D12Device final : public IDevice {
       return Status::Ok();
     };
 
-    MeshSlotGpu& slot = mesh_slots_[mesh_slot];
     const UINT vb_size = static_cast<UINT>(vertices.size() * sizeof(LitVertex));
     const UINT ib_size = static_cast<UINT>(indices.size() * sizeof(std::uint32_t));
     if (auto st = create_upload(vertices.data(), vb_size, slot.vb); !st) {
@@ -2936,7 +2981,10 @@ class D3D12Device final : public IDevice {
     command_list_->ResourceBarrier(1, &barrier);
   }
 
-  void WaitGpu() {
+  // Wait for previously *submitted* GPU work. Does not mark in-flight frame
+  // allocators idle — stamping fence_values_ mid-frame caused DEVICE_REMOVED
+  // when ScreenQuad/debug buffers grew (e.g. after wheel zoom / particles).
+  void WaitGpuSubmitted() {
     if (!queue_ || !fence_) {
       return;
     }
@@ -2947,8 +2995,13 @@ class D3D12Device final : public IDevice {
         WaitForSingleObject(fence_event_, INFINITE);
       }
     }
+  }
+
+  // Full idle: safe to Reset all frame allocators afterward.
+  void WaitGpu() {
+    WaitGpuSubmitted();
     for (auto& v : fence_values_) {
-      v = signal;
+      v = fence_value_;
     }
   }
 

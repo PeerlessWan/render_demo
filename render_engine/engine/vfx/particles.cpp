@@ -40,9 +40,12 @@ void ParticleEmitter::Step(float dt) {
   }
   dt = std::max(0.f, dt);
   emit_accum_ += rate_ * dt;
-  while (emit_accum_ >= 1.f) {
+  while (emit_accum_ >= 1.f && particles_.size() < 64) {
     EmitBurst(1);
     emit_accum_ -= 1.f;
+  }
+  if (particles_.size() >= 64) {
+    emit_accum_ = 0.f;
   }
   for (auto& p : particles_) {
     p.life -= dt;
