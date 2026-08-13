@@ -92,8 +92,9 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   }
   ++frame_index_;
 
-  std::vector<rhi::LitDrawItem> items;
-  items.reserve(scene.instances.size());
+  std::vector<rhi::LitDrawItem> opaque;
+  std::vector<rhi::LitDrawItem> transparent;
+  opaque.reserve(scene.instances.size());
   for (const auto& inst : scene.instances) {
     rhi::LitDrawItem item;
     item.world = inst.world;
@@ -103,8 +104,22 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
     item.metallic = mat.metallic;
     item.use_albedo = !mat.albedo_tex.empty();
     item.use_orm = !mat.orm_tex.empty();
-    items.push_back(item);
+    item.transparent = mat.transparent;
+    if (mat.transparent) {
+      transparent.push_back(item);
+    } else {
+      opaque.push_back(item);
+    }
   }
+  // Back-to-front for alpha blend (camera distance).
+  std::sort(transparent.begin(), transparent.end(), [&](const rhi::LitDrawItem& a,
+                                                        const rhi::LitDrawItem& b) {
+    const Vec3 pa{a.world.m[12], a.world.m[13], a.world.m[14]};
+    const Vec3 pb{b.world.m[12], b.world.m[13], b.world.m[14]};
+    const float da = (pa - scene.camera.position).length_squared();
+    const float db = (pb - scene.camera.position).length_squared();
+    return da > db;
+  });
 
   const Quat cam_q = Quat::FromEulerYxz(scene.camera.yaw, scene.camera.pitch, 0.f);
   const Vec3 cam_forward = cam_q.Rotate(Vec3{0.f, 0.f, -1.f});
@@ -213,8 +228,10 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   graph_.Reset();
   if (effect_.enable_shadows) {
     graph_.AddPass("ShadowCSM", {}, {"ShadowMap"}, [&] {
+      device.GpuPassBegin("ShadowCSM");
       if (auto st = device.BeginShadowPass(); !st) {
         LogError(st.message());
+        device.GpuPassEnd();
         return;
       }
       if (auto st = device.SetFrameLighting(lighting); !st) {
@@ -225,7 +242,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
           LogError(st.message());
           break;
         }
-        if (auto st = device.DrawShadowCubes(items); !st) {
+        if (auto st = device.DrawShadowCubes(opaque); !st) {
           LogError(st.message());
           break;
         }
@@ -233,15 +250,18 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       if (auto st = device.EndShadowPass(); !st) {
         LogError(st.message());
       }
+      device.GpuPassEnd();
     });
   }
   if (lighting.enable_local_shadow) {
     graph_.AddPass("LocalShadow", {}, {"LocalShadowMap"}, [&] {
+      device.GpuPassBegin("LocalShadow");
       if (auto st = device.SetFrameLighting(lighting); !st) {
         LogError(st.message());
       }
       if (auto st = device.BeginLocalShadowPass(); !st) {
         LogError(st.message());
+        device.GpuPassEnd();
         return;
       }
       for (int i = 0; i < lighting.local_shadow_count; ++i) {
@@ -249,7 +269,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
           LogError(st.message());
           break;
         }
-        if (auto st = device.DrawShadowCubes(items); !st) {
+        if (auto st = device.DrawShadowCubes(opaque); !st) {
           LogError(st.message());
           break;
         }
@@ -257,6 +277,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       if (auto st = device.EndLocalShadowPass(); !st) {
         LogError(st.message());
       }
+      device.GpuPassEnd();
     });
   }
   graph_.AddPass(
@@ -273,16 +294,20 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       }(),
       {"Color", "Depth"},
       [&] {
+        device.GpuPassBegin("Opaque");
         if (auto st = device.SetFrameLighting(lighting); !st) {
           LogError(st.message());
+          device.GpuPassEnd();
           return;
         }
-        if (auto st = device.DrawLitCubes(items); !st) {
+        if (auto st = device.DrawLitCubes(opaque); !st) {
           LogError(st.message());
         }
+        device.GpuPassEnd();
       });
   if (want_ssao || want_taa) {
     graph_.AddPass("PostSSAO_TAA", {"Color", "Depth"}, {"Color"}, [&] {
+      device.GpuPassBegin("Post");
       rhi::PostResolveDesc post;
       post.inv_view_proj = lighting.view_proj.Inverse();
       post.eye = lighting.eye;
@@ -291,13 +316,30 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       if (auto st = device.ResolvePostEffects(post); !st) {
         LogError(st.message());
       }
+      device.GpuPassEnd();
+    });
+  }
+  if (!transparent.empty()) {
+    graph_.AddPass("Transparent", {"Color", "Depth"}, {"Color"}, [&] {
+      device.GpuPassBegin("Transparent");
+      if (auto st = device.SetFrameLighting(lighting); !st) {
+        LogError(st.message());
+        device.GpuPassEnd();
+        return;
+      }
+      if (auto st = device.DrawTransparentLitCubes(transparent); !st) {
+        LogError(st.message());
+      }
+      device.GpuPassEnd();
     });
   }
   if (!quads.empty()) {
     graph_.AddPass("UI2D", {"Color"}, {"Color"}, [&] {
+      device.GpuPassBegin("UI");
       if (auto st = device.DrawScreenQuads(quads); !st) {
         LogError(st.message());
       }
+      device.GpuPassEnd();
     });
   }
 
@@ -307,7 +349,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   if (auto st = graph_.Execute(); !st) {
     return st;
   }
-  last_draw_count_ = static_cast<std::uint32_t>(items.size());
+  last_draw_count_ = static_cast<std::uint32_t>(opaque.size() + transparent.size());
   return Status::Ok();
 }
 

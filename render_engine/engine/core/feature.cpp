@@ -9,7 +9,7 @@ FeatureSet QueryFeatures() {
   f.level = FeatureLevel::L1;
 #endif
 #if defined(ENGINE_WITH_VULKAN) && ENGINE_WITH_VULKAN
-  f.vulkan = true;           // M17: Win32 surface + swapchain clear path
+  f.vulkan = true;           // M17: Win32 clear + lit cube (no shadows)
 #else
   f.vulkan = false;
 #endif

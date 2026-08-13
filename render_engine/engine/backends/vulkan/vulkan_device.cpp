@@ -14,6 +14,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -21,10 +22,53 @@ namespace engine::rhi {
 namespace {
 
 constexpr std::uint32_t kFramesInFlight = 2;
+constexpr std::uint32_t kMaxLitDraws = 64;
+constexpr VkDeviceSize kUniformAlign = 256;
 
 std::string VkErr(VkResult r) {
   return "VkResult=" + std::to_string(static_cast<int>(r));
 }
+
+Result<std::vector<std::uint8_t>> ReadFileBytes(const std::filesystem::path& path) {
+  std::ifstream f(path, std::ios::binary | std::ios::ate);
+  if (!f) {
+    return Result<std::vector<std::uint8_t>>::Fail("Cannot open shader: " + path.string());
+  }
+  const auto size = static_cast<std::size_t>(f.tellg());
+  if (size == 0) {
+    return Result<std::vector<std::uint8_t>>::Fail("Empty shader: " + path.string());
+  }
+  std::vector<std::uint8_t> data(size);
+  f.seekg(0);
+  f.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(size));
+  return Result<std::vector<std::uint8_t>>::Ok(std::move(data));
+}
+
+struct LitVertex {
+  float px, py, pz;
+  float nx, ny, nz;
+  float u, v;
+};
+
+struct FrameGpu {
+  float view_proj[16];
+  float sun_dir[3];
+  float sun_intensity;
+  float ambient[3];
+  float specular_power;
+  float sun_color[3];
+  float pad_sun;
+  float eye[3];
+  float pad_eye;
+};
+
+struct ObjectGpu {
+  float world[16];
+  float color[4];
+  float metallic;
+  float roughness;
+  float pad[2];
+};
 
 class VulkanDevice final : public IDevice {
  public:
@@ -63,6 +107,7 @@ class VulkanDevice final : public IDevice {
     if (device_ != VK_NULL_HANDLE) {
       vkDeviceWaitIdle(device_);
     }
+    DestroyLitResources();
     DestroySwapchain();
     for (std::uint32_t i = 0; i < kFramesInFlight; ++i) {
       if (in_flight_fences_[i] != VK_NULL_HANDLE) {
@@ -129,6 +174,8 @@ class VulkanDevice final : public IDevice {
 
     frame_recording_ = true;
     cleared_ = false;
+    pass_active_ = false;
+    lit_draws_this_frame_ = 0;
     return Status::Ok();
   }
 
@@ -136,6 +183,12 @@ class VulkanDevice final : public IDevice {
     if (!frame_recording_) {
       return Status::Fail("BeginFrame not called");
     }
+    clear_color_ = color;
+
+    if (lit_ready_) {
+      return BeginLitRenderPass(color);
+    }
+
     VkCommandBuffer cmd = command_buffers_[frame_index_];
     VkImage image = swapchain_images_[image_index_];
 
@@ -179,6 +232,7 @@ class VulkanDevice final : public IDevice {
                          0, 0, nullptr, 0, nullptr, 1, &to_present);
 
     cleared_ = true;
+    used_graphics_ = false;
     return Status::Ok();
   }
 
@@ -187,20 +241,26 @@ class VulkanDevice final : public IDevice {
       return Status::Fail("BeginFrame not called");
     }
     if (!cleared_) {
-      // Ensure presentable layout even if Clear was skipped.
       if (auto st = Clear({0.f, 0.f, 0.f, 1.f}); !st) {
         return st;
       }
     }
 
     VkCommandBuffer cmd = command_buffers_[frame_index_];
+    if (pass_active_) {
+      vkCmdEndRenderPass(cmd);
+      pass_active_ = false;
+    }
+
     VkResult r = vkEndCommandBuffer(cmd);
     if (r != VK_SUCCESS) {
       return Status::Fail("vkEndCommandBuffer failed: " + VkErr(r));
     }
     frame_recording_ = false;
 
-    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    VkPipelineStageFlags wait_stage =
+        used_graphics_ ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                       : VK_PIPELINE_STAGE_TRANSFER_BIT;
     VkSubmitInfo submit{};
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.waitSemaphoreCount = 1;
@@ -249,68 +309,190 @@ class VulkanDevice final : public IDevice {
   }
 
   Status DrawSimpleMesh() override {
-    return Status::Fail("not implemented on Vulkan path yet");
+    return Status::Fail("Vulkan lit not ready");
   }
   Status SetupSimpleMesh(const SimpleMeshShaders&) override {
-    return Status::Fail("not implemented on Vulkan path yet");
+    return Status::Fail("Vulkan lit not ready");
   }
-  Status SetupLitMesh(const LitMeshShaders&) override {
-    return Status::Fail("not implemented on Vulkan path yet");
+
+  Status SetupLitMesh(const LitMeshShaders& shaders) override {
+    vkDeviceWaitIdle(device_);
+    DestroyLitResources();
+
+    auto vs = ReadFileBytes(shaders.vs_dxil);
+    if (!vs) {
+      return vs.status();
+    }
+    auto ps = ReadFileBytes(shaders.ps_dxil);
+    if (!ps) {
+      return ps.status();
+    }
+
+    if (auto st = CreateRenderPass(); !st) {
+      return st;
+    }
+    if (auto st = CreateDepthResources(); !st) {
+      return st;
+    }
+    if (auto st = CreateFramebuffers(); !st) {
+      return st;
+    }
+    if (auto st = CreateLitPipeline(vs.value(), ps.value()); !st) {
+      return st;
+    }
+    if (auto st = CreateCubeMesh(); !st) {
+      return st;
+    }
+    if (auto st = CreateLitBuffersAndDescriptors(); !st) {
+      return st;
+    }
+
+    lit_ready_ = true;
+    LogInfo("Vulkan lit cube ready (depth + directional light, no shadows)");
+    return Status::Ok();
   }
-  Status SetFrameLighting(const FrameLighting&) override {
-    return Status::Fail("not implemented on Vulkan path yet");
+
+  Status SetFrameLighting(const FrameLighting& lighting) override {
+    if (!lit_ready_ || !frame_ub_) {
+      return Status::Fail("SetupLitMesh not called");
+    }
+    // Engine Mat4::Perspective is OpenGL NDC Z [-1,1]; Vulkan depth is [0,1].
+    Mat4 clip_fix = Mat4::Identity();
+    clip_fix.m[10] = 0.5f;
+    clip_fix.m[14] = 0.5f;
+    const Mat4 view_proj = clip_fix * lighting.view_proj;
+
+    FrameGpu data{};
+    std::memcpy(data.view_proj, view_proj.m.data(), sizeof(data.view_proj));
+    data.sun_dir[0] = lighting.sun_direction.x;
+    data.sun_dir[1] = lighting.sun_direction.y;
+    data.sun_dir[2] = lighting.sun_direction.z;
+    data.sun_intensity = lighting.sun_intensity;
+    data.ambient[0] = lighting.ambient.r;
+    data.ambient[1] = lighting.ambient.g;
+    data.ambient[2] = lighting.ambient.b;
+    data.specular_power = lighting.specular_power;
+    data.sun_color[0] = lighting.sun_color.r;
+    data.sun_color[1] = lighting.sun_color.g;
+    data.sun_color[2] = lighting.sun_color.b;
+    data.eye[0] = lighting.eye.x;
+    data.eye[1] = lighting.eye.y;
+    data.eye[2] = lighting.eye.z;
+
+    void* mapped = nullptr;
+    if (vkMapMemory(device_, frame_ub_mem_, 0, sizeof(data), 0, &mapped) != VK_SUCCESS) {
+      return Status::Fail("Map frame UB failed");
+    }
+    std::memcpy(mapped, &data, sizeof(data));
+    vkUnmapMemory(device_, frame_ub_mem_);
+    return Status::Ok();
   }
-  Status BeginShadowPass() override {
-    return Status::Fail("not implemented on Vulkan path yet");
-  }
-  Status BindShadowCascade(int) override {
-    return Status::Fail("not implemented on Vulkan path yet");
-  }
+
+  Status BeginShadowPass() override { return Status::Fail("Vulkan lit not ready"); }
+  Status BindShadowCascade(int) override { return Status::Fail("Vulkan lit not ready"); }
   Status DrawShadowCubes(std::span<const LitDrawItem>) override {
-    return Status::Fail("not implemented on Vulkan path yet");
+    return Status::Fail("Vulkan lit not ready");
   }
-  Status EndShadowPass() override {
-    return Status::Fail("not implemented on Vulkan path yet");
-  }
-  Status BeginLocalShadowPass() override {
-    return Status::Fail("not implemented on Vulkan path yet");
-  }
-  Status BindLocalShadowTile(int) override {
-    return Status::Ok();
-  }
-  Status EndLocalShadowPass() override {
-    return Status::Fail("not implemented on Vulkan path yet");
-  }
-  Status SetupPostMesh(const PostShaders&) override {
-    return Status::Ok();
-  }
+  Status EndShadowPass() override { return Status::Fail("Vulkan lit not ready"); }
+  Status BeginLocalShadowPass() override { return Status::Fail("Vulkan lit not ready"); }
+  Status BindLocalShadowTile(int) override { return Status::Fail("Vulkan lit not ready"); }
+  Status EndLocalShadowPass() override { return Status::Fail("Vulkan lit not ready"); }
+  Status SetupPostMesh(const PostShaders&) override { return Status::Fail("Vulkan lit not ready"); }
   Status ResolvePostEffects(const PostResolveDesc&) override {
+    return Status::Fail("Vulkan lit not ready");
+  }
+
+  Status DrawLitCube(const LitDrawItem& item) override {
+    return DrawLitCubes(std::span<const LitDrawItem>(&item, 1));
+  }
+
+  Status DrawTransparentLitCubes(std::span<const LitDrawItem> items) override {
+    // No transparent lit PSO yet; reuse opaque lit path when lit is ready.
+    return DrawLitCubes(items);
+  }
+
+  Status DrawLitCubes(std::span<const LitDrawItem> items) override {
+    if (!lit_ready_) {
+      return Status::Fail("SetupLitMesh not called");
+    }
+    if (!frame_recording_) {
+      return Status::Fail("BeginFrame not called");
+    }
+    if (items.empty()) {
+      return Status::Ok();
+    }
+    if (!pass_active_) {
+      if (auto st = BeginLitRenderPass(clear_color_); !st) {
+        return st;
+      }
+    }
+
+    VkCommandBuffer cmd = command_buffers_[frame_index_];
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lit_pipeline_);
+
+    VkViewport vp{};
+    vp.width = static_cast<float>(width_);
+    vp.height = static_cast<float>(height_);
+    vp.minDepth = 0.f;
+    vp.maxDepth = 1.f;
+    vkCmdSetViewport(cmd, 0, 1, &vp);
+    VkRect2D scissor{{0, 0}, {width_, height_}};
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    const VkDeviceSize vb_offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &cube_vb_, &vb_offset);
+    vkCmdBindIndexBuffer(cmd, cube_ib_, 0, VK_INDEX_TYPE_UINT16);
+
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      if (lit_draws_this_frame_ >= kMaxLitDraws) {
+        break;
+      }
+      ObjectGpu od{};
+      std::memcpy(od.world, items[i].world.m.data(), sizeof(od.world));
+      od.color[0] = items[i].color.r;
+      od.color[1] = items[i].color.g;
+      od.color[2] = items[i].color.b;
+      od.color[3] = items[i].color.a;
+      od.metallic = items[i].metallic;
+      od.roughness = items[i].roughness;
+
+      const VkDeviceSize slot = static_cast<VkDeviceSize>(lit_draws_this_frame_) * kUniformAlign;
+      void* mapped = nullptr;
+      if (vkMapMemory(device_, object_ub_mem_, slot, sizeof(od), 0, &mapped) != VK_SUCCESS) {
+        return Status::Fail("Map object UB failed");
+      }
+      std::memcpy(mapped, &od, sizeof(od));
+      vkUnmapMemory(device_, object_ub_mem_);
+
+      const std::uint32_t dyn_offset = static_cast<std::uint32_t>(slot);
+      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lit_pipeline_layout_, 0, 1,
+                              &lit_desc_set_, 1, &dyn_offset);
+      vkCmdDrawIndexed(cmd, 36, 1, 0, 0, 0);
+      ++lit_draws_this_frame_;
+    }
+
+    used_graphics_ = true;
     return Status::Ok();
   }
-  Status DrawLitCube(const LitDrawItem&) override {
-    return Status::Fail("not implemented on Vulkan path yet");
-  }
-  Status DrawLitCubes(std::span<const LitDrawItem>) override {
-    return Status::Fail("not implemented on Vulkan path yet");
-  }
+
   Status UploadLitAlbedoRgba(const std::uint8_t*, int, int) override {
-    return Status::Fail("not implemented on Vulkan path yet");
+    return Status::Fail("Vulkan lit not ready");
   }
   Status UploadLitOrmRgba(const std::uint8_t*, int, int) override {
-    return Status::Fail("not implemented on Vulkan path yet");
+    return Status::Fail("Vulkan lit not ready");
   }
   Status DrawScreenQuads(std::span<const ScreenQuad>) override {
-    return Status::Fail("not implemented on Vulkan path yet");
+    return Status::Fail("Vulkan lit not ready");
   }
   Status SetupUiMesh(const SimpleMeshShaders&) override {
-    return Status::Fail("not implemented on Vulkan path yet");
+    return Status::Fail("Vulkan lit not ready");
   }
   Status UploadUiFontAtlas(const std::uint8_t*, int, int) override {
-    return Status::Fail("not implemented on Vulkan path yet");
+    return Status::Fail("Vulkan lit not ready");
   }
   Status DrawUiMesh(std::span<const UiVertex>, std::span<const std::uint16_t>,
                     std::span<const UiDrawCmd>) override {
-    return Status::Fail("not implemented on Vulkan path yet");
+    return Status::Fail("Vulkan lit not ready");
   }
   Status DispatchCompute(const ComputeDispatchDesc& desc) override {
     if (desc.groups_x == 0 || desc.groups_y == 0 || desc.groups_z == 0) {
@@ -326,6 +508,35 @@ class VulkanDevice final : public IDevice {
   }
 
  private:
+  Status BeginLitRenderPass(const ColorRgba& color) {
+    if (pass_active_) {
+      cleared_ = true;
+      used_graphics_ = true;
+      return Status::Ok();
+    }
+    if (framebuffers_.empty() || image_index_ >= framebuffers_.size()) {
+      return Status::Fail("Lit framebuffers missing");
+    }
+
+    VkClearValue clears[2]{};
+    clears[0].color = {{color.r, color.g, color.b, color.a}};
+    clears[1].depthStencil = {1.f, 0};
+
+    VkRenderPassBeginInfo rp{};
+    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp.renderPass = render_pass_;
+    rp.framebuffer = framebuffers_[image_index_];
+    rp.renderArea.extent = {width_, height_};
+    rp.clearValueCount = 2;
+    rp.pClearValues = clears;
+
+    vkCmdBeginRenderPass(command_buffers_[frame_index_], &rp, VK_SUBPASS_CONTENTS_INLINE);
+    pass_active_ = true;
+    cleared_ = true;
+    used_graphics_ = true;
+    return Status::Ok();
+  }
+
   Status CreateInstance() {
     VkApplicationInfo app{};
     app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -420,6 +631,7 @@ class VulkanDevice final : public IDevice {
     if (physical_ == VK_NULL_HANDLE) {
       return Status::Fail("No suitable Vulkan GPU with swapchain + present");
     }
+    vkGetPhysicalDeviceMemoryProperties(physical_, &mem_props_);
     return Status::Ok();
   }
 
@@ -590,7 +802,7 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
 
-  void DestroySwapchain() {
+  void DestroySwapchainViews() {
     for (VkImageView v : swapchain_views_) {
       if (v != VK_NULL_HANDLE) {
         vkDestroyImageView(device_, v, nullptr);
@@ -604,13 +816,514 @@ class VulkanDevice final : public IDevice {
     }
   }
 
+  void DestroySwapchain() {
+    DestroyFramebuffersOnly();
+    DestroyDepthOnly();
+    DestroySwapchainViews();
+  }
+
   Status RecreateSwapchain() {
     if (device_ == VK_NULL_HANDLE) {
       return Status::Fail("No device");
     }
     vkDeviceWaitIdle(device_);
-    DestroySwapchain();
-    return CreateSwapchain();
+    DestroyFramebuffersOnly();
+    DestroyDepthOnly();
+    DestroySwapchainViews();
+    if (auto st = CreateSwapchain(); !st) {
+      return st;
+    }
+    if (lit_ready_) {
+      if (auto st = CreateDepthResources(); !st) {
+        return st;
+      }
+      if (auto st = CreateFramebuffers(); !st) {
+        return st;
+      }
+    }
+    return Status::Ok();
+  }
+
+  std::uint32_t FindMemoryType(std::uint32_t type_bits, VkMemoryPropertyFlags props) const {
+    for (std::uint32_t i = 0; i < mem_props_.memoryTypeCount; ++i) {
+      if ((type_bits & (1u << i)) &&
+          (mem_props_.memoryTypes[i].propertyFlags & props) == props) {
+        return i;
+      }
+    }
+    return UINT32_MAX;
+  }
+
+  Status CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props,
+                      VkBuffer& buffer, VkDeviceMemory& memory) {
+    VkBufferCreateInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bi.size = size;
+    bi.usage = usage;
+    bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device_, &bi, nullptr, &buffer) != VK_SUCCESS) {
+      return Status::Fail("vkCreateBuffer failed");
+    }
+    VkMemoryRequirements req{};
+    vkGetBufferMemoryRequirements(device_, buffer, &req);
+    const std::uint32_t type = FindMemoryType(req.memoryTypeBits, props);
+    if (type == UINT32_MAX) {
+      return Status::Fail("No suitable memory type for buffer");
+    }
+    VkMemoryAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = type;
+    if (vkAllocateMemory(device_, &ai, nullptr, &memory) != VK_SUCCESS) {
+      return Status::Fail("vkAllocateMemory failed");
+    }
+    vkBindBufferMemory(device_, buffer, memory, 0);
+    return Status::Ok();
+  }
+
+  Status CreateRenderPass() {
+    if (render_pass_ != VK_NULL_HANDLE) {
+      return Status::Ok();
+    }
+    VkAttachmentDescription color{};
+    color.format = surface_format_.format;
+    color.samples = VK_SAMPLE_COUNT_1_BIT;
+    color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentDescription depth{};
+    depth.format = VK_FORMAT_D32_SFLOAT;
+    depth.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference color_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkAttachmentReference depth_ref{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+
+    VkSubpassDescription sub{};
+    sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.colorAttachmentCount = 1;
+    sub.pColorAttachments = &color_ref;
+    sub.pDepthStencilAttachment = &depth_ref;
+
+    VkSubpassDependency dep{};
+    dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dep.dstSubpass = 0;
+    dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                       VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dep.dstStageMask = dep.srcStageMask;
+    dep.srcAccessMask = 0;
+    dep.dstAccessMask =
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+    const VkAttachmentDescription atts[] = {color, depth};
+    VkRenderPassCreateInfo rpci{};
+    rpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    rpci.attachmentCount = 2;
+    rpci.pAttachments = atts;
+    rpci.subpassCount = 1;
+    rpci.pSubpasses = &sub;
+    rpci.dependencyCount = 1;
+    rpci.pDependencies = &dep;
+    if (vkCreateRenderPass(device_, &rpci, nullptr, &render_pass_) != VK_SUCCESS) {
+      return Status::Fail("vkCreateRenderPass failed");
+    }
+    return Status::Ok();
+  }
+
+  void DestroyDepthOnly() {
+    if (depth_view_ != VK_NULL_HANDLE) {
+      vkDestroyImageView(device_, depth_view_, nullptr);
+      depth_view_ = VK_NULL_HANDLE;
+    }
+    if (depth_image_ != VK_NULL_HANDLE) {
+      vkDestroyImage(device_, depth_image_, nullptr);
+      depth_image_ = VK_NULL_HANDLE;
+    }
+    if (depth_mem_ != VK_NULL_HANDLE) {
+      vkFreeMemory(device_, depth_mem_, nullptr);
+      depth_mem_ = VK_NULL_HANDLE;
+    }
+  }
+
+  Status CreateDepthResources() {
+    DestroyDepthOnly();
+    VkImageCreateInfo ii{};
+    ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ii.imageType = VK_IMAGE_TYPE_2D;
+    ii.format = VK_FORMAT_D32_SFLOAT;
+    ii.extent = {width_, height_, 1};
+    ii.mipLevels = 1;
+    ii.arrayLayers = 1;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT;
+    ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (vkCreateImage(device_, &ii, nullptr, &depth_image_) != VK_SUCCESS) {
+      return Status::Fail("Create depth image failed");
+    }
+    VkMemoryRequirements req{};
+    vkGetImageMemoryRequirements(device_, depth_image_, &req);
+    const std::uint32_t type =
+        FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (type == UINT32_MAX) {
+      return Status::Fail("No device-local memory for depth");
+    }
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = type;
+    if (vkAllocateMemory(device_, &ai, nullptr, &depth_mem_) != VK_SUCCESS) {
+      return Status::Fail("Allocate depth memory failed");
+    }
+    vkBindImageMemory(device_, depth_image_, depth_mem_, 0);
+
+    VkImageViewCreateInfo vi{};
+    vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vi.image = depth_image_;
+    vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vi.format = VK_FORMAT_D32_SFLOAT;
+    vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    vi.subresourceRange.levelCount = 1;
+    vi.subresourceRange.layerCount = 1;
+    if (vkCreateImageView(device_, &vi, nullptr, &depth_view_) != VK_SUCCESS) {
+      return Status::Fail("Create depth view failed");
+    }
+    return Status::Ok();
+  }
+
+  void DestroyFramebuffersOnly() {
+    for (VkFramebuffer fb : framebuffers_) {
+      if (fb != VK_NULL_HANDLE) {
+        vkDestroyFramebuffer(device_, fb, nullptr);
+      }
+    }
+    framebuffers_.clear();
+  }
+
+  Status CreateFramebuffers() {
+    DestroyFramebuffersOnly();
+    framebuffers_.resize(swapchain_views_.size());
+    for (std::size_t i = 0; i < swapchain_views_.size(); ++i) {
+      const VkImageView atts[] = {swapchain_views_[i], depth_view_};
+      VkFramebufferCreateInfo fi{};
+      fi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+      fi.renderPass = render_pass_;
+      fi.attachmentCount = 2;
+      fi.pAttachments = atts;
+      fi.width = width_;
+      fi.height = height_;
+      fi.layers = 1;
+      if (vkCreateFramebuffer(device_, &fi, nullptr, &framebuffers_[i]) != VK_SUCCESS) {
+        return Status::Fail("vkCreateFramebuffer failed");
+      }
+    }
+    return Status::Ok();
+  }
+
+  Status CreateShaderModule(const std::vector<std::uint8_t>& spirv, VkShaderModule& out) {
+    if (spirv.size() % 4 != 0) {
+      return Status::Fail("SPIR-V size not multiple of 4");
+    }
+    VkShaderModuleCreateInfo ci{};
+    ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    ci.codeSize = spirv.size();
+    ci.pCode = reinterpret_cast<const std::uint32_t*>(spirv.data());
+    if (vkCreateShaderModule(device_, &ci, nullptr, &out) != VK_SUCCESS) {
+      return Status::Fail("vkCreateShaderModule failed");
+    }
+    return Status::Ok();
+  }
+
+  Status CreateLitPipeline(const std::vector<std::uint8_t>& vs_spv,
+                           const std::vector<std::uint8_t>& ps_spv) {
+    VkShaderModule vs = VK_NULL_HANDLE;
+    VkShaderModule ps = VK_NULL_HANDLE;
+    if (auto st = CreateShaderModule(vs_spv, vs); !st) {
+      return st;
+    }
+    if (auto st = CreateShaderModule(ps_spv, ps); !st) {
+      vkDestroyShaderModule(device_, vs, nullptr);
+      return st;
+    }
+
+    VkDescriptorSetLayoutBinding binds[2]{};
+    binds[0].binding = 0;
+    binds[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    binds[0].descriptorCount = 1;
+    binds[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    binds[1].binding = 1;
+    binds[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    binds[1].descriptorCount = 1;
+    binds[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo dsl{};
+    dsl.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dsl.bindingCount = 2;
+    dsl.pBindings = binds;
+    if (vkCreateDescriptorSetLayout(device_, &dsl, nullptr, &lit_set_layout_) != VK_SUCCESS) {
+      vkDestroyShaderModule(device_, vs, nullptr);
+      vkDestroyShaderModule(device_, ps, nullptr);
+      return Status::Fail("vkCreateDescriptorSetLayout failed");
+    }
+
+    VkPipelineLayoutCreateInfo plci{};
+    plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount = 1;
+    plci.pSetLayouts = &lit_set_layout_;
+    if (vkCreatePipelineLayout(device_, &plci, nullptr, &lit_pipeline_layout_) != VK_SUCCESS) {
+      vkDestroyShaderModule(device_, vs, nullptr);
+      vkDestroyShaderModule(device_, ps, nullptr);
+      return Status::Fail("vkCreatePipelineLayout failed");
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vs;
+    stages[0].pName = "VSMain";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = ps;
+    stages[1].pName = "PSMain";
+
+    VkVertexInputBindingDescription bind{};
+    bind.binding = 0;
+    bind.stride = sizeof(LitVertex);
+    bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription attrs[3]{};
+    attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(LitVertex, px)};
+    attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(LitVertex, nx)};
+    attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(LitVertex, u)};
+
+    VkPipelineVertexInputStateCreateInfo vi{};
+    vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vi.vertexBindingDescriptionCount = 1;
+    vi.pVertexBindingDescriptions = &bind;
+    vi.vertexAttributeDescriptionCount = 3;
+    vi.pVertexAttributeDescriptions = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo ia{
+        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    vp.viewportCount = 1;
+    vp.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rs{
+        VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    rs.cullMode = VK_CULL_MODE_BACK_BIT;
+    rs.frontFace = VK_FRONT_FACE_CLOCKWISE;  // D3D/HLSL clip-space Y-down style via DXC
+    rs.lineWidth = 1.f;
+    rs.depthClampEnable = VK_FALSE;
+    rs.rasterizerDiscardEnable = VK_FALSE;
+
+    VkPipelineMultisampleStateCreateInfo ms{
+        VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo ds{
+        VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    ds.depthTestEnable = VK_TRUE;
+    ds.depthWriteEnable = VK_TRUE;
+    ds.depthCompareOp = VK_COMPARE_OP_LESS;
+
+    VkPipelineColorBlendAttachmentState blend_att{};
+    blend_att.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                               VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo blend{
+        VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    blend.attachmentCount = 1;
+    blend.pAttachments = &blend_att;
+
+    const VkDynamicState dyn_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dyn{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dyn.dynamicStateCount = 2;
+    dyn.pDynamicStates = dyn_states;
+
+    VkGraphicsPipelineCreateInfo gp{};
+    gp.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    gp.stageCount = 2;
+    gp.pStages = stages;
+    gp.pVertexInputState = &vi;
+    gp.pInputAssemblyState = &ia;
+    gp.pViewportState = &vp;
+    gp.pRasterizationState = &rs;
+    gp.pMultisampleState = &ms;
+    gp.pDepthStencilState = &ds;
+    gp.pColorBlendState = &blend;
+    gp.pDynamicState = &dyn;
+    gp.layout = lit_pipeline_layout_;
+    gp.renderPass = render_pass_;
+    gp.subpass = 0;
+
+    const VkResult r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &gp, nullptr,
+                                                 &lit_pipeline_);
+    vkDestroyShaderModule(device_, vs, nullptr);
+    vkDestroyShaderModule(device_, ps, nullptr);
+    if (r != VK_SUCCESS) {
+      return Status::Fail("vkCreateGraphicsPipelines failed: " + VkErr(r));
+    }
+    return Status::Ok();
+  }
+
+  Status CreateCubeMesh() {
+    const LitVertex verts[] = {
+        {-0.5f, -0.5f, 0.5f, 0, 0, 1, 0, 0},  {0.5f, -0.5f, 0.5f, 0, 0, 1, 1, 0},
+        {0.5f, 0.5f, 0.5f, 0, 0, 1, 1, 1},    {-0.5f, 0.5f, 0.5f, 0, 0, 1, 0, 1},
+        {0.5f, -0.5f, -0.5f, 0, 0, -1, 0, 0}, {-0.5f, -0.5f, -0.5f, 0, 0, -1, 1, 0},
+        {-0.5f, 0.5f, -0.5f, 0, 0, -1, 1, 1}, {0.5f, 0.5f, -0.5f, 0, 0, -1, 0, 1},
+        {0.5f, -0.5f, 0.5f, 1, 0, 0, 0, 0},   {0.5f, -0.5f, -0.5f, 1, 0, 0, 1, 0},
+        {0.5f, 0.5f, -0.5f, 1, 0, 0, 1, 1},   {0.5f, 0.5f, 0.5f, 1, 0, 0, 0, 1},
+        {-0.5f, -0.5f, -0.5f, -1, 0, 0, 0, 0},{-0.5f, -0.5f, 0.5f, -1, 0, 0, 1, 0},
+        {-0.5f, 0.5f, 0.5f, -1, 0, 0, 1, 1},  {-0.5f, 0.5f, -0.5f, -1, 0, 0, 0, 1},
+        {-0.5f, 0.5f, 0.5f, 0, 1, 0, 0, 0},   {0.5f, 0.5f, 0.5f, 0, 1, 0, 1, 0},
+        {0.5f, 0.5f, -0.5f, 0, 1, 0, 1, 1},   {-0.5f, 0.5f, -0.5f, 0, 1, 0, 0, 1},
+        {-0.5f, -0.5f, -0.5f, 0, -1, 0, 0, 0},{0.5f, -0.5f, -0.5f, 0, -1, 0, 1, 0},
+        {0.5f, -0.5f, 0.5f, 0, -1, 0, 1, 1},  {-0.5f, -0.5f, 0.5f, 0, -1, 0, 0, 1},
+    };
+    const std::uint16_t indices[] = {
+        0,  1,  2,  0,  2,  3,  4,  5,  6,  4,  6,  7,  8,  9,  10, 8,  10, 11,
+        12, 13, 14, 12, 14, 15, 16, 17, 18, 16, 18, 19, 20, 21, 22, 20, 22, 23,
+    };
+
+    const VkMemoryPropertyFlags host =
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    if (auto st = CreateBuffer(sizeof(verts), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, host, cube_vb_,
+                               cube_vb_mem_);
+        !st) {
+      return st;
+    }
+    if (auto st = CreateBuffer(sizeof(indices), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, host, cube_ib_,
+                               cube_ib_mem_);
+        !st) {
+      return st;
+    }
+    void* mapped = nullptr;
+    vkMapMemory(device_, cube_vb_mem_, 0, sizeof(verts), 0, &mapped);
+    std::memcpy(mapped, verts, sizeof(verts));
+    vkUnmapMemory(device_, cube_vb_mem_);
+    vkMapMemory(device_, cube_ib_mem_, 0, sizeof(indices), 0, &mapped);
+    std::memcpy(mapped, indices, sizeof(indices));
+    vkUnmapMemory(device_, cube_ib_mem_);
+    return Status::Ok();
+  }
+
+  Status CreateLitBuffersAndDescriptors() {
+    const VkMemoryPropertyFlags host =
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    if (auto st = CreateBuffer(kUniformAlign, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, host, frame_ub_,
+                               frame_ub_mem_);
+        !st) {
+      return st;
+    }
+    if (auto st =
+            CreateBuffer(kUniformAlign * kMaxLitDraws, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, host,
+                         object_ub_, object_ub_mem_);
+        !st) {
+      return st;
+    }
+
+    VkDescriptorPoolSize sizes[2]{};
+    sizes[0] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
+    sizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1};
+    VkDescriptorPoolCreateInfo pci{};
+    pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pci.maxSets = 1;
+    pci.poolSizeCount = 2;
+    pci.pPoolSizes = sizes;
+    if (vkCreateDescriptorPool(device_, &pci, nullptr, &lit_desc_pool_) != VK_SUCCESS) {
+      return Status::Fail("vkCreateDescriptorPool failed");
+    }
+
+    VkDescriptorSetAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    ai.descriptorPool = lit_desc_pool_;
+    ai.descriptorSetCount = 1;
+    ai.pSetLayouts = &lit_set_layout_;
+    if (vkAllocateDescriptorSets(device_, &ai, &lit_desc_set_) != VK_SUCCESS) {
+      return Status::Fail("vkAllocateDescriptorSets failed");
+    }
+
+    VkDescriptorBufferInfo frame_info{};
+    frame_info.buffer = frame_ub_;
+    frame_info.offset = 0;
+    frame_info.range = sizeof(FrameGpu);
+
+    VkDescriptorBufferInfo obj_info{};
+    obj_info.buffer = object_ub_;
+    obj_info.offset = 0;
+    obj_info.range = sizeof(ObjectGpu);
+
+    VkWriteDescriptorSet writes[2]{};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = lit_desc_set_;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[0].pBufferInfo = &frame_info;
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = lit_desc_set_;
+    writes[1].dstBinding = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    writes[1].pBufferInfo = &obj_info;
+    vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
+    return Status::Ok();
+  }
+
+  void DestroyLitResources() {
+    lit_ready_ = false;
+    DestroyFramebuffersOnly();
+    DestroyDepthOnly();
+
+    if (lit_pipeline_ != VK_NULL_HANDLE) {
+      vkDestroyPipeline(device_, lit_pipeline_, nullptr);
+      lit_pipeline_ = VK_NULL_HANDLE;
+    }
+    if (lit_pipeline_layout_ != VK_NULL_HANDLE) {
+      vkDestroyPipelineLayout(device_, lit_pipeline_layout_, nullptr);
+      lit_pipeline_layout_ = VK_NULL_HANDLE;
+    }
+    if (lit_set_layout_ != VK_NULL_HANDLE) {
+      vkDestroyDescriptorSetLayout(device_, lit_set_layout_, nullptr);
+      lit_set_layout_ = VK_NULL_HANDLE;
+    }
+    if (lit_desc_pool_ != VK_NULL_HANDLE) {
+      vkDestroyDescriptorPool(device_, lit_desc_pool_, nullptr);
+      lit_desc_pool_ = VK_NULL_HANDLE;
+      lit_desc_set_ = VK_NULL_HANDLE;
+    }
+    auto destroy_buf = [&](VkBuffer& b, VkDeviceMemory& m) {
+      if (b != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, b, nullptr);
+        b = VK_NULL_HANDLE;
+      }
+      if (m != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, m, nullptr);
+        m = VK_NULL_HANDLE;
+      }
+    };
+    destroy_buf(cube_vb_, cube_vb_mem_);
+    destroy_buf(cube_ib_, cube_ib_mem_);
+    destroy_buf(frame_ub_, frame_ub_mem_);
+    destroy_buf(object_ub_, object_ub_mem_);
+
+    if (render_pass_ != VK_NULL_HANDLE) {
+      vkDestroyRenderPass(device_, render_pass_, nullptr);
+      render_pass_ = VK_NULL_HANDLE;
+    }
   }
 
   HWND hwnd_ = nullptr;
@@ -620,6 +1333,7 @@ class VulkanDevice final : public IDevice {
   VkInstance instance_ = VK_NULL_HANDLE;
   VkSurfaceKHR surface_ = VK_NULL_HANDLE;
   VkPhysicalDevice physical_ = VK_NULL_HANDLE;
+  VkPhysicalDeviceMemoryProperties mem_props_{};
   VkDevice device_ = VK_NULL_HANDLE;
   VkQueue graphics_queue_ = VK_NULL_HANDLE;
   VkQueue present_queue_ = VK_NULL_HANDLE;
@@ -642,6 +1356,33 @@ class VulkanDevice final : public IDevice {
   std::uint32_t image_index_ = 0;
   bool frame_recording_ = false;
   bool cleared_ = false;
+  bool pass_active_ = false;
+  bool used_graphics_ = false;
+  ColorRgba clear_color_{0.f, 0.f, 0.f, 1.f};
+
+  bool lit_ready_ = false;
+  std::uint32_t lit_draws_this_frame_ = 0;
+
+  VkRenderPass render_pass_ = VK_NULL_HANDLE;
+  VkImage depth_image_ = VK_NULL_HANDLE;
+  VkDeviceMemory depth_mem_ = VK_NULL_HANDLE;
+  VkImageView depth_view_ = VK_NULL_HANDLE;
+  std::vector<VkFramebuffer> framebuffers_;
+
+  VkDescriptorSetLayout lit_set_layout_ = VK_NULL_HANDLE;
+  VkPipelineLayout lit_pipeline_layout_ = VK_NULL_HANDLE;
+  VkPipeline lit_pipeline_ = VK_NULL_HANDLE;
+  VkDescriptorPool lit_desc_pool_ = VK_NULL_HANDLE;
+  VkDescriptorSet lit_desc_set_ = VK_NULL_HANDLE;
+
+  VkBuffer cube_vb_ = VK_NULL_HANDLE;
+  VkDeviceMemory cube_vb_mem_ = VK_NULL_HANDLE;
+  VkBuffer cube_ib_ = VK_NULL_HANDLE;
+  VkDeviceMemory cube_ib_mem_ = VK_NULL_HANDLE;
+  VkBuffer frame_ub_ = VK_NULL_HANDLE;
+  VkDeviceMemory frame_ub_mem_ = VK_NULL_HANDLE;
+  VkBuffer object_ub_ = VK_NULL_HANDLE;
+  VkDeviceMemory object_ub_mem_ = VK_NULL_HANDLE;
 };
 
 }  // namespace

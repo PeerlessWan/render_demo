@@ -26,3 +26,13 @@ compile_commands.json
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# CTest leftover / local clutter
+Testing/
+third_party/imgui.zip
+third_party/imgui-v1.91.8/.github/
+third_party/imgui-v1.91.8/backends/
+third_party/imgui-v1.91.8/docs/
+third_party/imgui-v1.91.8/examples/
+third_party/imgui-v1.91.8/misc/
+third_party/imgui-v1.91.8/imgui_demo.cpp

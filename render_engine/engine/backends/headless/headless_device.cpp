@@ -166,6 +166,10 @@ class HeadlessDevice final : public IDevice {
     return Status::Ok();
   }
 
+  Status DrawTransparentLitCubes(std::span<const LitDrawItem> items) override {
+    return DrawLitCubes(items);
+  }
+
   Status UploadLitAlbedoRgba(const std::uint8_t*, int width, int height) override {
     if (!lit_ready_) {
       return Status::Fail("SetupLitMesh not called");

@@ -115,6 +115,12 @@ TEST_CASE("ResolveMeshMaterial ground vs metal", "[render][material]") {
   REQUIRE_FALSE(g.albedo_tex.empty());
 }
 
+TEST_CASE("ResolveMeshMaterial glass is transparent", "[render][material]") {
+  const auto glass = engine::render::ResolveMeshMaterial("glass");
+  REQUIRE(glass.transparent);
+  REQUIRE(glass.base_color.a < 1.f);
+}
+
 TEST_CASE("Quality tiers differ", "[render]") {
   const auto low = engine::render::QualitySettings::FromTier(engine::render::QualityTier::Low);
   const auto high = engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);

@@ -13,7 +13,7 @@ struct PbrMaterial {
   std::string albedo_tex;
   std::string normal_tex;
   std::string orm_tex;
-  bool clearcoat = false;
+  bool transparent = false;
 };
 
 }  // namespace engine::material

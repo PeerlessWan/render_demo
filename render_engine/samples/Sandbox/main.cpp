@@ -80,6 +80,16 @@ int main(int argc, char** argv) {
     mesh.mesh_id = "cube";
     a.world().set_mesh(id, mesh);
   }
+  {
+    auto glass = a.world().CreateNode("glass");
+    engine::scene::Transform t;
+    t.position = {0.f, 1.2f, 2.f};
+    t.scale = {1.2f, 1.2f, 1.2f};
+    a.world().set_local_transform(glass, t);
+    engine::scene::MeshRenderer mesh;
+    mesh.mesh_id = "glass";
+    a.world().set_mesh(glass, mesh);
+  }
 
   engine::render::Environment env;
   env.sun_direction = {0.35f, -1.f, 0.25f};
@@ -276,14 +286,26 @@ int main(int argc, char** argv) {
     }
 
     if (profiler_open) {
-      if (imgui.BeginWindow("Profiler (CPU)", 370.f, 48.f, 280.f, 220.f)) {
+      if (imgui.BeginWindow("Profiler", 370.f, 48.f, 300.f, 280.f)) {
         char line[128];
         std::snprintf(line, sizeof(line), "dt=%.2f ms", app_ref.delta_time() * 1000.f);
         imgui.Text(line);
         imgui.Separator();
+        imgui.Text("CPU");
         for (const auto& [name, ms] : profiler.samples_ms()) {
-          std::snprintf(line, sizeof(line), "%s: %.3f ms", name.c_str(), ms);
+          std::snprintf(line, sizeof(line), "  %s: %.3f ms", name.c_str(), ms);
           imgui.Text(line);
+        }
+        imgui.Separator();
+        imgui.Text("GPU (prev frame)");
+        const auto gpu = app_ref.device().LastGpuPassTimings();
+        if (gpu.empty()) {
+          imgui.Text("  (n/a on this backend)");
+        } else {
+          for (const auto& t : gpu) {
+            std::snprintf(line, sizeof(line), "  %s: %.3f ms", t.name.c_str(), t.ms);
+            imgui.Text(line);
+          }
         }
       }
       imgui.EndWindow();

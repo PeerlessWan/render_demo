@@ -27,6 +27,8 @@ namespace engine::rhi {
 namespace {
 
 constexpr std::uint32_t kFrameCount = 2;
+constexpr UINT kMaxGpuPasses = 32;
+constexpr UINT kMaxTimestampQueries = 64;  // 32 begin/end pairs
 
 std::string HrToString(HRESULT hr) {
   char buf[32];
@@ -123,6 +125,10 @@ class D3D12Device final : public IDevice {
       return Status::Fail("CreateCommandQueue failed: " + HrToString(hr));
     }
 
+    if (auto st = CreateGpuTimestampResources(); !st) {
+      return st;
+    }
+
     if (auto st = CreateSwapchain(); !st) {
       return st;
     }
@@ -163,6 +169,11 @@ class D3D12Device final : public IDevice {
       }
       WaitForSingleObject(fence_event_, INFINITE);
     }
+
+    ReadbackGpuPassTimings(frame);
+
+    timestamp_cursor_ = 0;
+    gpu_pass_count_ = 0;
 
     if (FAILED(allocators_[frame]->Reset())) {
       return Status::Fail("CommandAllocator::Reset failed");
@@ -245,6 +256,18 @@ class D3D12Device final : public IDevice {
   Status Present() override {
     auto* backbuffer = backbuffers_[swapchain_->GetCurrentBackBufferIndex()].Get();
     Transition(backbuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+
+    if (timestamp_heap_ && timestamp_readback_ && timestamp_cursor_ > 0) {
+      const UINT64 dest_offset =
+          static_cast<UINT64>(frame_index_) * kMaxTimestampQueries * sizeof(UINT64);
+      command_list_->ResolveQueryData(timestamp_heap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0,
+                                      timestamp_cursor_, timestamp_readback_.Get(), dest_offset);
+      frame_gpu_pass_counts_[frame_index_] = gpu_pass_count_;
+      for (UINT i = 0; i < gpu_pass_count_ && i < kMaxGpuPasses; ++i) {
+        frame_gpu_pass_names_[frame_index_][i] = gpu_pass_names_[i];
+      }
+      frame_timestamps_pending_[frame_index_] = true;
+    }
 
     if (FAILED(command_list_->Close())) {
       return Status::Fail("CommandList::Close failed");
@@ -518,6 +541,24 @@ class D3D12Device final : public IDevice {
     hr = device_->CreateGraphicsPipelineState(&lit_pso, IID_PPV_ARGS(&lit_pso_));
     if (FAILED(hr)) {
       return Status::Fail("Create lit PSO failed: " + HrToString(hr));
+    }
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC lit_pso_tr = lit_pso;
+    lit_pso_tr.BlendState.AlphaToCoverageEnable = FALSE;
+    lit_pso_tr.BlendState.RenderTarget[0].BlendEnable = TRUE;
+    lit_pso_tr.BlendState.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+    lit_pso_tr.BlendState.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+    lit_pso_tr.BlendState.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+    lit_pso_tr.BlendState.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_SRC_ALPHA;
+    lit_pso_tr.BlendState.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+    lit_pso_tr.BlendState.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    lit_pso_tr.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    lit_pso_tr.DepthStencilState.DepthEnable = TRUE;
+    lit_pso_tr.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    lit_pso_tr.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+    hr = device_->CreateGraphicsPipelineState(&lit_pso_tr, IID_PPV_ARGS(&lit_pso_transparent_));
+    if (FAILED(hr)) {
+      return Status::Fail("Create transparent lit PSO failed: " + HrToString(hr));
     }
 
     // Shadow root: CBV b0 + CBV b1 only.
@@ -953,6 +994,45 @@ class D3D12Device final : public IDevice {
   }
 
   Status DrawLitCubes(std::span<const LitDrawItem> items) override {
+    return DrawLitCubesWithPso(items, lit_pso_.Get());
+  }
+
+  Status DrawTransparentLitCubes(std::span<const LitDrawItem> items) override {
+    if (!lit_pso_transparent_) {
+      return Status::Fail("Transparent lit PSO not ready");
+    }
+    return DrawLitCubesWithPso(items, lit_pso_transparent_.Get());
+  }
+
+  void GpuPassBegin(const char* name) override {
+    if (!timestamp_heap_ || !command_list_) {
+      return;
+    }
+    if (timestamp_cursor_ + 2 > kMaxTimestampQueries || gpu_pass_count_ >= kMaxGpuPasses) {
+      return;
+    }
+    command_list_->EndQuery(timestamp_heap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, timestamp_cursor_);
+    gpu_pass_names_[gpu_pass_count_] = name ? name : "";
+    ++gpu_pass_count_;
+    ++timestamp_cursor_;
+  }
+
+  void GpuPassEnd() override {
+    if (!timestamp_heap_ || !command_list_) {
+      return;
+    }
+    if (timestamp_cursor_ >= kMaxTimestampQueries) {
+      return;
+    }
+    command_list_->EndQuery(timestamp_heap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, timestamp_cursor_);
+    ++timestamp_cursor_;
+  }
+
+  [[nodiscard]] std::vector<GpuPassTiming> LastGpuPassTimings() const override {
+    return last_gpu_timings_;
+  }
+
+  Status DrawLitCubesWithPso(std::span<const LitDrawItem> items, ID3D12PipelineState* pso) {
     if (!lit_ready_) {
       return Status::Fail("SetupLitMesh not called");
     }
@@ -971,7 +1051,7 @@ class D3D12Device final : public IDevice {
       local_shadow_map_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     }
 
-    command_list_->SetPipelineState(lit_pso_.Get());
+    command_list_->SetPipelineState(pso);
     command_list_->SetGraphicsRootSignature(lit_root_.Get());
     command_list_->SetGraphicsRootConstantBufferView(0, frame_cb_->GetGPUVirtualAddress());
     ID3D12DescriptorHeap* heaps[] = {shadow_srv_heap_.Get()};
@@ -2493,6 +2573,82 @@ class D3D12Device final : public IDevice {
     }
   }
 
+  Status CreateGpuTimestampResources() {
+    D3D12_QUERY_HEAP_DESC qh{};
+    qh.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+    qh.Count = kMaxTimestampQueries;
+    HRESULT hr = device_->CreateQueryHeap(&qh, IID_PPV_ARGS(&timestamp_heap_));
+    if (FAILED(hr)) {
+      return Status::Fail("CreateQueryHeap(TIMESTAMP) failed: " + HrToString(hr));
+    }
+
+    D3D12_HEAP_PROPERTIES readback{};
+    readback.Type = D3D12_HEAP_TYPE_READBACK;
+    D3D12_RESOURCE_DESC buf{};
+    buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    buf.Width = sizeof(UINT64) * kMaxTimestampQueries * kFrameCount;
+    buf.Height = 1;
+    buf.DepthOrArraySize = 1;
+    buf.MipLevels = 1;
+    buf.SampleDesc.Count = 1;
+    buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    hr = device_->CreateCommittedResource(&readback, D3D12_HEAP_FLAG_NONE, &buf,
+                                          D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                          IID_PPV_ARGS(&timestamp_readback_));
+    if (FAILED(hr)) {
+      return Status::Fail("Create timestamp readback failed: " + HrToString(hr));
+    }
+
+    hr = queue_->GetTimestampFrequency(&timestamp_freq_);
+    if (FAILED(hr) || timestamp_freq_ == 0) {
+      return Status::Fail("GetTimestampFrequency failed: " + HrToString(hr));
+    }
+    return Status::Ok();
+  }
+
+  void ReadbackGpuPassTimings(std::uint32_t frame) {
+    if (!frame_timestamps_pending_[frame] || !timestamp_readback_ || timestamp_freq_ == 0) {
+      return;
+    }
+    const UINT passes = frame_gpu_pass_counts_[frame];
+    const UINT query_count = passes * 2;
+    if (passes == 0 || query_count > kMaxTimestampQueries) {
+      frame_timestamps_pending_[frame] = false;
+      last_gpu_timings_.clear();
+      return;
+    }
+
+    const SIZE_T byte_offset =
+        static_cast<SIZE_T>(frame) * kMaxTimestampQueries * sizeof(UINT64);
+    const SIZE_T byte_size = static_cast<SIZE_T>(query_count) * sizeof(UINT64);
+    D3D12_RANGE read_range{byte_offset, byte_offset + byte_size};
+    void* mapped = nullptr;
+    if (FAILED(timestamp_readback_->Map(0, &read_range, &mapped)) || !mapped) {
+      frame_timestamps_pending_[frame] = false;
+      return;
+    }
+
+    const auto* stamps =
+        reinterpret_cast<const UINT64*>(static_cast<const char*>(mapped) + byte_offset);
+    last_gpu_timings_.clear();
+    last_gpu_timings_.reserve(passes);
+    for (UINT i = 0; i < passes; ++i) {
+      const UINT64 t0 = stamps[i * 2];
+      const UINT64 t1 = stamps[i * 2 + 1];
+      GpuPassTiming timing;
+      timing.name = frame_gpu_pass_names_[frame][i];
+      timing.ms = (t1 >= t0 && timestamp_freq_ > 0)
+                      ? (static_cast<double>(t1 - t0) * 1000.0 /
+                         static_cast<double>(timestamp_freq_))
+                      : 0.0;
+      last_gpu_timings_.push_back(std::move(timing));
+    }
+
+    D3D12_RANGE written{0, 0};
+    timestamp_readback_->Unmap(0, &written);
+    frame_timestamps_pending_[frame] = false;
+  }
+
   HWND hwnd_ = nullptr;
   std::uint32_t width_ = 0;
   std::uint32_t height_ = 0;
@@ -2550,6 +2706,7 @@ class D3D12Device final : public IDevice {
   D3D12_VERTEX_BUFFER_VIEW vbv_{};
   ComPtr<ID3D12RootSignature> lit_root_;
   ComPtr<ID3D12PipelineState> lit_pso_;
+  ComPtr<ID3D12PipelineState> lit_pso_transparent_;
   ComPtr<ID3D12RootSignature> shadow_root_;
   ComPtr<ID3D12PipelineState> shadow_pso_;
   ComPtr<ID3D12RootSignature> quad_root_;
@@ -2578,6 +2735,17 @@ class D3D12Device final : public IDevice {
   UINT64 fence_value_ = 0;
   std::array<UINT64, kFrameCount> fence_values_{};
   std::uint32_t frame_index_ = 0;
+
+  ComPtr<ID3D12QueryHeap> timestamp_heap_;
+  ComPtr<ID3D12Resource> timestamp_readback_;
+  UINT64 timestamp_freq_ = 0;
+  std::string gpu_pass_names_[kMaxGpuPasses];
+  UINT gpu_pass_count_ = 0;
+  UINT timestamp_cursor_ = 0;
+  std::array<UINT, kFrameCount> frame_gpu_pass_counts_{};
+  std::array<std::array<std::string, kMaxGpuPasses>, kFrameCount> frame_gpu_pass_names_{};
+  std::array<bool, kFrameCount> frame_timestamps_pending_{};
+  std::vector<GpuPassTiming> last_gpu_timings_;
 };
 
 }  // namespace

@@ -1,8 +1,23 @@
-# 透明策略（M11 骨架）
+# 透明策略（M11）
 
-- Opaque：前到后或状态排序均可；当前 Sandbox 不区分。
-- AlphaTest：仍写深度。
-- AlphaBlend：后到前按相机距离排序；禁止与 Opaque 混在同一 bucket。
-- 高级 OIT：未实现（P2）。
+## 规则
 
-Sample：使用 `RenderScene` 实例列表自行分区即可；引擎不强制 GPU 透明 Pass，直到 RHI 完整。
+| Bucket | 深度写 | 排序 | 说明 |
+|---|---|---|---|
+| Opaque | 开 | 任意 / 状态排序 | 主路径 lit |
+| AlphaTest | 开 | — | 未单独 PSO（可用 cutout 材质扩展） |
+| AlphaBlend | **关** | **后到前**（相机距离） | `DrawTransparentLitCubes` |
+| OIT | — | — | 未实现（P2） |
+
+禁止 Opaque 与 AlphaBlend 混在同一 submit bucket。
+
+## 引擎接线
+
+- `material::PbrMaterial::transparent` + `ResolveMeshMaterial("glass")`
+- `RenderSystem::DrawFrame`：拆分 opaque / transparent，透明按距离排序后 `DrawTransparentLitCubes`
+- 阴影只画 opaque
+- 顺序：Shadow → Opaque → Post(SSAO/TAA) → **Transparent** → UI
+
+## Sandbox
+
+- 节点 `glass`（`mesh_id = "glass"`）：半透明青蓝立方体，alpha≈0.35

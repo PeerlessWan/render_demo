@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace engine::rhi {
@@ -94,6 +95,12 @@ struct LitDrawItem {
   float roughness = 0.45f;
   bool use_albedo = true;
   bool use_orm = false;  // sample ORM map (R=AO, G=roughness, B=metallic)
+  bool transparent = false;
+};
+
+struct GpuPassTiming {
+  std::string name;
+  double ms = 0.0;
 };
 
 struct ScreenQuad {
@@ -142,6 +149,8 @@ class IDevice {
   virtual Status EndLocalShadowPass() = 0;
   virtual Status DrawLitCube(const LitDrawItem& item) = 0;
   virtual Status DrawLitCubes(std::span<const LitDrawItem> items) = 0;
+  // Alpha-blend lit draws (depth write off). Caller sorts back-to-front.
+  virtual Status DrawTransparentLitCubes(std::span<const LitDrawItem> items) = 0;
 
   // Replace default procedural albedo / ORM (RGBA8, row-major). Call after SetupLitMesh.
   virtual Status UploadLitAlbedoRgba(const std::uint8_t* rgba, int width, int height) = 0;
@@ -150,6 +159,11 @@ class IDevice {
   // Depth SSAO + history TAA resolve (after opaque, before UI).
   virtual Status SetupPostMesh(const PostShaders& shaders) = 0;
   virtual Status ResolvePostEffects(const PostResolveDesc& desc) = 0;
+
+  // Optional GPU pass timestamps (D3D12). No-ops on backends without support.
+  virtual void GpuPassBegin(const char* /*name*/) {}
+  virtual void GpuPassEnd() {}
+  [[nodiscard]] virtual std::vector<GpuPassTiming> LastGpuPassTimings() const { return {}; }
 
   // Screen-space UI/2D quads (NDC via pixel→viewport).
   virtual Status DrawScreenQuads(std::span<const ScreenQuad> quads) = 0;
@@ -167,7 +181,7 @@ class IDevice {
 
 Result<std::unique_ptr<IDevice>> CreateD3D12Device(const DeviceDesc& desc);
 Result<std::unique_ptr<IDevice>> CreateHeadlessDevice(const DeviceDesc& desc);
-// Real Vulkan path when ENGINE_WITH_VULKAN=1 (Win32 surface + swapchain clear).
+// Real Vulkan path when ENGINE_WITH_VULKAN=1 (Win32 clear + optional lit cube SPIR-V).
 Result<std::unique_ptr<IDevice>> CreateVulkanDevice(const DeviceDesc& desc);
 
 }  // namespace engine::rhi

@@ -51,6 +51,11 @@ material::PbrMaterial ResolveMeshMaterial(std::string_view mesh_id) {
     m.metallic = 0.85f;
     m.albedo_tex = "textures/albedo_brick.png";
     m.orm_tex = "textures/orm_brick.png";
+  } else if (mesh_id == "glass") {
+    m.base_color = {0.55f, 0.75f, 0.95f, 0.35f};
+    m.roughness = 0.08f;
+    m.metallic = 0.f;
+    m.transparent = true;
   } else {
     m.base_color = {0.82f, 0.78f, 0.72f, 1.f};
     m.roughness = 0.35f;

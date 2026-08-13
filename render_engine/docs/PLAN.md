@@ -341,13 +341,13 @@
 | **M8** RT 与工具化 | **可用加深**：场景 JSON、Console、Profiler、ActionMap 存盘 |
 | **M9** 基础段验收 | **产品可用**：Sandbox lit+shadow+物理；unit/headless 自测绿；屏空间 2D quad |
 | **M10** 可见性·LOD·实例·流式 | **完成（骨架）**：LodSelect、StreamingBudget |
-| **M11** 阴影·AA·AO·透明 | **可用加深**：方向光 CSM；点光 **多灯 GPU Atlas**；**深度 SSAO** + **历史 TAA（邻域钳制）** post；透明文档仍待；cubemap 点光仍待 |
+| **M11** 阴影·AA·AO·透明 | **可用加深**：CSM；点光多灯 Atlas；深度 SSAO + 历史 TAA；**AlphaBlend 透明**（glass）；cubemap 点光仍待 |
 | **M12** 物理 | **完成（骨架）**：builtin + `CreateJoltPhysicsWorld` stub（未链 Jolt 库） |
 | **M13** P1 后处理与反射 | **完成（骨架）**：PostStack 开关位 |
 | **M14** P1 提交与显示 | **完成（骨架）**：SubmitConfig |
 | **M15** UI 完整 | **可用加深**：`ImmediateUi` + Sandbox 特效/Profiler；RetainedUi + Rml 工厂 fallback；真 RmlUi 仍待 |
 | **M16** 2D·像素·混合 | **可用加深**：屏空间 `DrawScreenQuads` + Sprite Y-sort、Tiled 导入 |
-| **M17** Vulkan（Windows） | **可用加深（clear path）**：`CreateVulkanDevice` Win32 surface+swapchain；`BeginFrame/Clear/Present`；headless 仍走 headless；lit/UI 等 stub；Sandbox 仍默认 D3D12 |
+| **M17** Vulkan（Windows） | **可用加深**：清屏 + **lit cube**（SPIR-V / `--mesh`）；CSM/阴影/UI 仍待 |
 | **M18** Linux + Vulkan | **完成（文档占位）**：[LINUX_VULKAN.md](LINUX_VULKAN.md) |
 | **M19** 网络层 | **可用加深**：loopback + **cpp-httplib** 明文 HTTP；HTTPS 需 OpenSSL；WS loopback；QUIC stub |
 | **M20** 混合打磨 | **完成（加深）**：统一 Pick（3D AABB / 2D Sprite）、整数 DPI 缩放 |
