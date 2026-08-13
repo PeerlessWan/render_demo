@@ -183,7 +183,8 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   lighting.local_light_count = 0;
   lighting.enable_local_shadow = false;
   lighting.local_shadow_count = 0;
-  lighting.local_shadow_tiles_per_row = 2;
+  lighting.local_shadow_tile_count = 0;
+  lighting.local_shadow_tiles_per_row = 4;
   for (const auto& light : local_lights_) {
     if (lighting.local_light_count >= 4) {
       break;
@@ -196,20 +197,27 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
         light.intensity * effect_.local_intensity_scale;
   }
   if (effect_.enable_shadows) {
-    for (int i = 0; i < lighting.local_light_count && lighting.local_shadow_count < 4; ++i) {
+    // Up to 2 cubemap lights (12 faces) fit in the 2048 atlas as 4×4 × 512 tiles.
+    // Matrices are stored at light_index * 6 + face (matches lit_cube.hlsl).
+    constexpr int kMaxCubeLights = 2;
+    for (int i = 0; i < lighting.local_light_count && i < kMaxCubeLights; ++i) {
       const auto& light = local_lights_[static_cast<std::size_t>(i)];
       if (!light.cast_shadows) {
         continue;
       }
-      const int tile = lighting.local_shadow_count++;
-      lighting.local_shadow_vps[static_cast<std::size_t>(tile)] = BuildLocalShadowMatrix(light);
-    }
-    if (lighting.local_shadow_count > 0) {
+      const auto faces = BuildLocalShadowCubeMatrices(light);
+      for (int f = 0; f < 6; ++f) {
+        lighting.local_shadow_vps[static_cast<std::size_t>(i * 6 + f)] =
+            faces[static_cast<std::size_t>(f)];
+      }
+      lighting.local_shadow_count = i + 1;
       lighting.enable_local_shadow = true;
+    }
+    if (lighting.enable_local_shadow) {
+      lighting.local_shadow_tile_count = lighting.local_shadow_count * 6;
       lighting.local_shadow_vp = lighting.local_shadow_vps[0];
       lighting.local_shadow_bias = effect_.shadow_bias * 1.25f;
-      lighting.local_shadow_tiles_per_row =
-          lighting.local_shadow_count > 1 ? 2 : 1;
+      lighting.local_shadow_tiles_per_row = 4;
     }
   }
   // Real SSAO/TAA run in ResolvePostEffects; avoid double-applying lit approximate path.
@@ -271,7 +279,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
         device.GpuPassEnd();
         return;
       }
-      for (int i = 0; i < lighting.local_shadow_count; ++i) {
+      for (int i = 0; i < lighting.local_shadow_tile_count; ++i) {
         if (auto st = device.BindLocalShadowTile(i); !st) {
           LogError(st.message());
           break;

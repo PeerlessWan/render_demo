@@ -4,6 +4,7 @@
 #include "engine/material/material.h"
 #include "engine/render/shadow_atlas.h"
 
+#include <array>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -40,5 +41,9 @@ material::PbrMaterial ResolveMeshMaterial(std::string_view mesh_id);
 
 // Perspective VP for first local light (spot-like shadow from light toward target).
 Mat4 BuildLocalShadowMatrix(const LocalLight& light, const Vec3& look_at = Vec3{0, 0, 0});
+
+// Omnidirectional: 6 face VPs (+X,-X,+Y,-Y,+Z,-Z), 90° FOV, for 2D atlas packing.
+// Face index matches lit_cube.hlsl LocalShadowFactor major-axis selection.
+std::array<Mat4, 6> BuildLocalShadowCubeMatrices(const LocalLight& light);
 
 }  // namespace engine::render

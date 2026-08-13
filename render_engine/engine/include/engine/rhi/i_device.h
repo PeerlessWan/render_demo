@@ -88,11 +88,12 @@ struct FrameLighting {
   std::array<float, 4> local_range{};
   std::array<ColorRgba, 4> local_color{};
   std::array<float, 4> local_intensity{};
-  // First casting local lights: perspective shadow atlas (up to 4 tiles).
-  Mat4 local_shadow_vp = Mat4::Identity();  // tile 0 compat
-  std::array<Mat4, 4> local_shadow_vps{};
-  int local_shadow_count = 0;
-  int local_shadow_tiles_per_row = 2;
+  // First casting local lights: cubemap face atlas (up to 2 lights × 6 faces = 12 tiles).
+  Mat4 local_shadow_vp = Mat4::Identity();  // tile 0 compat (+X of light 0)
+  std::array<Mat4, 12> local_shadow_vps{};
+  int local_shadow_count = 0;       // number of lights casting cube shadows
+  int local_shadow_tile_count = 0;  // local_shadow_count * 6
+  int local_shadow_tiles_per_row = 4;
   bool enable_local_shadow = false;
   float local_shadow_bias = 0.002f;
 };

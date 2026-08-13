@@ -84,6 +84,20 @@ TEST_CASE("Local shadow matrix finite", "[render][m11]") {
   REQUIRE(std::isfinite(vp.m[15]));
 }
 
+TEST_CASE("Local shadow cube matrices finite", "[render][m11]") {
+  engine::render::LocalLight light;
+  light.position = {2.f, 4.f, 1.f};
+  light.range = 15.f;
+  const auto faces = engine::render::BuildLocalShadowCubeMatrices(light);
+  REQUIRE(faces.size() == 6);
+  for (const auto& vp : faces) {
+    REQUIRE(std::isfinite(vp.m[0]));
+    REQUIRE(std::isfinite(vp.m[15]));
+  }
+  // Distinct look directions should yield distinct matrices.
+  REQUIRE_FALSE(faces[0].m[12] == faces[1].m[12] && faces[0].m[14] == faces[1].m[14]);
+}
+
 TEST_CASE("Local light shadow atlas packs", "[render][m11]") {
   engine::render::ShadowAtlas atlas(2048);
   engine::render::LocalLightShadowScheduler sched;

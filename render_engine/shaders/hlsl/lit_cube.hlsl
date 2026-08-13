@@ -20,7 +20,7 @@ cbuffer FrameCB : register(b0) {
   float g_local_count;
   float4 g_local_pos_range[4];
   float4 g_local_color_intensity[4];
-  float4x4 g_local_shadow_vp[4];
+  float4x4 g_local_shadow_vp[12];
   float g_enable_local_shadow;
   float g_local_shadow_bias;
   float g_local_shadow_count;
@@ -130,13 +130,25 @@ float LocalShadowFactor(float3 world_pos, int light_index) {
   if (g_enable_local_shadow < 0.5f || light_index < 0 || light_index >= (int)g_local_shadow_count) {
     return 1.0f;
   }
-  float4 lp = mul(g_local_shadow_vp[light_index], float4(world_pos, 1.0f));
+  float3 lpos = g_local_pos_range[light_index].xyz;
+  float3 dir = world_pos - lpos;
+  float3 ad = abs(dir);
+  int face = 0;
+  if (ad.x >= ad.y && ad.x >= ad.z) {
+    face = dir.x >= 0.0 ? 0 : 1;
+  } else if (ad.y >= ad.z) {
+    face = dir.y >= 0.0 ? 2 : 3;
+  } else {
+    face = dir.z >= 0.0 ? 4 : 5;
+  }
+  int tile = light_index * 6 + face;
+  float4 lp = mul(g_local_shadow_vp[tile], float4(world_pos, 1.0f));
   float3 proj = lp.xyz / max(lp.w, 1e-5);
   float2 uv = proj.xy * float2(0.5, -0.5) + 0.5;
   if (uv.x < 0.001 || uv.x > 0.999 || uv.y < 0.001 || uv.y > 0.999 || proj.z < 0 || proj.z > 1) {
     return 1.0f;
   }
-  float2 atlas_uv = LocalShadowAtlasUv(uv, light_index);
+  float2 atlas_uv = LocalShadowAtlasUv(uv, tile);
   float cmp = proj.z - g_local_shadow_bias;
   float shadow = 0;
   float2 texel = 1.0 / 2048.0;

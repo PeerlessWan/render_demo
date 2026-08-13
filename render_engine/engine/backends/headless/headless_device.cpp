@@ -121,7 +121,10 @@ class HeadlessDevice final : public IDevice {
     if (!lit_ready_ || !local_shadow_active_) {
       return Status::Fail("BeginLocalShadowPass not active");
     }
-    if (tile_index < 0 || tile_index >= std::max(1, lighting_.local_shadow_count)) {
+    if (tile_index < 0 ||
+        tile_index >= std::max(1, lighting_.local_shadow_tile_count > 0
+                                      ? lighting_.local_shadow_tile_count
+                                      : lighting_.local_shadow_count)) {
       return Status::Fail("Invalid local shadow tile index");
     }
     bound_local_tile_ = tile_index;

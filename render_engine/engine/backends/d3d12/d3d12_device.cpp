@@ -690,7 +690,7 @@ class D3D12Device final : public IDevice {
       float local_count;
       float local_pos_range[4][4];
       float local_color_intensity[4][4];
-      float local_shadow_vp[4][16];
+      float local_shadow_vp[12][16];
       float enable_local_shadow;
       float local_shadow_bias;
       float local_shadow_count;
@@ -738,7 +738,7 @@ class D3D12Device final : public IDevice {
       data.local_color_intensity[i][2] = lighting.local_color[static_cast<std::size_t>(i)].b;
       data.local_color_intensity[i][3] = lighting.local_intensity[static_cast<std::size_t>(i)];
     }
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 12; ++i) {
       std::memcpy(data.local_shadow_vp[i],
                   lighting.local_shadow_vps[static_cast<std::size_t>(i)].m.data(),
                   sizeof(data.local_shadow_vp[i]));
@@ -935,19 +935,20 @@ class D3D12Device final : public IDevice {
     if (!lit_ready_ || !local_shadow_active_) {
       return Status::Fail("BeginLocalShadowPass not active");
     }
-    const int count = (std::max)(1, lighting_.local_shadow_count);
+    const int count = (std::max)(1, lighting_.local_shadow_tile_count > 0
+                                        ? lighting_.local_shadow_tile_count
+                                        : lighting_.local_shadow_count);
     if (tile_index < 0 || tile_index >= count) {
       return Status::Fail(ErrorCode::InvalidArgument, "Invalid local shadow tile index");
     }
 
     float shadow_frame[16]{};
+    std::memcpy(shadow_frame,
+                lighting_.local_shadow_vps[static_cast<std::size_t>(tile_index)].m.data(),
+                sizeof(shadow_frame));
     if (tile_index == 0) {
       // Compat: scheduler may still write only local_shadow_vp.
       std::memcpy(shadow_frame, lighting_.local_shadow_vp.m.data(), sizeof(shadow_frame));
-    } else {
-      std::memcpy(shadow_frame,
-                  lighting_.local_shadow_vps[static_cast<std::size_t>(tile_index)].m.data(),
-                  sizeof(shadow_frame));
     }
     void* ptr = nullptr;
     if (FAILED(shadow_frame_cb_->Map(0, nullptr, &ptr))) {
@@ -2473,7 +2474,7 @@ class D3D12Device final : public IDevice {
       }
       return Status::Ok();
     };
-    if (auto st = make_cb(1536, frame_cb_); !st) {
+    if (auto st = make_cb(2560, frame_cb_); !st) {
       return st;
     }
     if (auto st = make_cb(256, shadow_frame_cb_); !st) {

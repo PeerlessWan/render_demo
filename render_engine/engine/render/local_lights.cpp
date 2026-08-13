@@ -1,6 +1,7 @@
 #include "engine/render/local_lights.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace engine::render {
@@ -94,6 +95,27 @@ Mat4 BuildLocalShadowMatrix(const LocalLight& light, const Vec3& look_at) {
   const float z_far = std::max(light.range, 1.f);
   const Mat4 proj = Mat4::Perspective(1.04719755f, 1.f, 0.05f, z_far);
   return proj * view;
+}
+
+std::array<Mat4, 6> BuildLocalShadowCubeMatrices(const LocalLight& light) {
+  // Order: +X -X +Y -Y +Z -Z (must match lit_cube.hlsl face pick).
+  const Vec3 dirs[6] = {
+      {1.f, 0.f, 0.f}, {-1.f, 0.f, 0.f}, {0.f, 1.f, 0.f},
+      {0.f, -1.f, 0.f}, {0.f, 0.f, 1.f}, {0.f, 0.f, -1.f},
+  };
+  const Vec3 ups[6] = {
+      {0.f, -1.f, 0.f}, {0.f, -1.f, 0.f}, {0.f, 0.f, 1.f},
+      {0.f, 0.f, -1.f}, {0.f, -1.f, 0.f}, {0.f, -1.f, 0.f},
+  };
+  const float z_far = std::max(light.range, 1.f);
+  const Mat4 proj = Mat4::Perspective(1.570796327f, 1.f, 0.05f, z_far);  // 90°
+  std::array<Mat4, 6> out{};
+  for (int i = 0; i < 6; ++i) {
+    const Vec3 target = light.position + dirs[i];
+    out[static_cast<std::size_t>(i)] =
+        proj * Mat4::LookAt(light.position, target, ups[i]);
+  }
+  return out;
 }
 
 }  // namespace engine::render
