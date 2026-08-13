@@ -1,11 +1,12 @@
 # 文档索引
 
-> 仓库现状：**文档先行，代码未开始**。实现入口：[GETTING_STARTED_M1.md](GETTING_STARTED_M1.md)。
+> 实现与里程碑见 [PLAN.md](PLAN.md)；**当前迭代**看 [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)。入门：[GETTING_STARTED_M1.md](GETTING_STARTED_M1.md)。
 
 ## 怎么读
 
 | 你想… | 先看 |
 |---|---|
+| 本轮 Doing / 回退 / 下一档 Todo | [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md) |
 | 知道做不做、边界在哪 | [POSITIONING.md](POSITIONING.md) → [KNOWN_GAPS.md](KNOWN_GAPS.md) |
 | 工作区各层怎么切 | [../../docs/LAYERS.md](../../docs/LAYERS.md) · [../../docs/README.md](../../docs/README.md) |
 | 外面怎么挂玩法/脚本/编辑器 | [HOSTING.md](HOSTING.md) |
@@ -13,7 +14,7 @@
 | 通用玩法壳 + 脚本 | [../../game_kit/docs/README.md](../../game_kit/docs/README.md) |
 | 品类层 / 游戏工程 | [../../genre_kits/README.md](../../genre_kits/README.md) · [../../games/README.md](../../games/README.md) |
 | 编辑器详细规格 | [../../editor/docs/README.md](../../editor/docs/README.md) |
-| 按什么顺序实现、怎么验收 | [PLAN.md](PLAN.md) → [GETTING_STARTED_M1.md](GETTING_STARTED_M1.md) |
+| 按什么顺序实现、怎么验收 | [PLAN.md](PLAN.md) → [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md) → [GETTING_STARTED_M1.md](GETTING_STARTED_M1.md) |
 | 模块怎么切、目录长什么样 | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | 编码/依赖/双后端约定 | [STANDARDS.md](STANDARDS.md) → [THIRD_PARTY.md](THIRD_PARTY.md) |
 | 离线烘焙与工具 | [TOOLING.md](TOOLING.md) |
@@ -27,6 +28,7 @@
 | 文档 | 说明 |
 |---|---|
 | [PLAN.md](PLAN.md) | 总验收、范围、风险锁死、里程碑、进度 |
+| [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md) | **当前迭代** Doing / Undo / Todo 工作板 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 分层、目录树、子系统、后端能力 |
 | [POSITIONING.md](POSITIONING.md) | 是/不是、缺陷、风险锁死 |
 | [KNOWN_GAPS.md](KNOWN_GAPS.md) | 缺口 ↔ 里程碑；含 **§4 M25 后候选**（含 C19–C21） |

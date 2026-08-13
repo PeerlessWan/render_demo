@@ -10,16 +10,20 @@
 #include "engine/physics/i_physics_world.h"
 #include "engine/post/post_stack.h"
 #include "engine/render/camera.h"
+#include "engine/render/local_lights.h"
 #include "engine/render/quality.h"
 #include "engine/render/render_scene.h"
+#include "engine/render/shadow_atlas.h"
 #include "engine/render/shadow_csm.h"
 #include "engine/render2d/sprite.h"
 #include "engine/scene/serialization.h"
 #include "engine/scene/world.h"
 #include "engine/ui/retained_ui.h"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <string>
 
 TEST_CASE("Frustum rejects box behind camera", "[math]") {
   engine::render::Camera cam;
@@ -69,6 +73,46 @@ TEST_CASE("CSM splits are monotonic", "[render]") {
   REQUIRE(splits.size() == 3);
   REQUIRE(splits[0] < splits[1]);
   REQUIRE(splits[1] < splits[2]);
+}
+
+TEST_CASE("Local shadow matrix finite", "[render][m11]") {
+  engine::render::LocalLight light;
+  light.position = {2.f, 4.f, 1.f};
+  light.range = 15.f;
+  const auto vp = engine::render::BuildLocalShadowMatrix(light);
+  REQUIRE(std::isfinite(vp.m[0]));
+  REQUIRE(std::isfinite(vp.m[15]));
+}
+
+TEST_CASE("Local light shadow atlas packs", "[render][m11]") {
+  engine::render::ShadowAtlas atlas(2048);
+  engine::render::LocalLightShadowScheduler sched;
+  engine::render::LocalLight a;
+  a.id = 1;
+  a.shadow_resolution = 512;
+  engine::render::LocalLight b;
+  b.id = 2;
+  b.shadow_resolution = 1024;
+  engine::render::LocalLight c;
+  c.id = 3;
+  c.cast_shadows = false;
+  c.shadow_resolution = 512;
+  sched.AddLight(a);
+  sched.AddLight(b);
+  sched.AddLight(c);
+  REQUIRE(sched.Pack(atlas));
+  REQUIRE(sched.packed_count() == 2);
+  REQUIRE(atlas.slots().size() == 2);
+  // Larger tile packed first.
+  REQUIRE(atlas.slots()[0].w == 1024);
+}
+
+TEST_CASE("ResolveMeshMaterial ground vs metal", "[render][material]") {
+  const auto g = engine::render::ResolveMeshMaterial("ground");
+  const auto m = engine::render::ResolveMeshMaterial("metal");
+  REQUIRE(g.metallic < 0.1f);
+  REQUIRE(m.metallic > 0.5f);
+  REQUIRE_FALSE(g.albedo_tex.empty());
 }
 
 TEST_CASE("Quality tiers differ", "[render]") {
@@ -132,6 +176,14 @@ TEST_CASE("Physics stack and raycast", "[physics]") {
   const auto hit = world->Raycast({0, 10, 0}, {0, -1, 0}, 100.f);
   REQUIRE(hit.hit);
   REQUIRE(hit.body_id == id);
+}
+
+TEST_CASE("Default physics world and Jolt stub", "[physics][m12]") {
+  auto world = engine::physics::CreateDefaultPhysicsWorld();
+  REQUIRE(world);
+  REQUIRE(std::string(world->backend_name()) == "builtin");
+  auto jolt = engine::physics::CreateJoltPhysicsWorld();
+  REQUIRE_FALSE(jolt);  // M12: not linked yet
 }
 
 TEST_CASE("Scene serialize roundtrip", "[scene]") {
@@ -210,6 +262,34 @@ TEST_CASE("Net loopback HTTP and WS after Pump", "[net]") {
   net.Pump();
   REQUIRE(got);
   REQUIRE_FALSE(net.quic().supported());
+}
+
+TEST_CASE("Net HTTPS without OpenSSL is Unavailable", "[net][httplib]") {
+  engine::net::NetSystem net;
+  bool done = false;
+  engine::Status st = engine::Status::Ok();
+  std::string err;
+  // Do not hit the network: https:// without OpenSSL must fail locally with Unavailable.
+  REQUIRE(net.http().Get("https://example.invalid/", [&](engine::Status s, engine::net::HttpResponse resp) {
+    done = true;
+    st = s;
+    err = resp.error.empty() ? s.message() : resp.error;
+  }));
+  net.Pump();
+  REQUIRE(done);
+#if defined(ENGINE_WITH_HTTPLIB) && ENGINE_WITH_HTTPLIB
+#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
+  REQUIRE_FALSE(st);
+  REQUIRE(st.code() == engine::ErrorCode::Unavailable);
+  REQUIRE(err.find("HTTPS") != std::string::npos || err.find("OpenSSL") != std::string::npos ||
+          err.find("https") != std::string::npos);
+#else
+  (void)err;
+#endif
+#else
+  REQUIRE_FALSE(st);
+  REQUIRE(st.code() == engine::ErrorCode::Unavailable);
+#endif
 }
 
 TEST_CASE("Feature query d3d12 on Windows", "[core]") {

@@ -8,7 +8,11 @@ FeatureSet QueryFeatures() {
   f.d3d12 = true;
   f.level = FeatureLevel::L1;
 #endif
-  f.vulkan = false;          // M17 stub until backend lands
+#if defined(ENGINE_WITH_VULKAN) && ENGINE_WITH_VULKAN
+  f.vulkan = true;           // M17: Win32 surface + swapchain clear path
+#else
+  f.vulkan = false;
+#endif
   f.raytracing = false;      // optional; disable cleanly
   f.video_decode = false;    // D3D12VA stub reports unavailable
   f.quic = false;

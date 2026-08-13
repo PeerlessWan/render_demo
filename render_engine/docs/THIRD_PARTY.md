@@ -36,6 +36,7 @@
 | `IWebSocket` | IXWebSocket | 其它 WS 库 |
 | `IQuicEndpoint` | MsQuic | ngtcp2 等（须 ADR） |
 | `IImageLoader` | stb_image | 其它解码器 |
+| `ITextureLoader` | dds-ktx (+ stb 回退 PNG) | DirectXTex / 其它 DDS |
 | `IGltfImporter` | cgltf/fastgltf | tinygltf 等 |
 | `IAudioDecoder` / `IAudioOutput` | miniaudio 等 | 拆分解码+WASAPI |
 | `ISpinePlayer`（或 `ISkinnedSprite`） | spine-cpp 或等价 | DragonBones 等（须抽象） |
@@ -137,16 +138,17 @@
 |---|---|---|---|---|
 | mini_test（自研） | M1 | 本仓库 | 头文件 | 临时单测 harness；计划替换为 Catch2 |
 | Jolt | TBD | TBD | TBD | |
-| Dear ImGui | TBD | MIT | TBD | |
+| Dear ImGui | **v1.91.8**（`third_party/imgui-v1.91.8`） | MIT | 静态 | 经 `ImmediateUi` 封装；Sample 不直链 |
 | RmlUi | TBD | TBD | TBD | |
 | cgltf / fastgltf | TBD | TBD | TBD | |
-| stb / dr_libs | TBD | 公有域/MIT | 头文件 | |
+| stb / dr_libs | **stb_image**（`third_party/stb/stb_image.h`） | 公有域/MIT | 头文件 | 经 `IImageLoader`；Sample 不直链 |
 | FSR | TBD | AMD 许可 | TBD | 遵守 NOTICE |
 | DLSS / Streamline | TBD | NVIDIA 协议 | 通常动态 | **不可随意再分发**；随安装包条款 |
 | DXC | TBD | 随工具链 | 构建机 | 运行时不一定需要 |
 | D3D12MA | TBD | MIT | TBD | |
 | miniaudio | TBD | 可选许可 | 单文件 | |
-| cpp-httplib | TBD | MIT | 头文件 | TLS 依赖另计 |
+| cpp-httplib | header vendored (`third_party/cpp-httplib`) | MIT | 头文件 | 经 `IHttpClient`/`http_httplib`；HTTPS 需 OpenSSL（未链则 Unavailable）；Win 链 `ws2_32`/`crypt32` |
+| dds-ktx | ~v1.1+ (`third_party/dds-ktx`) | BSD-2-Clause | 头文件 | 经 `ITextureLoader`；Sample 不直链 |
 | IXWebSocket | TBD | BSD | 静态/动态 | |
 | MsQuic | TBD | MIT | 通常动态 | 注意平台构建 |
 

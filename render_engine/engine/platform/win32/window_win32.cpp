@@ -104,6 +104,8 @@ class WindowWin32 final : public Window {
     }
     last_mouse_x_ = x;
     last_mouse_y_ = y;
+    input_.mouse_x = static_cast<float>(x);
+    input_.mouse_y = static_cast<float>(y);
     have_mouse_ = true;
   }
 

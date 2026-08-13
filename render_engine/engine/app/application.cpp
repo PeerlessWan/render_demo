@@ -74,9 +74,8 @@ Result<std::unique_ptr<Application>> Application::Create(const ApplicationDesc& 
   device_desc.height = window.value()->height();
   device_desc.headless = window.value()->is_headless();
 
-  Result<std::unique_ptr<rhi::IDevice>> device =
-      device_desc.headless ? rhi::CreateHeadlessDevice(device_desc)
-                           : rhi::CreateD3D12Device(device_desc);
+  // Headless always resolved inside CreateDevice (both D3D12 and Vulkan).
+  Result<std::unique_ptr<rhi::IDevice>> device = rhi::CreateDevice(desc.backend, device_desc);
   if (!device) {
     return Result<std::unique_ptr<Application>>::Fail(device.status());
   }
@@ -119,9 +118,13 @@ Status Application::Run(FrameCallback on_frame) {
 
     const float move_speed = 4.f * dt_;
     const float look_speed = 0.0025f;
-    camera_.MoveLocal(input_.axis("MoveZ") * move_speed, input_.axis("MoveX") * move_speed,
-                      input_.axis("MoveY") * move_speed);
-    camera_.AddYawPitch(-input_.axis("LookX") * look_speed, -input_.axis("LookY") * look_speed);
+    if (!ui_want_capture_) {
+      camera_.MoveLocal(input_.axis("MoveZ") * move_speed, input_.axis("MoveX") * move_speed,
+                        input_.axis("MoveY") * move_speed);
+      camera_.AddYawPitch(-input_.axis("LookX") * look_speed, -input_.axis("LookY") * look_speed);
+    } else {
+      // Still allow WASD while hovering UI panel? Block all for predictable tuning.
+    }
 
     if (net_) {
       net_->Pump();

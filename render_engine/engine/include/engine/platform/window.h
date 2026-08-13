@@ -19,6 +19,8 @@ struct WindowDesc {
 // Per-frame OS input snapshot (filled by PumpEvents).
 struct WindowInputSnapshot {
   std::array<bool, 256> keys{};
+  float mouse_x = 0.f;
+  float mouse_y = 0.f;
   float mouse_dx = 0.f;
   float mouse_dy = 0.f;
   bool mouse_left = false;

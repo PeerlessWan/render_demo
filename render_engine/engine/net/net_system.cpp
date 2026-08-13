@@ -1,5 +1,7 @@
 #include "engine/net/net_system.h"
 
+#include "http_httplib.h"
+
 #include "engine/core/log.h"
 
 #include <mutex>
@@ -14,8 +16,11 @@ struct PendingHttp {
   HttpResponse response;
 };
 
-class LoopbackHttp final : public IHttpClient {
+// Routes loopback:// locally; http(s):// to HttplibHttpClient (if present).
+class RoutingHttp final : public IHttpClient {
  public:
+  explicit RoutingHttp(std::unique_ptr<HttplibHttpClient> remote) : remote_(std::move(remote)) {}
+
   Status Get(std::string_view url, HttpCallback cb) override {
     return Enqueue(url, "", std::move(cb), false);
   }
@@ -33,18 +38,31 @@ class LoopbackHttp final : public IHttpClient {
   Status Enqueue(std::string_view url, std::string_view body, HttpCallback cb, bool is_post) {
     PendingHttp p;
     p.cb = std::move(cb);
-    if (url.empty()) {
+    const std::string u(url);
+    if (u.empty()) {
       p.status = Status::Fail(ErrorCode::InvalidArgument, "empty url");
       p.response.error = p.status.message();
-    } else if (std::string(url).find("loopback://") == 0) {
+    } else if (u.find("loopback://") == 0) {
       p.status = Status::Ok();
       p.response.status_code = is_post ? 201 : 200;
       p.response.body = is_post ? std::string("echo:") + std::string(body)
-                                : std::string("ok:") + std::string(url);
+                                : std::string("ok:") + u;
+    } else if (u.find("http://") == 0 || u.find("https://") == 0) {
+      if (!remote_) {
+        p.status = Status::Fail(ErrorCode::Unavailable,
+                                "HTTP remote not available (ENGINE_WITH_HTTPLIB=0)");
+        p.response.error = p.status.message();
+      } else if (is_post) {
+        p.status = remote_->Post(url, body, p.response);
+      } else {
+        p.status = remote_->Get(url, p.response);
+      }
+      if (!p.status) {
+        p.response.error = p.status.message();
+      }
     } else {
-      // No third-party HTTP stack vendored yet — diagnose clearly.
-      p.status = Status::Fail(ErrorCode::Unavailable,
-                              "HTTP remote not available (use loopback:// for tests)");
+      p.status = Status::Fail(ErrorCode::InvalidArgument,
+                              "unsupported URL scheme (use loopback://, http://, or https://)");
       p.response.error = p.status.message();
     }
     std::lock_guard lock(mutex_);
@@ -52,6 +70,7 @@ class LoopbackHttp final : public IHttpClient {
     return Status::Ok();
   }
 
+  std::unique_ptr<HttplibHttpClient> remote_;
   std::mutex mutex_;
   std::vector<PendingHttp> pending_;
 };
@@ -119,14 +138,14 @@ class QuicStub final : public IQuicEndpoint {
 }  // namespace
 
 NetSystem::NetSystem()
-    : http_(std::make_unique<LoopbackHttp>()),
+    : http_(std::make_unique<RoutingHttp>(CreateHttplibHttpClient())),
       ws_(std::make_unique<LoopbackWebSocket>()),
       quic_(std::make_unique<QuicStub>()) {}
 
 NetSystem::~NetSystem() = default;
 
 void NetSystem::Pump() {
-  auto* http = static_cast<LoopbackHttp*>(http_.get());
+  auto* http = static_cast<RoutingHttp*>(http_.get());
   std::vector<PendingHttp> done;
   http->Drain(done);
   for (auto& p : done) {

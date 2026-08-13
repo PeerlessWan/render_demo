@@ -1,11 +1,13 @@
 #include "mini_test.h"
 
 #include "engine/app/application.h"
+#include "engine/core/feature.h"
 #include "engine/gi/probe_volume.h"
 #include "engine/gpu_driven/path.h"
 #include "engine/mixed/pick.h"
 #include "engine/render2d/tilemap_stream.h"
 #include "engine/rt/raytracing.h"
+#include "engine/rhi/backend.h"
 #include "engine/rhi/i_device.h"
 #include "engine/terrain/heightmap.h"
 
@@ -32,6 +34,20 @@ TEST_CASE("Headless device clear readback", "[headless]") {
   REQUIRE(rgba[0] == 255);
   REQUIRE(rgba[1] == 0);
   REQUIRE(device.value()->Present());
+}
+
+// Smoke: Vulkan factory must not open a real Vk device in headless/unit CI.
+TEST_CASE("CreateDevice Vulkan headless uses headless device", "[headless][vulkan]") {
+  engine::rhi::DeviceDesc desc;
+  desc.width = 16;
+  desc.height = 16;
+  desc.headless = true;
+  auto device = engine::rhi::CreateDevice(engine::rhi::Backend::Vulkan, desc);
+  REQUIRE(device);
+  REQUIRE(device.value()->is_headless());
+#if defined(ENGINE_WITH_VULKAN) && ENGINE_WITH_VULKAN
+  REQUIRE(engine::QueryFeature("vulkan"));
+#endif
 }
 
 TEST_CASE("Headless application runs N frames", "[headless]") {

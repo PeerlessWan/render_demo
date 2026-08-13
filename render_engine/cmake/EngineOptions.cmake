@@ -1,6 +1,57 @@
 option(ENGINE_BUILD_TESTS "Build Catch2 unit tests" ON)
 option(ENGINE_BUILD_SAMPLES "Build samples (01_clear, …)" ON)
 
+# Dear ImGui (vendored). Prefer tagged checkout path.
+set(ENGINE_IMGUI_DIR "${CMAKE_SOURCE_DIR}/third_party/imgui-v1.91.8" CACHE PATH "Dear ImGui root")
+if(EXISTS "${ENGINE_IMGUI_DIR}/imgui.h")
+  set(ENGINE_WITH_IMGUI_DEFAULT ON)
+else()
+  set(ENGINE_WITH_IMGUI_DEFAULT OFF)
+endif()
+option(ENGINE_WITH_IMGUI "Build Dear ImGui immediate UI" ${ENGINE_WITH_IMGUI_DEFAULT})
+
+set(ENGINE_STB_DIR "${CMAKE_SOURCE_DIR}/third_party/stb" CACHE PATH "stb headers directory")
+if(EXISTS "${ENGINE_STB_DIR}/stb_image.h")
+  set(ENGINE_WITH_STB_IMAGE_DEFAULT ON)
+else()
+  set(ENGINE_WITH_STB_IMAGE_DEFAULT OFF)
+endif()
+option(ENGINE_WITH_STB_IMAGE "Decode PNG/JPEG via stb_image" ${ENGINE_WITH_STB_IMAGE_DEFAULT})
+
+set(ENGINE_HTTPLIB_DIR "${CMAKE_SOURCE_DIR}/third_party/cpp-httplib" CACHE PATH "cpp-httplib directory")
+if(EXISTS "${ENGINE_HTTPLIB_DIR}/httplib.h")
+  set(ENGINE_WITH_HTTPLIB_DEFAULT ON)
+else()
+  set(ENGINE_WITH_HTTPLIB_DEFAULT OFF)
+endif()
+option(ENGINE_WITH_HTTPLIB "HTTP(S) client via cpp-httplib" ${ENGINE_WITH_HTTPLIB_DEFAULT})
+
+set(ENGINE_DDSKTX_DIR "${CMAKE_SOURCE_DIR}/third_party/dds-ktx" CACHE PATH "dds-ktx directory")
+if(EXISTS "${ENGINE_DDSKTX_DIR}/dds-ktx.h")
+  set(ENGINE_WITH_DDSKTX_DEFAULT ON)
+else()
+  set(ENGINE_WITH_DDSKTX_DEFAULT OFF)
+endif()
+option(ENGINE_WITH_DDSKTX "DDS/KTX texture parse via dds-ktx" ${ENGINE_WITH_DDSKTX_DEFAULT})
+
+# Jolt sources not vendored yet — keep OFF until M12 full link.
+option(ENGINE_WITH_JOLT "Physics via Jolt (stub when OFF)" OFF)
+
+# Vulkan (Windows): default ON when VULKAN_SDK is present.
+set(ENGINE_VULKAN_SDK "$ENV{VULKAN_SDK}" CACHE PATH "Vulkan SDK root (from VULKAN_SDK env)")
+if(ENGINE_VULKAN_SDK AND EXISTS "${ENGINE_VULKAN_SDK}/Include/vulkan/vulkan.h")
+  set(ENGINE_WITH_VULKAN_DEFAULT ON)
+else()
+  set(ENGINE_WITH_VULKAN_DEFAULT OFF)
+endif()
+option(ENGINE_WITH_VULKAN "Build real Vulkan IDevice (Win32 surface + clear)" ${ENGINE_WITH_VULKAN_DEFAULT})
+if(ENGINE_WITH_VULKAN)
+  if(NOT ENGINE_VULKAN_SDK OR NOT EXISTS "${ENGINE_VULKAN_SDK}/Include/vulkan/vulkan.h")
+    message(FATAL_ERROR "ENGINE_WITH_VULKAN=ON but Vulkan headers not found (set VULKAN_SDK / ENGINE_VULKAN_SDK)")
+  endif()
+  message(STATUS "Vulkan enabled: ${ENGINE_VULKAN_SDK}")
+endif()
+
 if(MSVC)
   add_compile_options(/W4 /permissive- /Zc:__cplusplus /utf-8)
 else()

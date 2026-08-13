@@ -10,14 +10,41 @@ add_library(engine_core STATIC
 )
 target_include_directories(engine_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(engine_core PUBLIC cxx_std_20)
+if(ENGINE_WITH_VULKAN)
+  target_compile_definitions(engine_core PUBLIC ENGINE_WITH_VULKAN=1)
+else()
+  target_compile_definitions(engine_core PUBLIC ENGINE_WITH_VULKAN=0)
+endif()
 
 add_library(engine_assets STATIC
   assets/manifest.cpp
   assets/asset_system.cpp
   assets/streaming_budget.cpp
+  assets/image_loader_stb.cpp
+  assets/texture_loader_dds.cpp
 )
 target_include_directories(engine_assets PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_assets PUBLIC engine_core)
+if(ENGINE_WITH_STB_IMAGE)
+  if(NOT EXISTS "${ENGINE_STB_DIR}/stb_image.h")
+    message(FATAL_ERROR "ENGINE_WITH_STB_IMAGE=ON but stb_image.h not found at ${ENGINE_STB_DIR}")
+  endif()
+  target_include_directories(engine_assets PRIVATE "${ENGINE_STB_DIR}")
+  target_compile_definitions(engine_assets PUBLIC ENGINE_WITH_STB_IMAGE=1)
+  message(STATUS "stb_image enabled: ${ENGINE_STB_DIR}")
+else()
+  target_compile_definitions(engine_assets PUBLIC ENGINE_WITH_STB_IMAGE=0)
+endif()
+if(ENGINE_WITH_DDSKTX)
+  if(NOT EXISTS "${ENGINE_DDSKTX_DIR}/dds-ktx.h")
+    message(FATAL_ERROR "ENGINE_WITH_DDSKTX=ON but dds-ktx.h not found at ${ENGINE_DDSKTX_DIR}")
+  endif()
+  target_include_directories(engine_assets PRIVATE "${ENGINE_DDSKTX_DIR}")
+  target_compile_definitions(engine_assets PUBLIC ENGINE_WITH_DDSKTX=1)
+  message(STATUS "dds-ktx enabled: ${ENGINE_DDSKTX_DIR}")
+else()
+  target_compile_definitions(engine_assets PUBLIC ENGINE_WITH_DDSKTX=0)
+endif()
 
 add_library(engine_platform STATIC
   platform/win32/window_win32.cpp
@@ -70,17 +97,44 @@ add_library(engine_rhi STATIC
   render/render_scene.cpp
   render/shadow_csm.cpp
   render/shadow_atlas.cpp
+  render/local_lights.cpp
   render/quality.cpp
   backends/headless/headless_device.cpp
 )
 target_include_directories(engine_rhi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_rhi PUBLIC engine_core engine_scene)
 
+if(ENGINE_WITH_VULKAN)
+  add_library(engine_vulkan STATIC
+    backends/vulkan/vulkan_device.cpp
+  )
+  target_include_directories(engine_vulkan
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE
+      "${ENGINE_VULKAN_SDK}/Include"
+      ${CMAKE_CURRENT_SOURCE_DIR}/backends/vulkan
+  )
+  target_link_libraries(engine_vulkan
+    PUBLIC engine_rhi engine_platform
+    PRIVATE "${ENGINE_VULKAN_SDK}/Lib/vulkan-1.lib"
+  )
+  if(WIN32)
+    target_link_libraries(engine_vulkan PRIVATE user32)
+  endif()
+endif()
+
 add_library(engine_physics STATIC
   physics/builtin_world.cpp
+  physics/jolt_world_stub.cpp
 )
 target_include_directories(engine_physics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_physics PUBLIC engine_core)
+if(ENGINE_WITH_JOLT)
+  target_compile_definitions(engine_physics PUBLIC ENGINE_WITH_JOLT=1)
+  message(STATUS "Jolt enabled (adapter still stub until linked)")
+else()
+  target_compile_definitions(engine_physics PUBLIC ENGINE_WITH_JOLT=0)
+endif()
 
 add_library(engine_media STATIC
   media/media.cpp
@@ -93,9 +147,33 @@ endif()
 
 add_library(engine_ui STATIC
   ui/retained_ui.cpp
+  ui/immediate_ui.cpp
+  ui/rml_ui_stub.cpp
 )
 target_include_directories(engine_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(engine_ui PUBLIC engine_core)
+target_link_libraries(engine_ui PUBLIC engine_core engine_rhi engine_platform)
+
+if(ENGINE_WITH_IMGUI)
+  if(NOT EXISTS "${ENGINE_IMGUI_DIR}/imgui.h")
+    message(FATAL_ERROR "ENGINE_WITH_IMGUI=ON but imgui.h not found at ${ENGINE_IMGUI_DIR}")
+  endif()
+  add_library(imgui STATIC
+    "${ENGINE_IMGUI_DIR}/imgui.cpp"
+    "${ENGINE_IMGUI_DIR}/imgui_draw.cpp"
+    "${ENGINE_IMGUI_DIR}/imgui_tables.cpp"
+    "${ENGINE_IMGUI_DIR}/imgui_widgets.cpp"
+  )
+  target_include_directories(imgui PUBLIC "${ENGINE_IMGUI_DIR}")
+  if(MSVC)
+    target_compile_options(imgui PRIVATE /W3)
+  endif()
+  target_link_libraries(engine_ui PUBLIC imgui)
+  target_compile_definitions(engine_ui PUBLIC ENGINE_WITH_IMGUI=1)
+  message(STATUS "Dear ImGui enabled: ${ENGINE_IMGUI_DIR}")
+else()
+  target_compile_definitions(engine_ui PUBLIC ENGINE_WITH_IMGUI=0)
+  message(STATUS "Dear ImGui disabled")
+endif()
 
 add_library(engine_render2d STATIC
   render2d/sprite.cpp
@@ -136,9 +214,24 @@ target_link_libraries(engine_rt PUBLIC engine_core engine_rhi)
 
 add_library(engine_net STATIC
   net/net_system.cpp
+  net/http_httplib.cpp
 )
 target_include_directories(engine_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_net PUBLIC engine_core)
+if(ENGINE_WITH_HTTPLIB)
+  if(NOT EXISTS "${ENGINE_HTTPLIB_DIR}/httplib.h")
+    message(FATAL_ERROR "ENGINE_WITH_HTTPLIB=ON but httplib.h not found at ${ENGINE_HTTPLIB_DIR}")
+  endif()
+  target_include_directories(engine_net PRIVATE "${ENGINE_HTTPLIB_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/net")
+  target_compile_definitions(engine_net PUBLIC ENGINE_WITH_HTTPLIB=1)
+  if(WIN32)
+    target_link_libraries(engine_net PRIVATE ws2_32 crypt32)
+  endif()
+  message(STATUS "cpp-httplib enabled: ${ENGINE_HTTPLIB_DIR}")
+else()
+  target_include_directories(engine_net PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net")
+  target_compile_definitions(engine_net PUBLIC ENGINE_WITH_HTTPLIB=0)
+endif()
 
 add_library(engine_d3d12 STATIC
   backends/d3d12/d3d12_device.cpp
@@ -169,4 +262,8 @@ target_link_libraries(engine_app
     engine_debug
     engine_net
     engine_d3d12
+    engine_post
 )
+if(ENGINE_WITH_VULKAN)
+  target_link_libraries(engine_app PUBLIC engine_vulkan)
+endif()

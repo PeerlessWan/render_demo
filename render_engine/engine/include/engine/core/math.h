@@ -83,8 +83,11 @@ struct Mat4 {
   static Mat4 TRS(const Vec3& t, const Quat& r, const Vec3& s);
   static Mat4 LookAt(const Vec3& eye, const Vec3& target, const Vec3& up);
   static Mat4 Perspective(float fovy_rad, float aspect, float z_near, float z_far);
+  static Mat4 Orthographic(float left, float right, float bottom, float top, float z_near,
+                           float z_far);
 
   Mat4 operator*(const Mat4& o) const;
+  [[nodiscard]] Mat4 Inverse() const;
   [[nodiscard]] Vec3 TransformPoint(const Vec3& p) const;
   [[nodiscard]] Vec3 TransformVector(const Vec3& v) const;
 };

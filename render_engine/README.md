@@ -9,10 +9,12 @@ ctest --test-dir build -C Debug -L headless --output-on-failure
 build\samples\Sandbox\Debug\sample_sandbox.exe
 ```
 
-**Sandbox（可用）**：WASD/QE 移动、鼠标观察、Esc 退出；方向光 lit 立方体；物理箱掉落；`RenderSystem`+FrameGraph Opaque Pass。
+**Sandbox（产品可用）**：WASD/QE；鼠标观察；**Dear ImGui 特效面板**（F1；字体+控件）；CSM/albedo/点光；物理。
 
-**测试**：`ctest -R unit` / `ctest -L headless`（无窗口 Clear/Lit/Pump）。
+**测试**：`ctest -R unit` / `ctest -L headless`；`sample_sandbox.exe --headless --headless_frames 3`。
 
-仍待产品级加深：CSM GPU 阴影、完整 PBR 材质纹理、Vulkan Device、Jolt/ImGui/真 HTTP。
+仍待加深：点光 GPU Atlas、文件纹理/IBL、真 SSAO/TAA、RmlUi HUD、Vulkan Device。
 
-详见 [docs/PLAN.md](docs/PLAN.md)、[docs/TESTING.md](docs/TESTING.md)。
+详见 [docs/PLAN.md](docs/PLAN.md)、[docs/DOING_UNDO_TODO.md](docs/DOING_UNDO_TODO.md)、[docs/TESTING.md](docs/TESTING.md)。
+
+ImGui 路径：`third_party/imgui-v1.91.8`（`ENGINE_WITH_IMGUI`）。代理拉取示例：`git -c http.proxy=http://127.0.0.1:7897 clone ...`。

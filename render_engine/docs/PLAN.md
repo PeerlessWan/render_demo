@@ -3,7 +3,8 @@
 > 依据 [ARCHITECTURE.md](ARCHITECTURE.md) 与 [POSITIONING.md](POSITIONING.md)  
 > 教学封装：[learn/README.md](learn/README.md) · 路径：[learn/PATH.md](learn/PATH.md)  
 > 定位：**Windows（D3D12 + Vulkan）/ Linux（Vulkan）通用 2D·3D 渲染引擎**  
-> 范围分段：M1–M16（既有能力）+ M17–M19（后端/Linux/网络）+ **M20–M25 引擎缺口补齐（P2）**。
+> 范围分段：M1–M16（既有能力）+ M17–M19（后端/Linux/网络）+ **M20–M25 引擎缺口补齐（P2）**。  
+> **当前迭代看板**（Doing / Undo / Todo）：[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)
 
 ## 1. 总验收目标
 
@@ -334,21 +335,21 @@
 | **M2** D3D12 主路径 | **完成**（DXC `shader_compile`、深度/上传/PSO、纹理三角 `sample_02_triangle`、Resize） |
 | **M3** Graph + 异步 | **完成（加深）**：Pump 契约 + `DispatchCompute`/`ReadbackTextureStub`；GPU 屏障仍待 |
 | **M4** 场景·外设·调试 | **完成（加深）**：Win32 键鼠→InputSystem、Escape 关闭、RenderScene Extract |
-| **M5** 环境与阴影 | **可用加深**：`RenderSystem` + 方向光 lit cube Pass（Sandbox 可见）；CSM GPU 阴影仍待 |
+| **M5** 环境与阴影 | **产品可用**：多级 **CSM**；**文件 albedo/ORM（PNG）** + DDS 加载器；简易 MR；IBL baker 仍待 |
 | **M6** 角色与档位 | **完成（骨架）**：CPU 蒙皮、QualityTier、PostStack |
 | **M7** 特效·超分·音视频 | **可用加深**：WAV 解码 + WinMM `PlayWavFile`/`CreateDefaultAudioDevice`；VA stub |
 | **M8** RT 与工具化 | **可用加深**：场景 JSON、Console、Profiler、ActionMap 存盘 |
-| **M9** 基础段验收 | **可用加深**：Sandbox 可飞相机看 lit 场景 + 物理掉落；headless CI |
+| **M9** 基础段验收 | **产品可用**：Sandbox lit+shadow+物理；unit/headless 自测绿；屏空间 2D quad |
 | **M10** 可见性·LOD·实例·流式 | **完成（骨架）**：LodSelect、StreamingBudget |
-| **M11** 阴影·AA·AO·透明 | **完成（骨架）**：ShadowAtlas、Post 开关、TRANSPARENCY.md |
-| **M12** 物理 | **完成（骨架）**：内置物理世界 |
+| **M11** 阴影·AA·AO·透明 | **可用加深**：方向光 CSM；点光 **多灯 GPU Atlas**；**深度 SSAO** + **历史 TAA（邻域钳制）** post；透明文档仍待；cubemap 点光仍待 |
+| **M12** 物理 | **完成（骨架）**：builtin + `CreateJoltPhysicsWorld` stub（未链 Jolt 库） |
 | **M13** P1 后处理与反射 | **完成（骨架）**：PostStack 开关位 |
 | **M14** P1 提交与显示 | **完成（骨架）**：SubmitConfig |
-| **M15** UI 完整 | **完成（骨架）**：RetainedUi + WantCapture |
-| **M16** 2D·像素·混合 | **完成（骨架）**：Sprite Y-sort、Tiled 导入 |
-| **M17** Vulkan（Windows） | **完成（占位加深）**：`CreateDevice` 支持 headless 回退；真 Vulkan Device 仍待 |
+| **M15** UI 完整 | **可用加深**：`ImmediateUi` + Sandbox 特效/Profiler；RetainedUi + Rml 工厂 fallback；真 RmlUi 仍待 |
+| **M16** 2D·像素·混合 | **可用加深**：屏空间 `DrawScreenQuads` + Sprite Y-sort、Tiled 导入 |
+| **M17** Vulkan（Windows） | **可用加深（clear path）**：`CreateVulkanDevice` Win32 surface+swapchain；`BeginFrame/Clear/Present`；headless 仍走 headless；lit/UI 等 stub；Sandbox 仍默认 D3D12 |
 | **M18** Linux + Vulkan | **完成（文档占位）**：[LINUX_VULKAN.md](LINUX_VULKAN.md) |
-| **M19** 网络层 | **完成（骨架加深）**：loopback HTTP/WS + Pump；QUIC stub |
+| **M19** 网络层 | **可用加深**：loopback + **cpp-httplib** 明文 HTTP；HTTPS 需 OpenSSL；WS loopback；QUIC stub |
 | **M20** 混合打磨 | **完成（加深）**：统一 Pick（3D AABB / 2D Sprite）、整数 DPI 缩放 |
 | **M21** 2D 深度 | **完成（加深）**：TilemapStreamer 预算驻留、Skeleton2D 采样 |
 | **M22** 动态 GI | **完成（加深）**：ProbeVolume 最近邻采样；可关 |
@@ -370,6 +371,7 @@
 ## 8. 相关文档
 
 - [README.md](README.md) — 文档总索引  
+- [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md) — **当前迭代 Doing / Undo / Todo**  
 - [../../docs/LAYERS.md](../../docs/LAYERS.md) — **工作区分层权威**  
 - [GETTING_STARTED_M1.md](GETTING_STARTED_M1.md) — **M1 可执行清单**  
 - [HOSTING.md](HOSTING.md) — **玩法层 / 脚本 / 编辑器外挂**  

@@ -35,6 +35,12 @@ target_link_libraries(engine_unit_tests PRIVATE
 )
 target_compile_features(engine_unit_tests PRIVATE cxx_std_20)
 
+file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/content" _content_dir_def)
+string(REPLACE "\\" "/" _content_dir_def "${_content_dir_def}")
+target_compile_definitions(engine_unit_tests PRIVATE
+  ENGINE_CONTENT_DIR_A="${_content_dir_def}"
+)
+
 add_test(NAME unit.engine_unit_tests COMMAND engine_unit_tests)
 
 # Headless-only filter: same binary, Catch-like tag not available; run full suite as headless-safe.
