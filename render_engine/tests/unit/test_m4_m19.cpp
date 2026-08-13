@@ -184,12 +184,30 @@ TEST_CASE("Physics stack and raycast", "[physics]") {
   REQUIRE(hit.body_id == id);
 }
 
-TEST_CASE("Default physics world and Jolt stub", "[physics][m12]") {
+TEST_CASE("Default physics world and Jolt factory", "[physics][m12]") {
   auto world = engine::physics::CreateDefaultPhysicsWorld();
   REQUIRE(world);
+#if defined(ENGINE_WITH_JOLT) && ENGINE_WITH_JOLT
+  REQUIRE(std::string(world->backend_name()) == "jolt");
+  auto jolt = engine::physics::CreateJoltPhysicsWorld();
+  REQUIRE(jolt);
+  engine::physics::RigidBodyDesc box;
+  box.position = {0, 5, 0};
+  box.half_extents = {0.5f, 0.5f, 0.5f};
+  const int id = jolt->CreateBox(box);
+  REQUIRE(id >= 0);
+  for (int i = 0; i < 180; ++i) {
+    jolt->Step(1.f / 60.f);
+  }
+  REQUIRE(jolt->body_position(id).y < 1.25f);
+  const auto hit = jolt->Raycast({0, 10, 0}, {0, -1, 0}, 100.f);
+  REQUIRE(hit.hit);
+  REQUIRE(hit.body_id == id);
+#else
   REQUIRE(std::string(world->backend_name()) == "builtin");
   auto jolt = engine::physics::CreateJoltPhysicsWorld();
-  REQUIRE_FALSE(jolt);  // M12: not linked yet
+  REQUIRE_FALSE(jolt);
+#endif
 }
 
 TEST_CASE("Scene serialize roundtrip", "[scene]") {

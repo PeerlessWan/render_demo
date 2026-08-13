@@ -54,8 +54,16 @@ else()
 endif()
 option(ENGINE_WITH_CGLTF "glTF/GLB mesh load via cgltf" ${ENGINE_WITH_CGLTF_DEFAULT})
 
-# Jolt sources not vendored yet — keep OFF until M12 full link.
-option(ENGINE_WITH_JOLT "Physics via Jolt (stub when OFF)" OFF)
+set(ENGINE_JOLT_DIR "${CMAKE_SOURCE_DIR}/third_party/JoltPhysics" CACHE PATH "Jolt Physics root")
+if(EXISTS "${ENGINE_JOLT_DIR}/Jolt/Jolt.h")
+  set(ENGINE_WITH_JOLT_DEFAULT ON)
+else()
+  set(ENGINE_WITH_JOLT_DEFAULT OFF)
+endif()
+option(ENGINE_WITH_JOLT "Physics via Jolt (requires third_party/JoltPhysics)" ${ENGINE_WITH_JOLT_DEFAULT})
+if(ENGINE_WITH_JOLT AND NOT EXISTS "${ENGINE_JOLT_DIR}/Jolt/Jolt.h")
+  message(FATAL_ERROR "ENGINE_WITH_JOLT=ON but Jolt not found at ${ENGINE_JOLT_DIR} (see third_party/JoltPhysics/README.engine.md)")
+endif()
 
 # Vulkan (Windows): default ON when VULKAN_SDK is present.
 set(ENGINE_VULKAN_SDK "$ENV{VULKAN_SDK}" CACHE PATH "Vulkan SDK root (from VULKAN_SDK env)")

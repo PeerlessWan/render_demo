@@ -136,14 +136,34 @@ endif()
 
 add_library(engine_physics STATIC
   physics/builtin_world.cpp
-  physics/jolt_world_stub.cpp
+  physics/physics_factory.cpp
 )
 target_include_directories(engine_physics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_physics PUBLIC engine_core)
 if(ENGINE_WITH_JOLT)
+  # Keep Jolt from overriding parent flags / building samples.
+  set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+  set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
+  set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
+  set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
+  set(TARGET_VIEWER OFF CACHE BOOL "" FORCE)
+  set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "" FORCE)
+  set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+  set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+  set(FLOATING_POINT_EXCEPTIONS_ENABLED OFF CACHE BOOL "" FORCE)
+  set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
+  set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+  set(PROFILER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+  set(ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+  add_subdirectory("${ENGINE_JOLT_DIR}/Build" "${CMAKE_BINARY_DIR}/_deps/jolt")
+  target_sources(engine_physics PRIVATE physics/jolt_world.cpp)
+  target_link_libraries(engine_physics PRIVATE Jolt)
+  # Jolt headers must stay private (ADR 0015 / 0017).
+  target_include_directories(engine_physics PRIVATE "${ENGINE_JOLT_DIR}")
   target_compile_definitions(engine_physics PUBLIC ENGINE_WITH_JOLT=1)
-  message(STATUS "Jolt enabled (adapter still stub until linked)")
+  message(STATUS "Jolt enabled: ${ENGINE_JOLT_DIR}")
 else()
+  target_sources(engine_physics PRIVATE physics/jolt_world_stub.cpp)
   target_compile_definitions(engine_physics PUBLIC ENGINE_WITH_JOLT=0)
 endif()
 

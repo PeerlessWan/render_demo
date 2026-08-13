@@ -36,3 +36,21 @@ third_party/imgui-v1.91.8/docs/
 third_party/imgui-v1.91.8/examples/
 third_party/imgui-v1.91.8/misc/
 third_party/imgui-v1.91.8/imgui_demo.cpp
+# Jolt: keep library + Build only (adapter does not need Samples/Assets).
+
+# Jolt: keep library + Build only (adapter does not need Samples/Assets).
+# Note: root 'build/' also matches JoltPhysics/Build on Windows ¡ª force-tracked below.
+third_party/JoltPhysics/Assets/
+third_party/JoltPhysics/Docs/
+third_party/JoltPhysics/HelloWorld/
+third_party/JoltPhysics/JoltViewer/
+third_party/JoltPhysics/PerformanceTest/
+third_party/JoltPhysics/Samples/
+third_party/JoltPhysics/TestFramework/
+third_party/JoltPhysics/UnitTests/
+third_party/JoltPhysics/.github/
+third_party/JoltPhysics/.clang-format
+third_party/JoltPhysics/.editorconfig
+third_party/JoltPhysics/.gitattributes
+!third_party/JoltPhysics/Build/
+!third_party/JoltPhysics/Build/**

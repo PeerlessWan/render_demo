@@ -36,10 +36,10 @@ class IPhysicsWorld {
 
 std::unique_ptr<IPhysicsWorld> CreateBuiltinPhysicsWorld();
 
-// M12 stub: returns nullptr until Jolt is linked (ENGINE_WITH_JOLT + real adapter).
+// Real Jolt adapter when ENGINE_WITH_JOLT=1; otherwise nullptr.
 std::unique_ptr<IPhysicsWorld> CreateJoltPhysicsWorld();
 
-// Prefers Jolt when available; otherwise builtin (backend_name() == "builtin").
+// Prefers Jolt when available; otherwise builtin.
 std::unique_ptr<IPhysicsWorld> CreateDefaultPhysicsWorld();
 
 }  // namespace engine::physics

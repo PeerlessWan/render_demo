@@ -137,7 +137,7 @@
 | 库 | 版本 | 许可证 | 动态/静态 | 再分发注意 |
 |---|---|---|---|---|
 | mini_test（自研） | M1 | 本仓库 | 头文件 | 临时单测 harness；计划替换为 Catch2 |
-| Jolt | TBD | TBD | TBD | |
+| Jolt | **v5.6.0**（`third_party/JoltPhysics`） | MIT | 静态 | 经 `IPhysicsWorld`/`jolt_world`；Sample 不直链；缺源码则 `ENGINE_WITH_JOLT=OFF` |
 | Dear ImGui | **v1.91.8**（`third_party/imgui-v1.91.8`） | MIT | 静态 | 经 `ImmediateUi` 封装；Sample 不直链 |
 | RmlUi | TBD | TBD | TBD | |
 | cgltf / fastgltf | TBD | TBD | TBD | |

@@ -342,7 +342,7 @@
 | **M9** 基础段验收 | **产品可用**：Sandbox lit+shadow+物理；unit/headless 自测绿；屏空间 2D quad |
 | **M10** 可见性·LOD·实例·流式 | **完成（骨架）**：LodSelect、StreamingBudget |
 | **M11** 阴影·AA·AO·透明 | **可用加深**：CSM；点光多灯 Atlas；深度 SSAO + 历史 TAA；**AlphaBlend 透明**（glass）；cubemap 点光仍待 |
-| **M12** 物理 | **完成（骨架）**：builtin + `CreateJoltPhysicsWorld` stub（未链 Jolt 库） |
+| **M12** 物理 | **可用加深**：builtin + **真 Jolt**（`third_party/JoltPhysics` v5.6.0，`CreateDefaultPhysicsWorld` 优先 jolt） |
 | **M13** P1 后处理与反射 | **完成（骨架）**：PostStack 开关位 |
 | **M14** P1 提交与显示 | **完成（骨架）**：SubmitConfig |
 | **M15** UI 完整 | **可用加深**：`ImmediateUi` + Sandbox 特效/Profiler；RetainedUi + Rml 工厂 fallback；真 RmlUi 仍待 |
