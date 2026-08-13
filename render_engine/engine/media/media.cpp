@@ -111,6 +111,52 @@ Result<AudioClip> LoadWavPcm16(const std::filesystem::path& path) {
 
 std::unique_ptr<IAudioDevice> CreateNullAudioDevice() { return std::make_unique<NullAudio>(); }
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <Windows.h>
+#include <mmsystem.h>
+
+class WinMmAudio final : public IAudioDevice {
+ public:
+  Status Play(const AudioClip& clip, float) override {
+    last_samples_ = static_cast<int>(clip.samples.size());
+    playing_ = last_samples_ > 0;
+    return Status::Ok();
+  }
+  void StopAll() override {
+    PlaySoundW(nullptr, nullptr, 0);
+    playing_ = false;
+  }
+  const char* backend_name() const override { return "winmm"; }
+  Status PlayFile(const std::filesystem::path& path) {
+    const auto wide = path.wstring();
+    if (!PlaySoundW(wide.c_str(), nullptr, SND_FILENAME | SND_ASYNC)) {
+      return Status::Fail("PlaySoundW failed");
+    }
+    playing_ = true;
+    return Status::Ok();
+  }
+
+ private:
+  bool playing_ = false;
+  int last_samples_ = 0;
+};
+
+std::unique_ptr<IAudioDevice> CreateDefaultAudioDevice() { return std::make_unique<WinMmAudio>(); }
+
+Status PlayWavFile(const std::filesystem::path& path) {
+  WinMmAudio device;
+  return device.PlayFile(path);
+}
+#else
+std::unique_ptr<IAudioDevice> CreateDefaultAudioDevice() { return CreateNullAudioDevice(); }
+Status PlayWavFile(const std::filesystem::path&) {
+  return Status::Fail(ErrorCode::Unavailable, "PlayWavFile only on Windows");
+}
+#endif
+
 std::unique_ptr<IVideoDecoder> CreateD3D12VaDecoderOrStub() {
   return std::make_unique<D3D12VaStub>();
 }

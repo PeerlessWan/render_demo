@@ -35,6 +35,10 @@ class IVideoDecoder {
 
 Result<AudioClip> LoadWavPcm16(const std::filesystem::path& path);
 std::unique_ptr<IAudioDevice> CreateNullAudioDevice();
+// Windows: PlaySound for short wav files; falls back to null elsewhere.
+std::unique_ptr<IAudioDevice> CreateDefaultAudioDevice();
 std::unique_ptr<IVideoDecoder> CreateD3D12VaDecoderOrStub();
+// Fire-and-forget helper for UI/sfx.
+Status PlayWavFile(const std::filesystem::path& path);
 
 }  // namespace engine::media

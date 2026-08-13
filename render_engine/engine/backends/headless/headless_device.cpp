@@ -55,6 +55,31 @@ class HeadlessDevice final : public IDevice {
     return Status::Ok();
   }
 
+  Status SetupLitMesh(const LitMeshShaders&) override {
+    lit_ready_ = true;
+    return Status::Ok();
+  }
+
+  Status SetFrameLighting(const FrameLighting& lighting) override {
+    if (!lit_ready_) {
+      return Status::Fail("SetupLitMesh not called");
+    }
+    lighting_ = lighting;
+    return Status::Ok();
+  }
+
+  Status DrawLitCube(const LitDrawItem& item) override {
+    return DrawLitCubes(std::span<const LitDrawItem>(&item, 1));
+  }
+
+  Status DrawLitCubes(std::span<const LitDrawItem> items) override {
+    if (!lit_ready_) {
+      return Status::Fail("SetupLitMesh not called");
+    }
+    lit_draws_ += static_cast<std::uint32_t>(items.size());
+    return Status::Ok();
+  }
+
   Status DispatchCompute(const ComputeDispatchDesc& desc) override {
     if (desc.groups_x == 0 || desc.groups_y == 0 || desc.groups_z == 0) {
       return Status::Fail(ErrorCode::InvalidArgument, "compute groups must be > 0");
@@ -81,21 +106,21 @@ class HeadlessDevice final : public IDevice {
     return Status::Ok();
   }
 
-  [[nodiscard]] std::uint32_t presents() const { return presents_; }
-  [[nodiscard]] std::uint32_t compute_dispatches() const { return compute_dispatches_; }
-
  private:
   DeviceDesc desc_{};
   std::uint32_t width_ = 0;
   std::uint32_t height_ = 0;
   ColorRgba clear_{};
   bool mesh_ready_ = false;
+  bool lit_ready_ = false;
   std::uint32_t frames_begun_ = 0;
   std::uint32_t clears_ = 0;
   std::uint32_t draws_ = 0;
+  std::uint32_t lit_draws_ = 0;
   std::uint32_t presents_ = 0;
   std::uint32_t compute_dispatches_ = 0;
   ComputeDispatchDesc last_dispatch_{};
+  FrameLighting lighting_{};
 };
 
 }  // namespace

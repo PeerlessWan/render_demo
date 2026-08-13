@@ -334,11 +334,11 @@
 | **M2** D3D12 主路径 | **完成**（DXC `shader_compile`、深度/上传/PSO、纹理三角 `sample_02_triangle`、Resize） |
 | **M3** Graph + 异步 | **完成（加深）**：Pump 契约 + `DispatchCompute`/`ReadbackTextureStub`；GPU 屏障仍待 |
 | **M4** 场景·外设·调试 | **完成（加深）**：Win32 键鼠→InputSystem、Escape 关闭、RenderScene Extract |
-| **M5** 环境与阴影 | **完成（骨架）**：Environment/CSM/`ibl_baker`；完整 PBR GPU Pass 仍待 |
+| **M5** 环境与阴影 | **可用加深**：`RenderSystem` + 方向光 lit cube Pass（Sandbox 可见）；CSM GPU 阴影仍待 |
 | **M6** 角色与档位 | **完成（骨架）**：CPU 蒙皮、QualityTier、PostStack |
-| **M7** 特效·超分·音视频 | **完成（骨架）**：WAV/NullAudio、D3D12VA 诊断 stub |
-| **M8** RT 与工具化 | **完成（骨架）**：场景 JSON、Console、Profiler |
-| **M9** 基础段验收 | **完成（加深）**：Sandbox + cook；**headless Application N 帧**可 CI |
+| **M7** 特效·超分·音视频 | **可用加深**：WAV 解码 + WinMM `PlayWavFile`/`CreateDefaultAudioDevice`；VA stub |
+| **M8** RT 与工具化 | **可用加深**：场景 JSON、Console、Profiler、ActionMap 存盘 |
+| **M9** 基础段验收 | **可用加深**：Sandbox 可飞相机看 lit 场景 + 物理掉落；headless CI |
 | **M10** 可见性·LOD·实例·流式 | **完成（骨架）**：LodSelect、StreamingBudget |
 | **M11** 阴影·AA·AO·透明 | **完成（骨架）**：ShadowAtlas、Post 开关、TRANSPARENCY.md |
 | **M12** 物理 | **完成（骨架）**：内置物理世界 |

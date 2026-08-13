@@ -1,20 +1,18 @@
 # render_engine
 
-**Windows（D3D12 + Vulkan）/ Linux（Vulkan）通用 2D·3D 渲染引擎**。
-
-M1–**M25** 逻辑骨架与加深项已落地；真 GPU 全路径（PBR/Vulkan Device/Jolt/ImGui/MsQuic 等）仍可按 PLAN 继续加深。
-
-## 编译与测试
+M1–M25 已具备可用主路径骨架；当前推荐体验：
 
 ```bat
 cmake -B build -G "Visual Studio 17 2022" -A x64 -DENGINE_BUILD_TESTS=ON
 cmake --build build --config Debug
-ctest --test-dir build -C Debug -R unit --output-on-failure
 ctest --test-dir build -C Debug -L headless --output-on-failure
+build\samples\Sandbox\Debug\sample_sandbox.exe
 ```
 
-Headless：`ApplicationDesc.headless=true` 使用无窗口 + `CreateHeadlessDevice`（Clear/Compute/Readback/Present），适合 CI。
+**Sandbox（可用）**：WASD/QE 移动、鼠标观察、Esc 退出；方向光 lit 立方体；物理箱掉落；`RenderSystem`+FrameGraph Opaque Pass。
 
-Samples：`01_clear` / `02_triangle` / `sample_sandbox`；工具：`ibl_baker` / `asset_cook`。
+**测试**：`ctest -R unit` / `ctest -L headless`（无窗口 Clear/Lit/Pump）。
 
-文档入口：[docs/PLAN.md](docs/PLAN.md) · [docs/TESTING.md](docs/TESTING.md) · [docs/HOSTING.md](docs/HOSTING.md)
+仍待产品级加深：CSM GPU 阴影、完整 PBR 材质纹理、Vulkan Device、Jolt/ImGui/真 HTTP。
+
+详见 [docs/PLAN.md](docs/PLAN.md)、[docs/TESTING.md](docs/TESTING.md)。

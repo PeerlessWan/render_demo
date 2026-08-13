@@ -1,8 +1,10 @@
 #pragma once
 
 #include "engine/core/math.h"
+#include "engine/core/result.h"
 
 #include <array>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -34,6 +36,9 @@ class ActionMap {
   void Bind(std::string_view action, std::string_view binding);
   [[nodiscard]] bool is_bound(std::string_view action) const;
   [[nodiscard]] const std::string* binding(std::string_view action) const;
+
+  Status SaveToFile(const std::filesystem::path& path) const;
+  Status LoadFromFile(const std::filesystem::path& path);
 
  private:
   std::unordered_map<std::string, std::string> bindings_;

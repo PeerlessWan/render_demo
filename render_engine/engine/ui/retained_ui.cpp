@@ -35,4 +35,16 @@ void RetainedUi::set_visible(std::string_view id, bool visible) {
   }
 }
 
+std::optional<std::string> RetainedUi::HitTest(float px, float py) const {
+  for (auto it = widgets_.rbegin(); it != widgets_.rend(); ++it) {
+    if (!it->visible) {
+      continue;
+    }
+    if (px >= it->x && px <= it->x + it->w && py >= it->y && py <= it->y + it->h) {
+      return it->id;
+    }
+  }
+  return std::nullopt;
+}
+
 }  // namespace engine::ui

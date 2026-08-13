@@ -1,6 +1,8 @@
 #include "engine/input/input_system.h"
 
 #include <cmath>
+#include <fstream>
+#include <sstream>
 
 namespace engine::input {
 
@@ -15,6 +17,57 @@ bool ActionMap::is_bound(std::string_view action) const {
 const std::string* ActionMap::binding(std::string_view action) const {
   const auto it = bindings_.find(std::string(action));
   return it == bindings_.end() ? nullptr : &it->second;
+}
+
+Status ActionMap::SaveToFile(const std::filesystem::path& path) const {
+  std::ofstream out(path);
+  if (!out) {
+    return Status::Fail("cannot write action map: " + path.string());
+  }
+  out << "{\n";
+  bool first = true;
+  for (const auto& [k, v] : bindings_) {
+    if (!first) {
+      out << ",\n";
+    }
+    first = false;
+    out << "  \"" << k << "\": \"" << v << "\"";
+  }
+  out << "\n}\n";
+  return Status::Ok();
+}
+
+Status ActionMap::LoadFromFile(const std::filesystem::path& path) {
+  std::ifstream in(path);
+  if (!in) {
+    return Status::Fail("cannot read action map: " + path.string());
+  }
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  const std::string text = ss.str();
+  bindings_.clear();
+  std::size_t pos = 0;
+  while (true) {
+    const auto q1 = text.find('"', pos);
+    if (q1 == std::string::npos) {
+      break;
+    }
+    const auto q2 = text.find('"', q1 + 1);
+    if (q2 == std::string::npos) {
+      break;
+    }
+    const auto q3 = text.find('"', q2 + 1);
+    if (q3 == std::string::npos) {
+      break;
+    }
+    const auto q4 = text.find('"', q3 + 1);
+    if (q4 == std::string::npos) {
+      break;
+    }
+    Bind(text.substr(q1 + 1, q2 - q1 - 1), text.substr(q3 + 1, q4 - q3 - 1));
+    pos = q4 + 1;
+  }
+  return Status::Ok();
 }
 
 void InputSystem::set_key(Key key, bool down) {

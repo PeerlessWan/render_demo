@@ -9,6 +9,7 @@ add_executable(engine_unit_tests
   unit/test_m4_m19.cpp
   unit/test_m20_m25_headless.cpp
   unit/test_headless_integration.cpp
+  unit/test_usable.cpp
 )
 target_include_directories(engine_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
 target_link_libraries(engine_unit_tests PRIVATE

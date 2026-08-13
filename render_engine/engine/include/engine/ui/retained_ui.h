@@ -1,12 +1,12 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace engine::ui {
 
-// M8/M15: retained UI skeleton + ImGui WantCapture routing.
 struct Widget {
   std::string id;
   std::string text;
@@ -25,6 +25,8 @@ class RetainedUi {
 
   void set_want_capture(bool v) { want_capture_ = v; }
   [[nodiscard]] bool want_capture() const { return want_capture_; }
+
+  [[nodiscard]] std::optional<std::string> HitTest(float px, float py) const;
 
  private:
   std::vector<Widget> widgets_;

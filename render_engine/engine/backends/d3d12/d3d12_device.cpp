@@ -16,6 +16,7 @@
 #include <cstring>
 #include <cstdint>
 #include <fstream>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -391,7 +392,276 @@ class D3D12Device final : public IDevice {
     return Status::Ok();
   }
 
+  Status SetupLitMesh(const LitMeshShaders& shaders) override {
+    WaitGpu();
+    auto vs = ReadFileBytes(shaders.vs_dxil);
+    if (!vs) {
+      return vs.status();
+    }
+    auto ps = ReadFileBytes(shaders.ps_dxil);
+    if (!ps) {
+      return ps.status();
+    }
+
+    D3D12_ROOT_PARAMETER params[2]{};
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    params[0].Descriptor.ShaderRegister = 0;
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    params[1].Descriptor.ShaderRegister = 1;
+
+    D3D12_ROOT_SIGNATURE_DESC rs{};
+    rs.NumParameters = 2;
+    rs.pParameters = params;
+    rs.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+    ComPtr<ID3DBlob> sig;
+    ComPtr<ID3DBlob> err;
+    HRESULT hr = D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err);
+    if (FAILED(hr)) {
+      const char* msg = err ? static_cast<const char*>(err->GetBufferPointer()) : "";
+      return Status::Fail(std::string("Lit root sig failed: ") + msg);
+    }
+    hr = device_->CreateRootSignature(0, sig->GetBufferPointer(), sig->GetBufferSize(),
+                                      IID_PPV_ARGS(&lit_root_));
+    if (FAILED(hr)) {
+      return Status::Fail("Create lit root signature failed");
+    }
+
+    D3D12_INPUT_ELEMENT_DESC layout[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
+         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+         0},
+    };
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
+    pso.pRootSignature = lit_root_.Get();
+    pso.VS = {vs->data(), vs->size()};
+    pso.PS = {ps->data(), ps->size()};
+    pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    pso.SampleMask = UINT_MAX;
+    pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    pso.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+    pso.RasterizerState.DepthClipEnable = TRUE;
+    pso.DepthStencilState.DepthEnable = TRUE;
+    pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+    pso.InputLayout = {layout, 2};
+    pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    pso.NumRenderTargets = 1;
+    pso.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    pso.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+    pso.SampleDesc.Count = 1;
+    hr = device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&lit_pso_));
+    if (FAILED(hr)) {
+      return Status::Fail("Create lit PSO failed: " + HrToString(hr));
+    }
+
+    if (!dsv_) {
+      if (auto st = CreateDepthBuffer(); !st) {
+        return st;
+      }
+    }
+    if (auto st = CreateCubeMesh(); !st) {
+      return st;
+    }
+    if (auto st = CreateLitConstantBuffers(); !st) {
+      return st;
+    }
+
+    lit_ready_ = true;
+    LogInfo("Lit cube mesh ready");
+    return Status::Ok();
+  }
+
+  Status SetFrameLighting(const FrameLighting& lighting) override {
+    if (!lit_ready_ || !frame_cb_) {
+      return Status::Fail("SetupLitMesh not called");
+    }
+    struct FrameData {
+      float view_proj[16];
+      float sun_dir[3];
+      float sun_intensity;
+      float ambient[3];
+      float pad0;
+      float sun_color[3];
+      float pad1;
+    } data{};
+    std::memcpy(data.view_proj, lighting.view_proj.m.data(), sizeof(data.view_proj));
+    data.sun_dir[0] = lighting.sun_direction.x;
+    data.sun_dir[1] = lighting.sun_direction.y;
+    data.sun_dir[2] = lighting.sun_direction.z;
+    data.sun_intensity = lighting.sun_intensity;
+    data.ambient[0] = lighting.ambient.r;
+    data.ambient[1] = lighting.ambient.g;
+    data.ambient[2] = lighting.ambient.b;
+    data.sun_color[0] = lighting.sun_color.r;
+    data.sun_color[1] = lighting.sun_color.g;
+    data.sun_color[2] = lighting.sun_color.b;
+
+    void* ptr = nullptr;
+    if (FAILED(frame_cb_->Map(0, nullptr, &ptr))) {
+      return Status::Fail("Map frame CB failed");
+    }
+    std::memcpy(ptr, &data, sizeof(data));
+    frame_cb_->Unmap(0, nullptr);
+    lighting_ = lighting;
+    return Status::Ok();
+  }
+
+  Status DrawLitCube(const LitDrawItem& item) override {
+    return DrawLitCubes(std::span<const LitDrawItem>(&item, 1));
+  }
+
+  Status DrawLitCubes(std::span<const LitDrawItem> items) override {
+    if (!lit_ready_) {
+      return Status::Fail("SetupLitMesh not called");
+    }
+    if (items.empty()) {
+      return Status::Ok();
+    }
+
+    command_list_->SetPipelineState(lit_pso_.Get());
+    command_list_->SetGraphicsRootSignature(lit_root_.Get());
+    command_list_->SetGraphicsRootConstantBufferView(0, frame_cb_->GetGPUVirtualAddress());
+    command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    command_list_->IASetVertexBuffers(0, 1, &cube_vbv_);
+    command_list_->IASetIndexBuffer(&cube_ibv_);
+
+    struct ObjectData {
+      float world[16];
+      float color[4];
+    };
+
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      ObjectData od{};
+      std::memcpy(od.world, items[i].world.m.data(), sizeof(od.world));
+      od.color[0] = items[i].color.r;
+      od.color[1] = items[i].color.g;
+      od.color[2] = items[i].color.b;
+      od.color[3] = items[i].color.a;
+
+      const auto offset = static_cast<UINT64>(i % kMaxLitDraws) * 256ull;
+      void* ptr = nullptr;
+      D3D12_RANGE range{static_cast<SIZE_T>(offset), static_cast<SIZE_T>(offset + sizeof(od))};
+      if (FAILED(object_cb_->Map(0, nullptr, &ptr))) {
+        return Status::Fail("Map object CB failed");
+      }
+      std::memcpy(static_cast<char*>(ptr) + offset, &od, sizeof(od));
+      object_cb_->Unmap(0, nullptr);
+
+      command_list_->SetGraphicsRootConstantBufferView(
+          1, object_cb_->GetGPUVirtualAddress() + offset);
+      command_list_->DrawIndexedInstanced(36, 1, 0, 0, 0);
+    }
+    lit_draws_ += static_cast<std::uint32_t>(items.size());
+    return Status::Ok();
+  }
+
  private:
+  static constexpr UINT kMaxLitDraws = 64;
+
+  Status CreateCubeMesh() {
+    struct LitVertex {
+      float px, py, pz;
+      float nx, ny, nz;
+    };
+    // Unit cube centered at origin, 24 verts (unique normals), 36 indices.
+    const LitVertex verts[] = {
+        // +Z
+        {-0.5f, -0.5f, 0.5f, 0, 0, 1},  {0.5f, -0.5f, 0.5f, 0, 0, 1},
+        {0.5f, 0.5f, 0.5f, 0, 0, 1},    {-0.5f, 0.5f, 0.5f, 0, 0, 1},
+        // -Z
+        {0.5f, -0.5f, -0.5f, 0, 0, -1}, {-0.5f, -0.5f, -0.5f, 0, 0, -1},
+        {-0.5f, 0.5f, -0.5f, 0, 0, -1}, {0.5f, 0.5f, -0.5f, 0, 0, -1},
+        // +X
+        {0.5f, -0.5f, 0.5f, 1, 0, 0},   {0.5f, -0.5f, -0.5f, 1, 0, 0},
+        {0.5f, 0.5f, -0.5f, 1, 0, 0},   {0.5f, 0.5f, 0.5f, 1, 0, 0},
+        // -X
+        {-0.5f, -0.5f, -0.5f, -1, 0, 0},{-0.5f, -0.5f, 0.5f, -1, 0, 0},
+        {-0.5f, 0.5f, 0.5f, -1, 0, 0},  {-0.5f, 0.5f, -0.5f, -1, 0, 0},
+        // +Y
+        {-0.5f, 0.5f, 0.5f, 0, 1, 0},   {0.5f, 0.5f, 0.5f, 0, 1, 0},
+        {0.5f, 0.5f, -0.5f, 0, 1, 0},   {-0.5f, 0.5f, -0.5f, 0, 1, 0},
+        // -Y
+        {-0.5f, -0.5f, -0.5f, 0, -1, 0},{0.5f, -0.5f, -0.5f, 0, -1, 0},
+        {0.5f, -0.5f, 0.5f, 0, -1, 0},  {-0.5f, -0.5f, 0.5f, 0, -1, 0},
+    };
+    const std::uint16_t indices[] = {
+        0,  1,  2,  0,  2,  3,  4,  5,  6,  4,  6,  7,  8,  9,  10, 8,  10, 11,
+        12, 13, 14, 12, 14, 15, 16, 17, 18, 16, 18, 19, 20, 21, 22, 20, 22, 23,
+    };
+
+    auto create_upload = [&](const void* data, UINT size, ComPtr<ID3D12Resource>& out) -> Status {
+      D3D12_HEAP_PROPERTIES upload{};
+      upload.Type = D3D12_HEAP_TYPE_UPLOAD;
+      D3D12_RESOURCE_DESC buf{};
+      buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+      buf.Width = size;
+      buf.Height = 1;
+      buf.DepthOrArraySize = 1;
+      buf.MipLevels = 1;
+      buf.SampleDesc.Count = 1;
+      buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+      const HRESULT hr = device_->CreateCommittedResource(
+          &upload, D3D12_HEAP_FLAG_NONE, &buf, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+          IID_PPV_ARGS(&out));
+      if (FAILED(hr)) {
+        return Status::Fail("Create cube buffer failed");
+      }
+      void* mapped = nullptr;
+      out->Map(0, nullptr, &mapped);
+      std::memcpy(mapped, data, size);
+      out->Unmap(0, nullptr);
+      return Status::Ok();
+    };
+
+    if (auto st = create_upload(verts, sizeof(verts), cube_vb_); !st) {
+      return st;
+    }
+    if (auto st = create_upload(indices, sizeof(indices), cube_ib_); !st) {
+      return st;
+    }
+    cube_vbv_.BufferLocation = cube_vb_->GetGPUVirtualAddress();
+    cube_vbv_.SizeInBytes = sizeof(verts);
+    cube_vbv_.StrideInBytes = sizeof(LitVertex);
+    cube_ibv_.BufferLocation = cube_ib_->GetGPUVirtualAddress();
+    cube_ibv_.SizeInBytes = sizeof(indices);
+    cube_ibv_.Format = DXGI_FORMAT_R16_UINT;
+    return Status::Ok();
+  }
+
+  Status CreateLitConstantBuffers() {
+    auto make_cb = [&](UINT64 size, ComPtr<ID3D12Resource>& out) -> Status {
+      D3D12_HEAP_PROPERTIES upload{};
+      upload.Type = D3D12_HEAP_TYPE_UPLOAD;
+      D3D12_RESOURCE_DESC buf{};
+      buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+      buf.Width = size;
+      buf.Height = 1;
+      buf.DepthOrArraySize = 1;
+      buf.MipLevels = 1;
+      buf.SampleDesc.Count = 1;
+      buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+      const HRESULT hr = device_->CreateCommittedResource(
+          &upload, D3D12_HEAP_FLAG_NONE, &buf, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+          IID_PPV_ARGS(&out));
+      if (FAILED(hr)) {
+        return Status::Fail("Create CB failed");
+      }
+      return Status::Ok();
+    };
+    if (auto st = make_cb(256, frame_cb_); !st) {
+      return st;
+    }
+    if (auto st = make_cb(256ull * kMaxLitDraws, object_cb_); !st) {
+      return st;
+    }
+    return Status::Ok();
+  }
+
   Status CreateSwapchain() {
     DXGI_SWAP_CHAIN_DESC1 scd{};
     scd.Width = width_;
@@ -669,7 +939,10 @@ class D3D12Device final : public IDevice {
   std::uint32_t width_ = 0;
   std::uint32_t height_ = 0;
   bool mesh_ready_ = false;
+  bool lit_ready_ = false;
   std::uint32_t compute_dispatches_ = 0;
+  std::uint32_t lit_draws_ = 0;
+  FrameLighting lighting_{};
 
   ComPtr<IDXGIFactory6> factory_;
   ComPtr<ID3D12Device> device_;
@@ -689,6 +962,14 @@ class D3D12Device final : public IDevice {
   ComPtr<ID3D12RootSignature> root_signature_;
   ComPtr<ID3D12PipelineState> pso_;
   D3D12_VERTEX_BUFFER_VIEW vbv_{};
+  ComPtr<ID3D12RootSignature> lit_root_;
+  ComPtr<ID3D12PipelineState> lit_pso_;
+  ComPtr<ID3D12Resource> cube_vb_;
+  ComPtr<ID3D12Resource> cube_ib_;
+  ComPtr<ID3D12Resource> frame_cb_;
+  ComPtr<ID3D12Resource> object_cb_;
+  D3D12_VERTEX_BUFFER_VIEW cube_vbv_{};
+  D3D12_INDEX_BUFFER_VIEW cube_ibv_{};
   ComPtr<ID3D12Fence> fence_;
   HANDLE fence_event_ = nullptr;
   UINT64 fence_value_ = 0;

@@ -87,6 +87,9 @@ add_library(engine_media STATIC
 )
 target_include_directories(engine_media PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_media PUBLIC engine_core)
+if(WIN32)
+  target_link_libraries(engine_media PRIVATE winmm)
+endif()
 
 add_library(engine_ui STATIC
   ui/retained_ui.cpp
@@ -152,6 +155,7 @@ target_link_libraries(engine_d3d12
 add_library(engine_app STATIC
   app/application.cpp
   app/module_system.cpp
+  render/render_system.cpp
 )
 target_include_directories(engine_app PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_app
