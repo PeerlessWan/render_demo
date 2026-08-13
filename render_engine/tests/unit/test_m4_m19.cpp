@@ -128,6 +128,7 @@ TEST_CASE("ResolveMeshMaterial ground vs metal", "[render][material]") {
   REQUIRE(g.metallic < 0.1f);
   REQUIRE(m.metallic > 0.5f);
   REQUIRE_FALSE(g.albedo_tex.empty());
+  REQUIRE(g.mesh_slot == 4);
 }
 
 TEST_CASE("ResolveMeshMaterial glass is transparent", "[render][material]") {
@@ -140,8 +141,10 @@ TEST_CASE("Quality tiers differ", "[render]") {
   const auto low = engine::render::QualitySettings::FromTier(engine::render::QualityTier::Low);
   const auto high = engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
   REQUIRE(low.shadow_cascades < high.shadow_cascades);
+  REQUIRE_FALSE(low.enable_ssao);
+  REQUIRE(high.enable_ssao);
   REQUIRE_FALSE(low.enable_ssr);
-  REQUIRE(high.enable_ssr);
+  REQUIRE_FALSE(high.enable_ssr);  // SSR default-off until floor-stable
 }
 
 TEST_CASE("CPU skinning moves vertex", "[animation]") {

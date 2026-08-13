@@ -94,17 +94,21 @@ int main(int argc, char** argv) {
   a.set_look_with_lmb(true);
   a.set_look_with_rmb(true);
   a.set_hide_cursor_on_look(false);
-  a.camera().position = {0.f, 1.8f, 5.5f};
+  a.camera().position = {0.f, 2.2f, 6.2f};
+  a.camera().pitch = -0.22f;
+  a.camera().z_near = 0.2f;
 
   auto ground = a.world().CreateNode("ground");
   {
     engine::scene::Transform t;
-    t.position = {0, -0.5f, 0};
-    t.scale = {12.f, 1.f, 12.f};
+    t.position = {0, 0.f, 0};
+    t.scale = {1.f, 1.f, 1.f};
     a.world().set_local_transform(ground, t);
     engine::scene::MeshRenderer mesh;
     mesh.mesh_id = "ground";
-    mesh.never_cull = true;  // large thin floor must not flicker-cull while orbiting
+    mesh.never_cull = true;
+    constexpr float kHalf = 12.f;
+    mesh.local_bounds = {{-kHalf, -0.05f, -kHalf}, {kHalf, 0.05f, kHalf}};
     a.world().set_mesh(ground, mesh);
   }
   for (int i = 0; i < 3; ++i) {
@@ -142,7 +146,7 @@ int main(int argc, char** argv) {
   engine::render::Environment env;
   env.ambient = {0.20f, 0.21f, 0.24f, 1.f};
   env.sun_direction = {0.45f, -1.f, 0.35f};
-  env.sun_intensity = 4.8f;
+  env.sun_intensity = 1.85f;
   env.sun_color = {1.f, 0.97f, 0.92f, 1.f};
 
   engine::render::RenderSystem render;
@@ -174,6 +178,51 @@ int main(int argc, char** argv) {
   if (auto st = render.Init(a.device(), rdesc); !st) {
     engine::LogError(st.message());
     return 1;
+  }
+  // Dense ground plane (slot 4). Fine tris reduce near-plane straddling → no floating slab.
+  if (!use_vulkan) {
+    constexpr int kSeg = 128;
+    constexpr float kHalf = 12.f;
+    std::vector<engine::rhi::LitVertex> gverts;
+    std::vector<std::uint32_t> gidx;
+    gverts.reserve(static_cast<std::size_t>((kSeg + 1) * (kSeg + 1)));
+    gidx.reserve(static_cast<std::size_t>(kSeg * kSeg * 6));
+    for (int z = 0; z <= kSeg; ++z) {
+      for (int x = 0; x <= kSeg; ++x) {
+        const float u = static_cast<float>(x) / static_cast<float>(kSeg);
+        const float v = static_cast<float>(z) / static_cast<float>(kSeg);
+        engine::rhi::LitVertex vert{};
+        vert.px = (u * 2.f - 1.f) * kHalf;
+        vert.py = 0.f;
+        vert.pz = (v * 2.f - 1.f) * kHalf;
+        vert.nx = 0.f;
+        vert.ny = 1.f;
+        vert.nz = 0.f;
+        vert.u = u;
+        vert.v = v;
+        gverts.push_back(vert);
+      }
+    }
+    for (int z = 0; z < kSeg; ++z) {
+      for (int x = 0; x < kSeg; ++x) {
+        const std::uint32_t i0 = static_cast<std::uint32_t>(z * (kSeg + 1) + x);
+        const std::uint32_t i1 = i0 + 1;
+        const std::uint32_t i2 = i0 + static_cast<std::uint32_t>(kSeg + 1);
+        const std::uint32_t i3 = i2 + 1;
+        // CCW when viewed from +Y (matches FrontCounterClockwise=TRUE).
+        gidx.push_back(i0);
+        gidx.push_back(i2);
+        gidx.push_back(i1);
+        gidx.push_back(i1);
+        gidx.push_back(i2);
+        gidx.push_back(i3);
+      }
+    }
+    if (auto st = a.device().UploadLitGeometry(4, gverts, gidx); !st) {
+      engine::LogError(std::string("Ground plane upload failed: ") + st.message());
+    } else {
+      engine::LogInfo("Ground plane uploaded (slot4, 128x128)");
+    }
   }
   {
 #ifndef ENGINE_CONTENT_DIR_A
@@ -305,35 +354,34 @@ int main(int argc, char** argv) {
   {
     std::vector<engine::render::LocalLight> lights;
     if (!use_vulkan) {
+      // Keep local lights small/warm. A wide cool light washed the floor cyan wherever
+      // sun/CSM dipped — looked like a floating blue slab that tracked camera motion.
       engine::render::LocalLight lamp;
       lamp.id = 1;
       lamp.position = {1.8f, 2.8f, 1.0f};
-      lamp.range = 14.f;
-      lamp.color = {1.f, 0.72f, 0.45f, 1.f};
-      lamp.intensity = 9.f;
+      lamp.range = 5.5f;
+      lamp.color = {1.f, 0.78f, 0.55f, 1.f};
+      lamp.intensity = 1.35f;
       lamp.shadow_resolution = 512;
       lamp.cast_shadows = true;
       lights.push_back(lamp);
-      engine::render::LocalLight cool;
-      cool.id = 2;
-      cool.position = {-2.2f, 2.6f, 1.8f};
-      cool.range = 12.f;
-      cool.color = {0.45f, 0.65f, 1.f, 1.f};
-      cool.intensity = 7.f;
-      cool.shadow_resolution = 512;
-      cool.cast_shadows = true;
-      lights.push_back(cool);
     }
     render.set_local_lights(lights);
   }
 
   engine::render::EffectTuning fx = render.effect_tuning();
   fx.sun_intensity = env.sun_intensity;
-  fx.ambient_scale = 1.4f;
-  fx.exposure = use_vulkan ? 1.f : 1.25f;
+  fx.ambient_scale = 1.05f;
+  fx.exposure = use_vulkan ? 1.f : 1.0f;
   fx.enable_ssao = rdesc.quality.enable_ssao;
   fx.enable_taa = rdesc.quality.enable_taa;
-  fx.shadow_cascades = rdesc.quality.shadow_cascades;
+  fx.enable_ssr = rdesc.quality.enable_ssr;
+  fx.enable_bloom = false;  // Bloom turns the horizon band into a floating white slab on LDR.
+  fx.bloom_threshold = 1.1f;
+  fx.bloom_intensity = 0.2f;
+  fx.enable_auto_exposure = false;
+  // One cascade over the ±12 playground: multi-cascade splits were camera-tracking tint bands.
+  fx.shadow_cascades = 1;
   render.set_effect_tuning(fx);
 
   engine::ui::ImmediateUi imgui;
@@ -391,7 +439,7 @@ int main(int argc, char** argv) {
     }
   }
   const auto terrain_mesh =
-      engine::terrain::BuildTerrainMesh(heightmap, {-18.f, -0.2f, -6.f});
+      engine::terrain::BuildTerrainMesh(heightmap, {-22.f, -0.35f, -22.f});
   if (!use_vulkan && !terrain_mesh.indices.empty()) {
     std::vector<engine::rhi::LitVertex> tverts(terrain_mesh.positions.size() / 3);
     for (std::size_t i = 0; i < tverts.size(); ++i) {
@@ -408,8 +456,8 @@ int main(int argc, char** argv) {
       engine::scene::MeshRenderer tm;
       tm.mesh_id = "terrain";
       tm.never_cull = true;
-      // Geometry is authored in world space; match AABB to patch extent.
-      tm.local_bounds = {{-18.f, -1.f, -6.f}, {-18.f + 16.f * 0.75f, 2.f, -6.f + 16.f * 0.75f}};
+      // Keep terrain patch away from the main ±12 ground plane to avoid dual-floor confusion.
+      tm.local_bounds = {{-22.f, -1.5f, -22.f}, {-22.f + 16.f * 0.75f, 2.f, -22.f + 16.f * 0.75f}};
       a.world().set_mesh(terrain_node, tm);
       engine::LogInfo("Terrain heightmap mesh uploaded (slot2)");
     }
@@ -419,8 +467,8 @@ int main(int argc, char** argv) {
   for (std::size_t i = 0; i < veg.size() && i < 24; ++i) {
     auto id = a.world().CreateNode("veg" + std::to_string(i));
     engine::scene::Transform t;
-    t.position = {-18.f + veg[i].position.x, -0.2f + veg[i].position.y + 0.4f,
-                  -6.f + veg[i].position.z};
+    t.position = {-22.f + veg[i].position.x, -0.35f + veg[i].position.y + 0.4f,
+                  -22.f + veg[i].position.z};
     t.scale = {0.25f * veg[i].scale, 0.8f * veg[i].scale, 0.25f * veg[i].scale};
     a.world().set_local_transform(id, t);
     engine::scene::MeshRenderer mesh;
@@ -466,7 +514,7 @@ int main(int argc, char** argv) {
 
   engine::gi::ProbeVolume probes;
   probes.Configure({-4.f, 0.5f, -4.f}, {2.f, 1.5f, 2.f}, 5, 3, 5);
-  bool enable_gi = true;
+  bool enable_gi = false;
 
   engine::vfx::ParticleEmitter particles;
   particles.Configure({1.8f, 2.6f, 1.0f}, 28.f, 1.1f);
@@ -524,10 +572,11 @@ int main(int argc, char** argv) {
     auto& dbg = app_ref.debug_draw();
     dbg.Clear();
     if (show_grid) {
-      dbg.AddGrid(8.f, 1.f, 0.02f);
+      // Slightly above the lit ground; darker lines stay visible on bright brick.
+      dbg.AddGrid(8.f, 1.f, 0.05f, {0.22f, 0.24f, 0.28f, 1.f}, {0.45f, 0.48f, 0.55f, 1.f});
     }
     if (show_axes) {
-      dbg.AddAxes(2.5f, 0.03f);
+      dbg.AddAxes(2.5f, 0.05f);
     }
     for (int bi = 0; bi < physics->body_count(); ++bi) {
       const auto p = physics->body_position(bi);
@@ -582,7 +631,7 @@ int main(int argc, char** argv) {
           imgui.SliderFloat("DoF focus", &fx.dof_focus, 1.f, 40.f);
           imgui.SliderFloat("DoF scale", &fx.dof_scale, 0.f, 0.3f);
           imgui.SliderFloat("Motion blur", &fx.motion_blur_strength, 0.f, 0.9f);
-          imgui.SliderFloat("Bloom thr", &fx.bloom_threshold, 0.2f, 2.f);
+          imgui.SliderFloat("Bloom thr", &fx.bloom_threshold, 0.35f, 2.f);
           imgui.SliderFloat("Bloom int", &fx.bloom_intensity, 0.f, 2.f);
           imgui.SliderFloat("Fog density", &fx.fog_density, 0.f, 0.1f);
           imgui.SliderFloat("Fog start", &fx.fog_start, 0.f, 40.f);
@@ -766,10 +815,11 @@ int main(int argc, char** argv) {
     // M16 sprites + M7 particle screen proxies
     sprites.clear();
     {
+      // Distinct warm marker (not cyan — cyan matched the washed floor bug).
       engine::render2d::Sprite s;
       s.position = {dw - 120.f, 16.f};
       s.size = {96.f, 48.f};
-      s.color = {0.2f, 0.75f, 0.95f, 0.85f};
+      s.color = {0.95f, 0.55f, 0.15f, 0.9f};
       s.sort_y = s.position.y;
       sprites.push_back(s);
     }

@@ -100,15 +100,26 @@ float SSAO(float2 uv, float3 origin, float3 normal) {
 }
 
 float EstimateAvgLuma() {
+  // Only average geometry pixels. Sampling the clear-color sky makes auto-exposure
+  // explode when the floor fills the frame after a dark-sky view → floor goes white.
   float sum = 0.0;
+  int count = 0;
   [unroll] for (int y = 0; y < 4; ++y) {
     [unroll] for (int x = 0; x < 4; ++x) {
       float2 uv = (float2(x, y) + 0.5) * 0.25;
+      float d = g_scene_depth.SampleLevel(g_point, uv, 0).r;
+      if (d >= 0.9995) {
+        continue;
+      }
       float3 c = g_scene_color.SampleLevel(g_linear, uv, 0).rgb;
       sum += log2(max(Luma(c), 1e-4));
+      count += 1;
     }
   }
-  return exp2(sum / 16.0);
+  if (count < 1) {
+    return 0.18;
+  }
+  return exp2(sum / (float)count);
 }
 
 float3 ACESFilm(float3 x) {
@@ -121,8 +132,14 @@ float3 ACESFilm(float3 x) {
 }
 
 float3 SoftBloom(float2 uv, float3 color) {
-  float thr = max(g_bloom_threshold, 0.01);
+  float thr = max(g_bloom_threshold, 0.35);
   float3 bright = max(color - thr, 0.0);
+  // Only bloom small hot spots (emissive / specular). Large floor regions above thr
+  // used to smear into a floating white sheet across the mid-screen horizon.
+  float hot = max(bright.r, max(bright.g, bright.b));
+  if (hot < 0.02) {
+    return 0.0.xxx;
+  }
   float3 acc = bright;
   const float2 offs[8] = {
       float2(1, 0),  float2(-1, 0), float2(0, 1),  float2(0, -1),
@@ -136,7 +153,7 @@ float3 SoftBloom(float2 uv, float3 color) {
     float3 s2 = g_scene_color.Sample(g_linear, suv2).rgb;
     acc += max(s2 - thr, 0.0) * 0.25;
   }
-  return acc / 9.0;
+  return (acc / 9.0) * saturate(hot * 2.0);
 }
 
 float3 TraceSSR(float2 uv, float3 origin, float3 normal) {
@@ -216,7 +233,12 @@ float4 PSMain(VSOut input) : SV_Target {
   }
 
   if (g_enable_ssr > 0.5 && has_surface) {
-    color += TraceSSR(uv, origin, normal) * max(g_ssr_intensity, 0.0);
+    // Horizontal floors produce unstable SSR hits → sparkle / holes; fade them.
+    float upright = saturate(abs(normal.y));
+    float ssr_w = max(g_ssr_intensity, 0.0) * (1.0 - upright * 0.85);
+    if (ssr_w > 1e-3) {
+      color += TraceSSR(uv, origin, normal) * ssr_w;
+    }
   }
 
   if (g_enable_dof > 0.5 && has_surface) {
@@ -244,7 +266,13 @@ float4 PSMain(VSOut input) : SV_Target {
       }
     }
     hist = clamp(hist, cmin, cmax);
-    color = lerp(color, hist, g_taa_blend);
+    // Without motion vectors, keep blend modest so camera motion does not flash.
+    float blend = min(g_taa_blend, 0.35);
+    float luma_delta = abs(Luma(color) - Luma(hist));
+    if (luma_delta > 0.35) {
+      blend *= 0.15;  // disocclusion / big lighting change
+    }
+    color = lerp(color, hist, blend);
   } else if (g_enable_motion_blur > 0.5) {
     // Cheap camera-motion stand-in: blend toward last resolved frame.
     float3 hist = g_history.Sample(g_linear, uv).rgb;
@@ -260,8 +288,9 @@ float4 PSMain(VSOut input) : SV_Target {
     float avg = EstimateAvgLuma();
     float target = max(g_auto_exposure_key, 0.01);
     float auto_exp = target / max(avg, 1e-3);
-    auto_exp = clamp(auto_exp, 0.25, 4.0);
-    exposure = lerp(exposure, exposure * auto_exp, 0.65);
+    // Tight clamp — wide range was blowing the floor to white at some views.
+    auto_exp = clamp(auto_exp, 0.75, 1.35);
+    exposure = lerp(exposure, exposure * auto_exp, 0.2);
   }
   color *= exposure;
 

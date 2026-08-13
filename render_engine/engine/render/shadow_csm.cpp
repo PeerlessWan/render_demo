@@ -84,9 +84,15 @@ Mat4 CascadedShadowMap::FitLightMatrix(const Vec3& light_dir, const std::array<V
     bmax.z = std::max(bmax.z, lp.z);
   }
 
+  // Expand XY so the whole playground ground stays covered when the camera turns.
+  const float pad = (std::max)(radius * 0.55f, 8.f);
+  bmin.x -= pad;
+  bmax.x += pad;
+  bmin.y -= pad;
+  bmax.y += pad;
   // Expand Z so casters behind the slice still contribute.
-  bmin.z -= radius * 0.5f;
-  bmax.z += 2.f;
+  bmin.z -= radius * 1.0f + 10.f;
+  bmax.z += radius * 0.5f + 4.f;
 
   // Texel snap to reduce shimmer.
   const float res = static_cast<float>(std::max(map_resolution, 1));

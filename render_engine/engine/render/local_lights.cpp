@@ -41,12 +41,13 @@ bool LocalLightShadowScheduler::Pack(ShadowAtlas& atlas) {
 material::PbrMaterial ResolveMeshMaterial(std::string_view mesh_id) {
   material::PbrMaterial m;
   if (mesh_id == "ground") {
-    m.base_color = {1.f, 1.f, 1.f, 1.f};
-    m.roughness = 0.9f;
+    m.base_color = {0.72f, 0.70f, 0.66f, 1.f};
+    m.roughness = 0.92f;
     m.metallic = 0.f;
     m.albedo_tex = "textures/ph/brick_diff.jpg";
     m.orm_tex = "textures/ph/brick_arm.jpg";
-    m.uv_scale = 6.f;
+    m.uv_scale = 4.f;
+    m.mesh_slot = 4;  // subdivided ground plane (not scaled cube)
     m.tex_slot = 0;
   } else if (mesh_id == "metal") {
     m.base_color = {0.86f, 0.87f, 0.9f, 1.f};
@@ -69,8 +70,8 @@ material::PbrMaterial ResolveMeshMaterial(std::string_view mesh_id) {
     m.tex_slot = 1;
     m.uv_scale = 1.f;
   } else if (mesh_id == "terrain") {
-    m.base_color = {0.35f, 0.55f, 0.28f, 1.f};
-    m.roughness = 0.92f;
+    m.base_color = {0.28f, 0.42f, 0.22f, 1.f};
+    m.roughness = 0.95f;
     m.metallic = 0.f;
     m.mesh_slot = 2;
     m.uv_scale = 1.f;

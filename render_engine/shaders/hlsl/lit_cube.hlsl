@@ -59,6 +59,9 @@ struct VSOutput {
   float3 world_normal : NORMAL;
   float3 world_pos : TEXCOORD0;
   float2 uv : TEXCOORD1;
+  // Extra clip plane in front of the camera near plane. Stops floor tris from
+  // straddling z_near (which otherwise becomes a floating screen-space slab).
+  float clip_near : SV_ClipDistance0;
 };
 
 VSOutput VSMain(VSInput input) {
@@ -68,6 +71,10 @@ VSOutput VSMain(VSInput input) {
   o.world_normal = normalize(mul((float3x3)g_world, input.normal));
   o.position = mul(g_view_proj, wp);
   o.uv = input.uv;
+  float vz = dot(o.world_pos - g_eye, normalize(g_cam_forward));
+  // Floors: clip anything closer than 0.35m in view space.
+  // Other meshes keep full geometry (negative clip distance never triggers).
+  o.clip_near = (abs(input.normal.y) > 0.85) ? (vz - 0.35) : 1.0;
   return o;
 }
 
@@ -93,28 +100,74 @@ float2 CascadeAtlasUv(float2 uv, int cascade) {
   return inset + float2(ix, iy) * tile;
 }
 
-float ShadowFactor(float3 world_pos) {
-  if (g_enable_shadow < 0.5f) {
-    return 1.0f;
-  }
-  float view_depth = dot(world_pos - g_eye, normalize(g_cam_forward));
-  int cascade = SelectCascade(view_depth);
-  float4 lp = mul(g_cascade_vp[cascade], float4(world_pos, 1.0f));
+float SampleCascadeShadow(float3 world_pos, int c) {
+  float4 lp = mul(g_cascade_vp[c], float4(world_pos, 1.0f));
   float3 proj = lp.xyz / max(lp.w, 1e-5);
   float2 uv = proj.xy * float2(0.5, -0.5) + 0.5;
-  if (uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1 || proj.z < 0 || proj.z > 1) {
-    return 1.0f;
+  if (uv.x < 0.001 || uv.x > 0.999 || uv.y < 0.001 || uv.y > 0.999 || proj.z < 0.0 ||
+      proj.z > 1.0) {
+    return -1.0;
   }
-  float2 atlas_uv = CascadeAtlasUv(uv, cascade);
-  float cmp = proj.z - g_shadow_bias * (1.0 + (float)cascade * 0.35);
+  float2 atlas_uv = CascadeAtlasUv(uv, c);
+  float cmp = proj.z - g_shadow_bias * (1.0 + (float)c * 0.35);
   float shadow = 0;
   float2 texel = 1.0 / 2048.0;
   [unroll] for (int y = -1; y <= 1; ++y) {
     [unroll] for (int x = -1; x <= 1; ++x) {
-      shadow += g_shadow_map.SampleCmpLevelZero(g_shadow_samp, atlas_uv + float2(x, y) * texel, cmp);
+      shadow +=
+          g_shadow_map.SampleCmpLevelZero(g_shadow_samp, atlas_uv + float2(x, y) * texel, cmp);
     }
   }
   return shadow / 9.0;
+}
+
+float ShadowFactor(float3 world_pos) {
+  if (g_enable_shadow < 0.5f) {
+    return 1.0f;
+  }
+  float view_depth = max(dot(world_pos - g_eye, normalize(g_cam_forward)), 0.0);
+  int start = SelectCascade(view_depth);
+  int count = max((int)g_cascade_count, 1);
+
+  // Prefer the depth-selected cascade, then any other that covers this texel.
+  // Do NOT fade shadow→0 near atlas edges: that kills sun and leaves only local
+  // lights (cool blue) — reads as a floating cyan slab that tracks camera motion.
+  float best = -1.0;
+  float next_s = -1.0;
+  [unroll] for (int c = 0; c < 4; ++c) {
+    if (c >= count) {
+      continue;
+    }
+    float s = SampleCascadeShadow(world_pos, c);
+    if (s < 0.0) {
+      continue;
+    }
+    if (c == start) {
+      best = s;
+    } else if (c == start + 1) {
+      next_s = s;
+    } else if (best < 0.0 && c > start) {
+      best = s;
+    } else if (best < 0.0) {
+      best = s;
+    }
+  }
+  if (best >= 0.0 && next_s >= 0.0) {
+    float split = g_cascade_splits[min(start, 3)];
+    float prev = 0.0;
+    if (start == 1) {
+      prev = g_cascade_splits[0];
+    } else if (start == 2) {
+      prev = g_cascade_splits[1];
+    } else if (start == 3) {
+      prev = g_cascade_splits[2];
+    }
+    float span = max(split - prev, 1e-3);
+    float t = saturate((split - view_depth) / max(span * 0.25, 0.75));
+    best = lerp(next_s, best, t);
+  }
+  // Keep sun contribution stable when outside all cascades (no tint flip to local-only).
+  return best >= 0.0 ? best : 0.85;
 }
 
 float2 LocalShadowAtlasUv(float2 uv, int tile) {
@@ -163,6 +216,16 @@ float LocalShadowFactor(float3 world_pos, int light_index) {
 
 float4 PSMain(VSOutput input) : SV_Target {
   float3 n = normalize(input.world_normal);
+  // Large floor tris that straddle the near plane get clipped into a screen-filling
+  // slab with depth≈z_near. That slab floats ABOVE the real grid and cuts props.
+  // Drop those fragments (and anything behind the camera on floors).
+  float vz = dot(input.world_pos - g_eye, normalize(g_cam_forward));
+  if (n.y > 0.55) {
+    if (vz < 0.25 || input.position.z < 1e-3) {
+      discard;
+    }
+  }
+
   float3 l = normalize(-g_sun_dir);
   float3 v = normalize(g_eye - input.world_pos);
   float3 h = normalize(l + v);
@@ -190,14 +253,21 @@ float4 PSMain(VSOutput input) : SV_Target {
   }
 
   float spec = pow(saturate(dot(n, h)), max(1.0, g_specular_power * (1.0 - roughness))) *
-               (1.0 - roughness) * lerp(0.04, 1.0, metallic);
+               (1.0 - roughness) * lerp(0.04, 1.0, metallic) * ndotl;
+  // Grazing views of large floors create a bright horizon band that reads as a
+  // floating white slab; fade specular when looking across the surface.
+  float ndotv = saturate(dot(n, v));
+  spec *= ndotv * ndotv;
   float sh = ShadowFactor(input.world_pos);
 
   float ao = tex_ao;
   // Screen-space AO applied in ResolvePostEffects; keep flag unused here.
 
   float3 diffuse = base * (1.0 - metallic);
-  float3 lit = g_ambient * base * ao + (diffuse * ndotl + g_sun_color * spec) * g_sun_intensity * sh * ao;
+  // Keep sun term bounded; HDR RT + tonemap preserve textured floors.
+  float3 sun_term = (diffuse * ndotl + g_sun_color * spec) * g_sun_intensity * sh * ao;
+  sun_term = min(sun_term, 8.0.xxx);
+  float3 lit = g_ambient * base * ao + sun_term;
 
   int lc = (int)g_local_count;
   [unroll] for (int i = 0; i < 4; ++i) {

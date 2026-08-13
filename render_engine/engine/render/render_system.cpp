@@ -187,16 +187,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   lighting.view_proj = scene.camera.view_proj_matrix(aspect);
   const bool want_ssao = effect_.enable_ssao && post_.enabled("SSAO");
   const bool want_taa = effect_.enable_taa && post_.enabled("TAA");
-  if (want_taa) {
-    Mat4 jitter = Mat4::Identity();
-    const float jx = ((frame_index_ & 1u) ? 0.4f : -0.4f) /
-                     static_cast<float>((std::max)(device.width(), 1u));
-    const float jy = ((frame_index_ & 2u) ? 0.4f : -0.4f) /
-                     static_cast<float>((std::max)(device.height(), 1u));
-    jitter.m[12] = jx;
-    jitter.m[13] = jy;
-    lighting.view_proj = jitter * lighting.view_proj;
-  }
+  // No sub-pixel jitter: without motion-vector reprojection it makes floors pop and frames flash.
   lighting.sun_direction = Normalize(env.sun_direction);
   lighting.sun_intensity = effect_.sun_intensity;
   lighting.ambient = {env.ambient.r * effect_.ambient_scale, env.ambient.g * effect_.ambient_scale,
@@ -356,25 +347,16 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
         }
         device.GpuPassEnd();
       });
-  const bool want_tonemap = effect_.enable_tonemap && post_.enabled("Tonemap");
+  const bool want_tonemap = true;  // HDR scene color always tonemaps to LDR swapchain
   const bool want_auto_exp = effect_.enable_auto_exposure && post_.enabled("AutoExposure");
   const bool want_bloom = effect_.enable_bloom && post_.enabled("Bloom");
   const bool want_fog = effect_.enable_fog && post_.enabled("VolumetricFog");
   const bool want_ssr = effect_.enable_ssr && post_.enabled("SSR");
   const bool want_dof = effect_.enable_dof && post_.enabled("DoF");
   const bool want_motion_blur = effect_.enable_motion_blur && post_.enabled("MotionBlur");
-  rhi::PostResolveDesc post_probe;
-  post_probe.enable_ssao = want_ssao;
-  post_probe.enable_taa = want_taa;
-  post_probe.exposure = effect_.exposure;
-  post_probe.enable_tonemap = want_tonemap;
-  post_probe.enable_auto_exposure = want_auto_exp;
-  post_probe.enable_bloom = want_bloom;
-  post_probe.enable_fog = want_fog;
-  post_probe.enable_ssr = want_ssr;
-  post_probe.enable_dof = want_dof;
-  post_probe.enable_motion_blur = want_motion_blur;
-  if (post_ready_ && post_probe.NeedsResolve()) {
+  (void)want_tonemap;
+  // HDR lit target must always be resolved (at least tonemap) into the LDR swapchain.
+  if (post_ready_) {
     graph_.AddPass("PostSSAO_TAA", {"Color", "Depth"}, {"Color"}, [&] {
       device.GpuPassBegin("Post");
       rhi::PostResolveDesc post;
@@ -384,7 +366,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       post.enable_ssao = want_ssao;
       post.enable_taa = want_taa;
       post.exposure = effect_.exposure;
-      post.enable_tonemap = want_tonemap;
+      post.enable_tonemap = true;
       post.tonemap_mode = effect_.tonemap_mode;
       post.enable_auto_exposure = want_auto_exp;
       post.auto_exposure_key = effect_.auto_exposure_key;

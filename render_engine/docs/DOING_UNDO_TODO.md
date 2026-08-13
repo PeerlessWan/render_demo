@@ -6,7 +6,7 @@
 
 | ID | 项 | 目标 | 验收 |
 |---|---|---|---|
-| — | （空档） | 滚轮 crash + 地板消失已收口 | |
+| T-ground-vanish | 悬浮浅色层切物体 | 近平面裁大三角假平面 + HDR | 浅色层消失，砖纹与网格同高 |
 
 ---
 
@@ -14,6 +14,7 @@
 
 | 优先级 | ID | 项 | 备注 |
 |---|---|---|---|
+| P2 | T-taa-mv | TAA + 运动向量重投影 | 修好前默认关 |
 | P2 | T-rmlui-real | 真 RmlUi | 需 vendor |
 | P2 | T-m13-dynref | 动态反射探针 | |
 | P2 | T-m14-bindless-hdr | Bindless/HDR/多线程录制 | Feature 已门控 |
@@ -26,10 +27,10 @@
 
 | 标签 | 值 |
 |---|---|
-| 安全基线 | `a638fdc` |
-| 本档回退 | 还原 Perspective/Frustum 与 Vulkan clip_fix |
+| 安全基线 | `8d27fab` |
+| 本档回退 | 还原 ground slot4 / Cull / TAA jitter 相关 |
 
-验证：`build\tests\Debug\engine_unit_tests.exe`；Sandbox 绕一圈/缩放看地板
+验证：Sandbox 拖动视角；默认 TAA 关闭
 
 ---
 
@@ -37,13 +38,5 @@
 
 | 项 | 说明 |
 |---|---|
-| T-ground-vanish | Perspective → D3D/Vulkan Z[0,1]；视锥近平面；去掉 Vulkan 双重 remap |
-| T-wheel-crash | D3D12 帧中 VB 扩容 / WaitGpu fence 毒化；UI 滚轮 WantCapture |
-| T-readback-real | D3D12 真 GPU Readback |
-| T-pick-sandbox | 点击 Pick + AABB 高亮 |
-| T-phys-debug | 物理碰撞盒 DebugDraw + half_extents API |
-| T-probe-ambient | ProbeVolume → ambient |
-| T-sprites-particles | Sprite tint + CPU 粒子 |
-| T-morph-demo | Morph 滑条驱动 mesh slot3 |
-| T-terrain-mesh | Heightmap 网格 + 植被 LOD |
-| T-m13-m15 | 此前 post / retained HUD 已合入 |
+| T-ground-z | Perspective → D3D Z[0,1]（`8d27fab`） |
+| T-wheel-crash | D3D12 帧中 VB / WantCapture（`a638fdc`） |

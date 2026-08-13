@@ -46,9 +46,9 @@ struct EffectTuning {
   float exposure = 1.2f;
   bool enable_shadows = true;
   bool enable_ssao = true;
-  bool enable_taa = true;
+  bool enable_taa = false;
   bool enable_tonemap = true;
-  bool enable_auto_exposure = true;
+  bool enable_auto_exposure = false;
   bool enable_bloom = true;
   bool enable_fog = false;
   bool enable_ssr = false;

@@ -25,7 +25,8 @@ TEST_CASE("set_quality enables SSAO on PostStack", "[usable][ui]") {
   REQUIRE(render.effect_tuning().enable_ssao);
   REQUIRE(render.quality().enable_ssao);
   REQUIRE(render.post_stack().enabled("SSAO"));
-  REQUIRE(render.post_stack().enabled("TAA"));
+  // TAA stays off until motion-vector reprojection exists (jitter caused frame flash).
+  REQUIRE_FALSE(render.post_stack().enabled("TAA"));
 }
 
 TEST_CASE("Headless lit+shadow render system", "[usable][headless]") {

@@ -191,17 +191,38 @@ class D3D12Device final : public IDevice {
   Status Clear(const ColorRgba& color) override {
     last_clear_ = color;
     const auto index = swapchain_->GetCurrentBackBufferIndex();
-    const D3D12_CPU_DESCRIPTOR_HANDLE rtv{rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
-                                          static_cast<SIZE_T>(index) * rtv_descriptor_size_};
+    const D3D12_CPU_DESCRIPTOR_HANDLE bb_rtv{
+        rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
+        static_cast<SIZE_T>(index) * rtv_descriptor_size_};
     const float clear[4] = {color.r, color.g, color.b, color.a};
-    command_list_->ClearRenderTargetView(rtv, clear, 0, nullptr);
-    if (dsv_) {
-      command_list_->ClearDepthStencilView(dsv_heap_->GetCPUDescriptorHandleForHeapStart(),
-                                           D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-      const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_heap_->GetCPUDescriptorHandleForHeapStart();
-      command_list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+    // Keep swapchain cleared for UI/debug; lit geometry renders into HDR scene_color_.
+    command_list_->ClearRenderTargetView(bb_rtv, clear, 0, nullptr);
+
+    if (!scene_color_ || !hdr_rtv_heap_) {
+      if (dsv_) {
+        command_list_->ClearDepthStencilView(dsv_heap_->GetCPUDescriptorHandleForHeapStart(),
+                                             D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_heap_->GetCPUDescriptorHandleForHeapStart();
+        command_list_->OMSetRenderTargets(1, &bb_rtv, FALSE, &dsv);
+      } else {
+        command_list_->OMSetRenderTargets(1, &bb_rtv, FALSE, nullptr);
+      }
     } else {
-      command_list_->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+      if (scene_color_state_ != D3D12_RESOURCE_STATE_RENDER_TARGET) {
+        Transition(scene_color_.Get(), scene_color_state_, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        scene_color_state_ = D3D12_RESOURCE_STATE_RENDER_TARGET;
+      }
+      const D3D12_CPU_DESCRIPTOR_HANDLE hdr_rtv =
+          hdr_rtv_heap_->GetCPUDescriptorHandleForHeapStart();
+      command_list_->ClearRenderTargetView(hdr_rtv, clear, 0, nullptr);
+      if (dsv_) {
+        command_list_->ClearDepthStencilView(dsv_heap_->GetCPUDescriptorHandleForHeapStart(),
+                                             D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_heap_->GetCPUDescriptorHandleForHeapStart();
+        command_list_->OMSetRenderTargets(1, &hdr_rtv, FALSE, &dsv);
+      } else {
+        command_list_->OMSetRenderTargets(1, &hdr_rtv, FALSE, nullptr);
+      }
     }
 
     D3D12_VIEWPORT vp{};
@@ -603,7 +624,11 @@ class D3D12Device final : public IDevice {
     lit_pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
     lit_pso.SampleMask = UINT_MAX;
     lit_pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    // BACK cull: floor should not draw from below (avoids a second "white slab").
     lit_pso.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+    lit_pso.RasterizerState.FrontCounterClockwise = TRUE;
+    // Keep depth clip on: Perspective is Z∈[0,1]. DepthClip=FALSE clamped near-floor
+    // depth to 0 and hid the debug grid under a featureless white plane.
     lit_pso.RasterizerState.DepthClipEnable = TRUE;
     lit_pso.DepthStencilState.DepthEnable = TRUE;
     lit_pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
@@ -611,7 +636,8 @@ class D3D12Device final : public IDevice {
     lit_pso.InputLayout = {lit_layout, 3};
     lit_pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     lit_pso.NumRenderTargets = 1;
-    lit_pso.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    // Lit goes to HDR scene color; tonemap resolves to the LDR swapchain.
+    lit_pso.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
     lit_pso.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     lit_pso.SampleDesc.Count = 1;
     hr = device_->CreateGraphicsPipelineState(&lit_pso, IID_PPV_ARGS(&lit_pso_));
@@ -676,7 +702,8 @@ class D3D12Device final : public IDevice {
     shadow_pso.BlendState.RenderTarget[0].RenderTargetWriteMask = 0;
     shadow_pso.SampleMask = UINT_MAX;
     shadow_pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-    shadow_pso.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+    shadow_pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    shadow_pso.RasterizerState.FrontCounterClockwise = TRUE;
     shadow_pso.RasterizerState.DepthClipEnable = TRUE;
     shadow_pso.DepthStencilState.DepthEnable = TRUE;
     shadow_pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
@@ -830,7 +857,7 @@ class D3D12Device final : public IDevice {
     if (FAILED(frame_cb_->Map(0, nullptr, &ptr))) {
       return Status::Fail("Map frame CB failed");
     }
-    std::memcpy(ptr, &data, sizeof(data));
+    std::memcpy(static_cast<char*>(ptr) + FrameCbOffset(), &data, sizeof(data));
     frame_cb_->Unmap(0, nullptr);
 
     const Mat4& shadow_vp =
@@ -840,11 +867,11 @@ class D3D12Device final : public IDevice {
     if (FAILED(shadow_frame_cb_->Map(0, nullptr, &ptr))) {
       return Status::Fail("Map shadow frame CB failed");
     }
-    std::memcpy(ptr, shadow_frame, sizeof(shadow_frame));
+    std::memcpy(static_cast<char*>(ptr) + ShadowVpCbOffset(0), shadow_frame, sizeof(shadow_frame));
     shadow_frame_cb_->Unmap(0, nullptr);
 
     lighting_ = lighting;
-    bound_cascade_ = -1;
+    bound_shadow_slot_ = 0;
     return Status::Ok();
   }
 
@@ -870,7 +897,7 @@ class D3D12Device final : public IDevice {
     command_list_->RSSetScissorRects(1, &scissor);
     shadow_active_ = true;
     local_shadow_active_ = false;
-    bound_cascade_ = -1;
+    bound_shadow_slot_ = 0;
     return Status::Ok();
   }
 
@@ -890,7 +917,9 @@ class D3D12Device final : public IDevice {
     if (FAILED(shadow_frame_cb_->Map(0, nullptr, &ptr))) {
       return Status::Fail("Map shadow frame CB failed");
     }
-    std::memcpy(ptr, shadow_frame, sizeof(shadow_frame));
+    // Per-cascade slot: must not overwrite other cascades before GPU executes.
+    std::memcpy(static_cast<char*>(ptr) + ShadowVpCbOffset(cascade_index), shadow_frame,
+                sizeof(shadow_frame));
     shadow_frame_cb_->Unmap(0, nullptr);
 
     const int tiles_per_row = (std::max)(1, lighting_.cascade_tiles_per_row);
@@ -913,7 +942,7 @@ class D3D12Device final : public IDevice {
     scissor.bottom = scissor.top + static_cast<LONG>(tile);
     command_list_->RSSetScissorRects(1, &scissor);
 
-    bound_cascade_ = cascade_index;
+    bound_shadow_slot_ = cascade_index;
     return Status::Ok();
   }
 
@@ -927,7 +956,8 @@ class D3D12Device final : public IDevice {
 
     command_list_->SetPipelineState(shadow_pso_.Get());
     command_list_->SetGraphicsRootSignature(shadow_root_.Get());
-    command_list_->SetGraphicsRootConstantBufferView(0, shadow_frame_cb_->GetGPUVirtualAddress());
+    command_list_->SetGraphicsRootConstantBufferView(
+        0, shadow_frame_cb_->GetGPUVirtualAddress() + ShadowVpCbOffset(bound_shadow_slot_));
     command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     for (std::size_t i = 0; i < items.size(); ++i) {
@@ -940,7 +970,7 @@ class D3D12Device final : public IDevice {
 
       float world[16]{};
       std::memcpy(world, items[i].world.m.data(), sizeof(world));
-      const auto offset = static_cast<UINT64>(i % kMaxLitDraws) * 256ull;
+      const auto offset = ObjectCbOffset(i);
       void* ptr = nullptr;
       if (FAILED(object_cb_->Map(0, nullptr, &ptr))) {
         return Status::Fail("Map object CB failed");
@@ -956,13 +986,30 @@ class D3D12Device final : public IDevice {
     return Status::Ok();
   }
 
-  Status EndShadowPass() override {
-    if (!shadow_active_) {
-      return Status::Fail("BeginShadowPass not active");
+  void BindSceneColorTargets() {
+    D3D12_VIEWPORT vp{};
+    vp.Width = static_cast<float>(width_);
+    vp.Height = static_cast<float>(height_);
+    vp.MaxDepth = 1.f;
+    command_list_->RSSetViewports(1, &vp);
+    D3D12_RECT scissor{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
+    command_list_->RSSetScissorRects(1, &scissor);
+
+    if (scene_color_ && hdr_rtv_heap_) {
+      if (scene_color_state_ != D3D12_RESOURCE_STATE_RENDER_TARGET) {
+        Transition(scene_color_.Get(), scene_color_state_, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        scene_color_state_ = D3D12_RESOURCE_STATE_RENDER_TARGET;
+      }
+      const D3D12_CPU_DESCRIPTOR_HANDLE hdr_rtv =
+          hdr_rtv_heap_->GetCPUDescriptorHandleForHeapStart();
+      if (dsv_) {
+        const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_heap_->GetCPUDescriptorHandleForHeapStart();
+        command_list_->OMSetRenderTargets(1, &hdr_rtv, FALSE, &dsv);
+      } else {
+        command_list_->OMSetRenderTargets(1, &hdr_rtv, FALSE, nullptr);
+      }
+      return;
     }
-    Transition(shadow_map_.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE,
-               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    shadow_map_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 
     const auto index = swapchain_->GetCurrentBackBufferIndex();
     const D3D12_CPU_DESCRIPTOR_HANDLE rtv{rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
@@ -973,14 +1020,16 @@ class D3D12Device final : public IDevice {
     } else {
       command_list_->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
     }
+  }
 
-    D3D12_VIEWPORT vp{};
-    vp.Width = static_cast<float>(width_);
-    vp.Height = static_cast<float>(height_);
-    vp.MaxDepth = 1.f;
-    command_list_->RSSetViewports(1, &vp);
-    D3D12_RECT scissor{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
-    command_list_->RSSetScissorRects(1, &scissor);
+  Status EndShadowPass() override {
+    if (!shadow_active_) {
+      return Status::Fail("BeginShadowPass not active");
+    }
+    Transition(shadow_map_.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE,
+               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    shadow_map_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    BindSceneColorTargets();
     shadow_active_ = false;
     return Status::Ok();
   }
@@ -1001,7 +1050,7 @@ class D3D12Device final : public IDevice {
 
     local_shadow_active_ = true;
     shadow_active_ = false;
-    bound_cascade_ = -1;
+    bound_shadow_slot_ = 4;
     // Default to tile 0 for callers that skip BindLocalShadowTile.
     return BindLocalShadowTile(0);
   }
@@ -1025,11 +1074,13 @@ class D3D12Device final : public IDevice {
       // Compat: scheduler may still write only local_shadow_vp.
       std::memcpy(shadow_frame, lighting_.local_shadow_vp.m.data(), sizeof(shadow_frame));
     }
+    const int vp_slot = 4 + tile_index;  // after CSM cascade slots 0..3
     void* ptr = nullptr;
     if (FAILED(shadow_frame_cb_->Map(0, nullptr, &ptr))) {
       return Status::Fail("Map shadow frame CB failed");
     }
-    std::memcpy(ptr, shadow_frame, sizeof(shadow_frame));
+    std::memcpy(static_cast<char*>(ptr) + ShadowVpCbOffset(vp_slot), shadow_frame,
+                sizeof(shadow_frame));
     shadow_frame_cb_->Unmap(0, nullptr);
 
     const int tiles_per_row = (std::max)(1, lighting_.local_shadow_tiles_per_row);
@@ -1051,6 +1102,7 @@ class D3D12Device final : public IDevice {
     scissor.right = scissor.left + static_cast<LONG>(tile);
     scissor.bottom = scissor.top + static_cast<LONG>(tile);
     command_list_->RSSetScissorRects(1, &scissor);
+    bound_shadow_slot_ = vp_slot;
     return Status::Ok();
   }
 
@@ -1061,24 +1113,7 @@ class D3D12Device final : public IDevice {
     Transition(local_shadow_map_.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE,
                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     local_shadow_map_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-
-    const auto index = swapchain_->GetCurrentBackBufferIndex();
-    const D3D12_CPU_DESCRIPTOR_HANDLE rtv{rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
-                                          static_cast<SIZE_T>(index) * rtv_descriptor_size_};
-    if (dsv_) {
-      const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_heap_->GetCPUDescriptorHandleForHeapStart();
-      command_list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
-    } else {
-      command_list_->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
-    }
-
-    D3D12_VIEWPORT vp{};
-    vp.Width = static_cast<float>(width_);
-    vp.Height = static_cast<float>(height_);
-    vp.MaxDepth = 1.f;
-    command_list_->RSSetViewports(1, &vp);
-    D3D12_RECT scissor{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
-    command_list_->RSSetScissorRects(1, &scissor);
+    BindSceneColorTargets();
     local_shadow_active_ = false;
     return Status::Ok();
   }
@@ -1133,6 +1168,7 @@ class D3D12Device final : public IDevice {
     if (items.empty()) {
       return Status::Ok();
     }
+    BindSceneColorTargets();
     if (shadow_map_ && shadow_map_state_ != D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) {
       Transition(shadow_map_.Get(), shadow_map_state_,
                  D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -1147,7 +1183,8 @@ class D3D12Device final : public IDevice {
 
     command_list_->SetPipelineState(pso);
     command_list_->SetGraphicsRootSignature(lit_root_.Get());
-    command_list_->SetGraphicsRootConstantBufferView(0, frame_cb_->GetGPUVirtualAddress());
+    command_list_->SetGraphicsRootConstantBufferView(
+        0, frame_cb_->GetGPUVirtualAddress() + FrameCbOffset());
     ID3D12DescriptorHeap* heaps[] = {shadow_srv_heap_.Get()};
     command_list_->SetDescriptorHeaps(1, heaps);
     command_list_->SetGraphicsRootDescriptorTable(
@@ -1187,7 +1224,7 @@ class D3D12Device final : public IDevice {
       od.tex_slot = static_cast<float>(items[i].tex_slot);
       od.uv_scale = items[i].uv_scale > 0.f ? items[i].uv_scale : 1.f;
 
-      const auto offset = static_cast<UINT64>(i % kMaxLitDraws) * 256ull;
+      const auto offset = ObjectCbOffset(i);
       void* ptr = nullptr;
       if (FAILED(object_cb_->Map(0, nullptr, &ptr))) {
         return Status::Fail("Map object CB failed");
@@ -1300,7 +1337,7 @@ class D3D12Device final : public IDevice {
     upload.Type = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_RESOURCE_DESC buf{};
     buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    buf.Width = 512;
+    buf.Width = kPostCbBytes * kFrameCount;
     buf.Height = 1;
     buf.DepthOrArraySize = 1;
     buf.MipLevels = 1;
@@ -1346,9 +1383,6 @@ class D3D12Device final : public IDevice {
     if (!post_ready_) {
       return Status::Fail("SetupPostMesh not called");
     }
-    if (!desc.NeedsResolve()) {
-      return Status::Ok();
-    }
     if (!scene_color_ || !history_ || !dsv_ || !post_pso_ || !post_cb_ || !post_srv_heap_) {
       return Status::Fail("Post resources missing");
     }
@@ -1358,18 +1392,14 @@ class D3D12Device final : public IDevice {
     const D3D12_CPU_DESCRIPTOR_HANDLE rtv{rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
                                           static_cast<SIZE_T>(bb_index) * rtv_descriptor_size_};
 
-    // 1) Copy current backbuffer → scene_color_
-    Transition(backbuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    if (scene_color_state_ != D3D12_RESOURCE_STATE_COPY_DEST) {
-      Transition(scene_color_.Get(), scene_color_state_, D3D12_RESOURCE_STATE_COPY_DEST);
-      scene_color_state_ = D3D12_RESOURCE_STATE_COPY_DEST;
+    // Lit already wrote HDR into scene_color_. Sample it directly (no LDR backbuffer copy).
+    if (scene_color_state_ != D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) {
+      Transition(scene_color_.Get(), scene_color_state_,
+                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+      scene_color_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     }
-    command_list_->CopyResource(scene_color_.Get(), backbuffer);
-    Transition(scene_color_.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
-               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    scene_color_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 
-    // 2) Depth + history readable
+    // Depth + history readable
     if (depth_state_ != D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) {
       Transition(dsv_.Get(), depth_state_, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
       depth_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
@@ -1379,9 +1409,7 @@ class D3D12Device final : public IDevice {
       history_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     }
 
-    Transition(backbuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
-
-    // 3) PostCB (must match post_ssao_taa.hlsl packing)
+    // PostCB (must match post_ssao_taa.hlsl packing)
     struct PostCB {
       float inv_res[2];
       float enable_ssao;
@@ -1439,7 +1467,8 @@ class D3D12Device final : public IDevice {
     cb.fog_color[0] = desc.fog_color.x;
     cb.fog_color[1] = desc.fog_color.y;
     cb.fog_color[2] = desc.fog_color.z;
-    cb.enable_tonemap = desc.enable_tonemap ? 1.f : 0.f;
+    // HDR scene color must always be tonemapped into the LDR swapchain.
+    cb.enable_tonemap = 1.f;
     cb.enable_ssr = desc.enable_ssr ? 1.f : 0.f;
     cb.ssr_intensity = desc.ssr_intensity;
     cb.ssr_thickness = desc.ssr_thickness;
@@ -1453,10 +1482,10 @@ class D3D12Device final : public IDevice {
     if (FAILED(post_cb_->Map(0, nullptr, &mapped))) {
       return Status::Fail("Map post CB failed");
     }
-    std::memcpy(mapped, &cb, sizeof(cb));
+    std::memcpy(static_cast<char*>(mapped) + PostCbOffset(), &cb, sizeof(cb));
     post_cb_->Unmap(0, nullptr);
 
-    // 4) Fullscreen triangle → backbuffer
+    // Fullscreen triangle → LDR backbuffer
     command_list_->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
     D3D12_VIEWPORT vp{};
     vp.Width = static_cast<float>(width_);
@@ -1470,13 +1499,14 @@ class D3D12Device final : public IDevice {
     command_list_->SetGraphicsRootSignature(post_root_.Get());
     ID3D12DescriptorHeap* heaps[] = {post_srv_heap_.Get()};
     command_list_->SetDescriptorHeaps(1, heaps);
-    command_list_->SetGraphicsRootConstantBufferView(0, post_cb_->GetGPUVirtualAddress());
+    command_list_->SetGraphicsRootConstantBufferView(
+        0, post_cb_->GetGPUVirtualAddress() + PostCbOffset());
     command_list_->SetGraphicsRootDescriptorTable(
         1, post_srv_heap_->GetGPUDescriptorHandleForHeapStart());
     command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     command_list_->DrawInstanced(3, 1, 0, 0);
 
-    // 5) Copy resolved backbuffer → history_
+    // Copy resolved backbuffer → history_
     Transition(backbuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
     if (history_state_ != D3D12_RESOURCE_STATE_COPY_DEST) {
       Transition(history_.Get(), history_state_, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -1488,7 +1518,7 @@ class D3D12Device final : public IDevice {
     history_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     Transition(backbuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
-    // 6) Restore depth write + RT binding for subsequent UI
+    // Restore depth write + LDR RT for debug/UI
     if (depth_state_ != D3D12_RESOURCE_STATE_DEPTH_WRITE) {
       Transition(dsv_.Get(), depth_state_, D3D12_RESOURCE_STATE_DEPTH_WRITE);
       depth_state_ = D3D12_RESOURCE_STATE_DEPTH_WRITE;
@@ -2041,7 +2071,22 @@ class D3D12Device final : public IDevice {
 
  private:
   static constexpr UINT kMaxLitDraws = 64;
-  static constexpr int kMaxMeshSlots = 4;
+  static constexpr UINT kShadowVpSlots = 16;  // 4 cascades + local tiles
+  static constexpr UINT64 kFrameCbBytes = 4096;  // ≥ FrameData, 256-aligned
+  static constexpr UINT64 kPostCbBytes = 512;
+
+  UINT64 FrameCbOffset() const { return static_cast<UINT64>(frame_index_) * kFrameCbBytes; }
+  UINT64 PostCbOffset() const { return static_cast<UINT64>(frame_index_) * kPostCbBytes; }
+  UINT64 ObjectCbOffset(std::size_t draw_index) const {
+    return (static_cast<UINT64>(frame_index_) * kMaxLitDraws +
+            static_cast<UINT64>(draw_index % kMaxLitDraws)) *
+           256ull;
+  }
+  UINT64 ShadowVpCbOffset(int slot) const {
+    const int s = (std::max)(0, (std::min)(slot, static_cast<int>(kShadowVpSlots) - 1));
+    return (static_cast<UINT64>(frame_index_) * kShadowVpSlots + static_cast<UINT64>(s)) * 256ull;
+  }
+  static constexpr int kMaxMeshSlots = 8;
   static constexpr UINT kShadowMapSize = 2048;
   static constexpr UINT kLocalShadowMapSize = 2048;
 
@@ -2636,13 +2681,13 @@ class D3D12Device final : public IDevice {
       }
       return Status::Ok();
     };
-    if (auto st = make_cb(2560, frame_cb_); !st) {
+    if (auto st = make_cb(kFrameCbBytes * kFrameCount, frame_cb_); !st) {
       return st;
     }
-    if (auto st = make_cb(256, shadow_frame_cb_); !st) {
+    if (auto st = make_cb(256ull * kShadowVpSlots * kFrameCount, shadow_frame_cb_); !st) {
       return st;
     }
-    if (auto st = make_cb(256ull * kMaxLitDraws, object_cb_); !st) {
+    if (auto st = make_cb(256ull * kMaxLitDraws * kFrameCount, object_cb_); !st) {
       return st;
     }
     return Status::Ok();
@@ -2766,37 +2811,66 @@ class D3D12Device final : public IDevice {
   Status CreatePostColorTargets() {
     scene_color_.Reset();
     history_.Reset();
+    hdr_rtv_heap_.Reset();
 
-    auto make_rt = [&](ComPtr<ID3D12Resource>& out,
-                       D3D12_RESOURCE_STATES& state) -> Status {
+    auto make_rt = [&](ComPtr<ID3D12Resource>& out, D3D12_RESOURCE_STATES& state,
+                       DXGI_FORMAT format, D3D12_RESOURCE_FLAGS flags) -> Status {
       D3D12_RESOURCE_DESC desc{};
       desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
       desc.Width = width_;
       desc.Height = height_;
       desc.DepthOrArraySize = 1;
       desc.MipLevels = 1;
-      desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+      desc.Format = format;
       desc.SampleDesc.Count = 1;
-      desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+      desc.Flags = flags;
 
       D3D12_HEAP_PROPERTIES heap_props{};
       heap_props.Type = D3D12_HEAP_TYPE_DEFAULT;
+      D3D12_CLEAR_VALUE clear{};
+      clear.Format = format;
+      clear.Color[0] = 0.14f;
+      clear.Color[1] = 0.16f;
+      clear.Color[2] = 0.20f;
+      clear.Color[3] = 1.f;
+      const D3D12_CLEAR_VALUE* clear_ptr =
+          (flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) ? &clear : nullptr;
       const HRESULT hr = device_->CreateCommittedResource(
-          &heap_props, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-          IID_PPV_ARGS(&out));
+          &heap_props, D3D12_HEAP_FLAG_NONE, &desc,
+          (flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) ? D3D12_RESOURCE_STATE_RENDER_TARGET
+                                                            : D3D12_RESOURCE_STATE_COPY_DEST,
+          clear_ptr, IID_PPV_ARGS(&out));
       if (FAILED(hr)) {
         return Status::Fail("Create post color target failed: " + HrToString(hr));
       }
-      state = D3D12_RESOURCE_STATE_COPY_DEST;
+      state = (flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
+                  ? D3D12_RESOURCE_STATE_RENDER_TARGET
+                  : D3D12_RESOURCE_STATE_COPY_DEST;
       return Status::Ok();
     };
 
-    if (auto st = make_rt(scene_color_, scene_color_state_); !st) {
+    // HDR scene color is the lit/transparent render target.
+    if (auto st = make_rt(scene_color_, scene_color_state_, DXGI_FORMAT_R16G16B16A16_FLOAT,
+                          D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+        !st) {
       return st;
     }
-    if (auto st = make_rt(history_, history_state_); !st) {
+    // History stays LDR (copy of tonemapped backbuffer).
+    if (auto st = make_rt(history_, history_state_, DXGI_FORMAT_R8G8B8A8_UNORM,
+                          D3D12_RESOURCE_FLAG_NONE);
+        !st) {
       return st;
     }
+
+    D3D12_DESCRIPTOR_HEAP_DESC heap{};
+    heap.NumDescriptors = 1;
+    heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    const HRESULT hr = device_->CreateDescriptorHeap(&heap, IID_PPV_ARGS(&hdr_rtv_heap_));
+    if (FAILED(hr)) {
+      return Status::Fail("Create HDR RTV heap failed");
+    }
+    device_->CreateRenderTargetView(scene_color_.Get(), nullptr,
+                                    hdr_rtv_heap_->GetCPUDescriptorHandleForHeapStart());
     return Status::Ok();
   }
 
@@ -3133,7 +3207,7 @@ class D3D12Device final : public IDevice {
   bool post_ready_ = false;
   bool shadow_active_ = false;
   bool local_shadow_active_ = false;
-  int bound_cascade_ = -1;
+  int bound_shadow_slot_ = 0;
   std::uint32_t compute_dispatches_ = 0;
   std::uint32_t lit_draws_ = 0;
   std::uint32_t shadow_draws_ = 0;
@@ -3159,6 +3233,7 @@ class D3D12Device final : public IDevice {
   ComPtr<ID3D12DescriptorHeap> local_shadow_dsv_heap_;
   ComPtr<ID3D12DescriptorHeap> shadow_srv_heap_;
   ComPtr<ID3D12DescriptorHeap> post_srv_heap_;
+  ComPtr<ID3D12DescriptorHeap> hdr_rtv_heap_;
   UINT rtv_descriptor_size_ = 0;
   UINT cbv_srv_uav_descriptor_size_ = 0;
   std::array<ComPtr<ID3D12Resource>, kFrameCount> backbuffers_{};

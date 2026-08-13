@@ -50,7 +50,7 @@ struct PostResolveDesc {
   bool enable_taa = false;
   float ssao_radius = 12.f;
   float ssao_intensity = 0.85f;
-  float taa_blend = 0.88f;
+  float taa_blend = 0.25f;
   float exposure = 1.15f;
   bool enable_tonemap = true;
   int tonemap_mode = 2;  // 0=none 1=reinhard 2=ACES
