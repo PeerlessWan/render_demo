@@ -51,6 +51,7 @@ int main(int argc, char** argv) {
   desc.window.width = 1280;
   desc.window.height = 720;
   desc.clear_color = {0.14f, 0.16f, 0.20f, 1.f};
+  bool use_vulkan = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i] ? argv[i] : "";
     if (arg == "--headless") {
@@ -63,6 +64,12 @@ int main(int argc, char** argv) {
       desc.headless_frames = std::atoi(arg.c_str() + 18);
     } else if (arg == "--headless_frames" && i + 1 < argc) {
       desc.headless_frames = std::atoi(argv[++i]);
+    } else if (arg == "--backend=vulkan") {
+      desc.backend = engine::rhi::Backend::Vulkan;
+      use_vulkan = true;
+      desc.window.title = "Sandbox (Vulkan) — LMB/RMB look | Wheel | MMB pan | WASD";
+    } else if (arg.rfind("--frames=", 0) == 0) {
+      desc.headless_frames = std::atoi(arg.c_str() + 9);
     }
   }
 
@@ -134,18 +141,29 @@ int main(int argc, char** argv) {
   engine::render::RenderSystem render;
   engine::render::RenderSystemDesc rdesc;
   const auto shader_dir = std::filesystem::path(ENGINE_SHADER_DIR_A);
-  rdesc.lit_vs = shader_dir / "lit_cube.vs.cso";
-  rdesc.lit_ps = shader_dir / "lit_cube.ps.cso";
-  rdesc.shadow_vs = shader_dir / "shadow.vs.cso";
-  rdesc.shadow_ps = shader_dir / "shadow.ps.cso";
-  rdesc.quad_vs = shader_dir / "quad.vs.cso";
-  rdesc.quad_ps = shader_dir / "quad.ps.cso";
-  rdesc.post_vs = shader_dir / "post_ssao_taa.vs.cso";
-  rdesc.post_ps = shader_dir / "post_ssao_taa.ps.cso";
-  rdesc.debug_vs = shader_dir / "debug_line.vs.cso";
-  rdesc.debug_ps = shader_dir / "debug_line.ps.cso";
-  rdesc.enable_shadows = true;
-  rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
+  if (use_vulkan) {
+    rdesc.lit_vs = shader_dir / "lit_cube_vk.vs.spv";
+    rdesc.lit_ps = shader_dir / "lit_cube_vk.ps.spv";
+    rdesc.shadow_vs = shader_dir / "shadow_vk.vs.spv";
+    // Post/UI/debug SPIR-V not wired yet on Vulkan.
+    rdesc.enable_shadows = true;
+    rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
+    rdesc.quality.enable_ssao = false;
+    rdesc.quality.enable_taa = false;
+  } else {
+    rdesc.lit_vs = shader_dir / "lit_cube.vs.cso";
+    rdesc.lit_ps = shader_dir / "lit_cube.ps.cso";
+    rdesc.shadow_vs = shader_dir / "shadow.vs.cso";
+    rdesc.shadow_ps = shader_dir / "shadow.ps.cso";
+    rdesc.quad_vs = shader_dir / "quad.vs.cso";
+    rdesc.quad_ps = shader_dir / "quad.ps.cso";
+    rdesc.post_vs = shader_dir / "post_ssao_taa.vs.cso";
+    rdesc.post_ps = shader_dir / "post_ssao_taa.ps.cso";
+    rdesc.debug_vs = shader_dir / "debug_line.vs.cso";
+    rdesc.debug_ps = shader_dir / "debug_line.ps.cso";
+    rdesc.enable_shadows = true;
+    rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
+  }
   if (auto st = render.Init(a.device(), rdesc); !st) {
     engine::LogError(st.message());
     return 1;
@@ -163,22 +181,32 @@ int main(int argc, char** argv) {
     if (auto alb = loader->LoadFile(brick_diff)) {
       if (auto st = a.device().UploadLitAlbedoRgba(alb->rgba.data(), alb->width, alb->height, 0);
           !st) {
-        engine::LogError(st.message());
-        return 1;
+        if (use_vulkan) {
+          engine::LogInfo(std::string("Skip albedo upload on Vulkan: ") + st.message());
+        } else {
+          engine::LogError(st.message());
+          return 1;
+        }
+      } else {
+        engine::LogInfo("Albedo slot0: Poly Haven red_brick_03");
+        albedo_ok = true;
       }
-      engine::LogInfo("Albedo slot0: Poly Haven red_brick_03");
-      albedo_ok = true;
     } else if (auto alb_fallback = loader->LoadFile(content / "textures" / "albedo_brick.png")) {
       if (auto st = a.device().UploadLitAlbedoRgba(alb_fallback->rgba.data(), alb_fallback->width,
                                                     alb_fallback->height, 0);
           !st) {
-        engine::LogError(st.message());
-        return 1;
+        if (use_vulkan) {
+          engine::LogInfo(std::string("Skip albedo upload on Vulkan: ") + st.message());
+        } else {
+          engine::LogError(st.message());
+          return 1;
+        }
+      } else {
+        engine::LogInfo("Albedo slot0: fallback albedo_brick.png");
+        albedo_ok = true;
       }
-      engine::LogInfo("Albedo slot0: fallback albedo_brick.png");
-      albedo_ok = true;
     }
-    if (!albedo_ok) {
+    if (!albedo_ok && !use_vulkan) {
       engine::LogError("Failed to load any albedo texture");
       return 1;
     }
@@ -187,22 +215,32 @@ int main(int argc, char** argv) {
     if (auto arm = loader->LoadFile(brick_arm)) {
       auto orm = ArmToOrm(arm.value());
       if (auto st = a.device().UploadLitOrmRgba(orm.rgba.data(), orm.width, orm.height, 0); !st) {
-        engine::LogError(st.message());
-        return 1;
+        if (use_vulkan) {
+          engine::LogInfo(std::string("Skip ORM upload on Vulkan: ") + st.message());
+        } else {
+          engine::LogError(st.message());
+          return 1;
+        }
+      } else {
+        engine::LogInfo("ORM slot0: Poly Haven brick ARM");
+        orm_ok = true;
       }
-      engine::LogInfo("ORM slot0: Poly Haven brick ARM");
-      orm_ok = true;
     } else if (auto orm_fallback = loader->LoadFile(content / "textures" / "orm_brick.png")) {
       if (auto st = a.device().UploadLitOrmRgba(orm_fallback->rgba.data(), orm_fallback->width,
                                                 orm_fallback->height, 0);
           !st) {
-        engine::LogError(st.message());
-        return 1;
+        if (use_vulkan) {
+          engine::LogInfo(std::string("Skip ORM upload on Vulkan: ") + st.message());
+        } else {
+          engine::LogError(st.message());
+          return 1;
+        }
+      } else {
+        engine::LogInfo("ORM slot0: fallback orm_brick.png");
+        orm_ok = true;
       }
-      engine::LogInfo("ORM slot0: fallback orm_brick.png");
-      orm_ok = true;
     }
-    if (!orm_ok) {
+    if (!orm_ok && !use_vulkan) {
       engine::LogError("Failed to load any ORM texture");
       return 1;
     }
@@ -215,69 +253,91 @@ int main(int argc, char** argv) {
         verts[i] = {v.px, v.py, v.pz, v.nx, v.ny, v.nz, v.u, v.v};
       }
       if (auto st = a.device().UploadLitGeometry(1, verts, mesh->indices); !st) {
-        engine::LogError(st.message());
+        if (use_vulkan) {
+          engine::LogInfo(std::string("Skip helmet mesh on Vulkan: ") + st.message());
+        } else {
+          engine::LogError(st.message());
+          return 1;
+        }
+      } else {
+        if (mesh->has_albedo) {
+          if (auto st = a.device().UploadLitAlbedoRgba(mesh->albedo.rgba.data(), mesh->albedo.width,
+                                                       mesh->albedo.height, 1);
+              !st) {
+            if (use_vulkan) {
+              engine::LogInfo(std::string("Skip helmet albedo on Vulkan: ") + st.message());
+            } else {
+              engine::LogError(st.message());
+              return 1;
+            }
+          }
+        }
+        if (mesh->has_orm) {
+          if (auto st = a.device().UploadLitOrmRgba(mesh->orm.rgba.data(), mesh->orm.width,
+                                                   mesh->orm.height, 1);
+              !st) {
+            if (use_vulkan) {
+              engine::LogInfo(std::string("Skip helmet ORM on Vulkan: ") + st.message());
+            } else {
+              engine::LogError(st.message());
+              return 1;
+            }
+          }
+        }
+        engine::LogInfo("DamagedHelmet.glb uploaded (mesh slot1 + tex slot1)");
+      }
+    } else {
+      if (use_vulkan) {
+        engine::LogInfo(std::string("Helmet load skipped: ") + mesh.status().message());
+      } else {
+        engine::LogError(std::string("Helmet load failed: ") + mesh.status().message());
         return 1;
       }
-      if (mesh->has_albedo) {
-        if (auto st = a.device().UploadLitAlbedoRgba(mesh->albedo.rgba.data(), mesh->albedo.width,
-                                                     mesh->albedo.height, 1);
-            !st) {
-          engine::LogError(st.message());
-          return 1;
-        }
-      }
-      if (mesh->has_orm) {
-        if (auto st = a.device().UploadLitOrmRgba(mesh->orm.rgba.data(), mesh->orm.width,
-                                                 mesh->orm.height, 1);
-            !st) {
-          engine::LogError(st.message());
-          return 1;
-        }
-      }
-      engine::LogInfo("DamagedHelmet.glb uploaded (mesh slot1 + tex slot1)");
-    } else {
-      engine::LogError(std::string("Helmet load failed: ") + mesh.status().message());
-      return 1;
     }
   }
   {
     std::vector<engine::render::LocalLight> lights;
-    engine::render::LocalLight lamp;
-    lamp.id = 1;
-    lamp.position = {1.8f, 2.8f, 1.0f};
-    lamp.range = 14.f;
-    lamp.color = {1.f, 0.72f, 0.45f, 1.f};
-    lamp.intensity = 9.f;
-    lamp.shadow_resolution = 512;
-    lamp.cast_shadows = true;
-    lights.push_back(lamp);
-    engine::render::LocalLight cool;
-    cool.id = 2;
-    cool.position = {-2.2f, 2.6f, 1.8f};
-    cool.range = 12.f;
-    cool.color = {0.45f, 0.65f, 1.f, 1.f};
-    cool.intensity = 7.f;
-    cool.shadow_resolution = 512;
-    cool.cast_shadows = true;
-    lights.push_back(cool);
+    if (!use_vulkan) {
+      engine::render::LocalLight lamp;
+      lamp.id = 1;
+      lamp.position = {1.8f, 2.8f, 1.0f};
+      lamp.range = 14.f;
+      lamp.color = {1.f, 0.72f, 0.45f, 1.f};
+      lamp.intensity = 9.f;
+      lamp.shadow_resolution = 512;
+      lamp.cast_shadows = true;
+      lights.push_back(lamp);
+      engine::render::LocalLight cool;
+      cool.id = 2;
+      cool.position = {-2.2f, 2.6f, 1.8f};
+      cool.range = 12.f;
+      cool.color = {0.45f, 0.65f, 1.f, 1.f};
+      cool.intensity = 7.f;
+      cool.shadow_resolution = 512;
+      cool.cast_shadows = true;
+      lights.push_back(cool);
+    }
     render.set_local_lights(lights);
   }
 
   engine::render::EffectTuning fx = render.effect_tuning();
   fx.sun_intensity = env.sun_intensity;
   fx.ambient_scale = 1.4f;
-  fx.exposure = 1.25f;
+  fx.exposure = use_vulkan ? 1.f : 1.25f;
   fx.enable_ssao = rdesc.quality.enable_ssao;
   fx.enable_taa = rdesc.quality.enable_taa;
   fx.shadow_cascades = rdesc.quality.shadow_cascades;
   render.set_effect_tuning(fx);
 
   engine::ui::ImmediateUi imgui;
+  bool imgui_ready = false;
   if (!imgui.available()) {
-    engine::LogError("Dear ImGui not available (ENGINE_WITH_IMGUI=0)");
-    return 1;
-  }
-  {
+    if (!use_vulkan) {
+      engine::LogError("Dear ImGui not available (ENGINE_WITH_IMGUI=0)");
+      return 1;
+    }
+    engine::LogInfo("Dear ImGui not available; continuing without UI panel");
+  } else if (!use_vulkan) {
     engine::ui::ImmediateUiDesc ui_desc;
     ui_desc.ui_vs = shader_dir / "ui_imgui.vs.cso";
     ui_desc.ui_ps = shader_dir / "ui_imgui.ps.cso";
@@ -285,6 +345,9 @@ int main(int argc, char** argv) {
       engine::LogError(st.message());
       return 1;
     }
+    imgui_ready = true;
+  } else {
+    engine::LogInfo("ImGui skipped on Vulkan (UI SPIR-V not wired yet)");
   }
 
   auto physics = engine::physics::CreateDefaultPhysicsWorld();
@@ -360,105 +423,112 @@ int main(int argc, char** argv) {
 
     const float dw = static_cast<float>(app_ref.window().width());
     const float dh = static_cast<float>(app_ref.window().height());
-    imgui.BeginFrame(snap, dw, dh, app_ref.delta_time());
+    if (imgui_ready) {
+      imgui.BeginFrame(snap, dw, dh, app_ref.delta_time());
 
-    if (panel_open) {
-      if (imgui.BeginWindow("Effects", 16.f, 48.f, 340.f, 500.f)) {
-        imgui.Text("LMB/RMB drag look | Wheel zoom | MMB pan");
-        imgui.Text("WASD/QE | Shift | F1 FX | F3 grid | F4 axes");
-        imgui.Separator();
-        imgui.Checkbox("Show grid (F3)", &show_grid);
-        imgui.Checkbox("Show axes (F4)", &show_axes);
-        imgui.Separator();
-        imgui.Checkbox("Shadows", &fx.enable_shadows);
-        imgui.Checkbox("SSAO", &fx.enable_ssao);
-        imgui.Checkbox("TAA", &fx.enable_taa);
-        imgui.Separator();
-        imgui.SliderFloat("Sun intensity", &fx.sun_intensity, 0.f, 10.f);
-        imgui.SliderFloat("Ambient scale", &fx.ambient_scale, 0.f, 3.f);
-        imgui.SliderFloat("Exposure", &fx.exposure, 0.2f, 3.f);
-        imgui.SliderFloat("Shadow bias", &fx.shadow_bias, 0.0001f, 0.02f);
-        imgui.SliderFloat("Specular power", &fx.specular_power, 1.f, 128.f);
-        imgui.SliderFloat("Local light scale", &fx.local_intensity_scale, 0.f, 4.f);
-        imgui.SliderInt("Shadow cascades", &fx.shadow_cascades, 1, 4);
-        imgui.Separator();
-        if (imgui.Button("Low", 90.f, 0.f)) {
-          const auto q =
-              engine::render::QualitySettings::FromTier(engine::render::QualityTier::Low);
-          fx.enable_ssao = q.enable_ssao;
-          fx.enable_taa = q.enable_taa;
-          fx.shadow_cascades = q.shadow_cascades;
-        }
-        if (imgui.Button("Med", 90.f, 0.f)) {
-          const auto q =
-              engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
-          fx.enable_ssao = q.enable_ssao;
-          fx.enable_taa = q.enable_taa;
-          fx.shadow_cascades = q.shadow_cascades;
-        }
-        if (imgui.Button("High", 90.f, 0.f)) {
-          const auto q =
-              engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
-          fx.enable_ssao = q.enable_ssao;
-          fx.enable_taa = q.enable_taa;
-          fx.shadow_cascades = q.shadow_cascades;
-        }
-        imgui.Separator();
-        if (imgui.Button("Quit", 80.f, 0.f)) {
-          app_ref.window().RequestClose();
-        }
-      }
-      imgui.EndWindow();
-    } else {
-      if (imgui.BeginWindow("Hint", 16.f, 16.f, 280.f, 72.f)) {
-        imgui.Text("F1 FX | F2 Profiler | F3 Grid | F4 Axes");
-      }
-      imgui.EndWindow();
-    }
-
-    if (profiler_open) {
-      if (imgui.BeginWindow("Profiler", 370.f, 48.f, 300.f, 280.f)) {
-        char line[128];
-        std::snprintf(line, sizeof(line), "dt=%.2f ms", app_ref.delta_time() * 1000.f);
-        imgui.Text(line);
-        imgui.Separator();
-        imgui.Text("CPU");
-        for (const auto& [name, ms] : profiler.samples_ms()) {
-          std::snprintf(line, sizeof(line), "  %s: %.3f ms", name.c_str(), ms);
-          imgui.Text(line);
-        }
-        imgui.Separator();
-        imgui.Text("GPU (prev frame)");
-        const auto gpu = app_ref.device().LastGpuPassTimings();
-        if (gpu.empty()) {
-          imgui.Text("  (n/a on this backend)");
-        } else {
-          for (const auto& t : gpu) {
-            std::snprintf(line, sizeof(line), "  %s: %.3f ms", t.name.c_str(), t.ms);
-            imgui.Text(line);
+      if (panel_open) {
+        if (imgui.BeginWindow("Effects", 16.f, 48.f, 340.f, 500.f)) {
+          imgui.Text("LMB/RMB drag look | Wheel zoom | MMB pan");
+          imgui.Text("WASD/QE | Shift | F1 FX | F3 grid | F4 axes");
+          imgui.Separator();
+          imgui.Checkbox("Show grid (F3)", &show_grid);
+          imgui.Checkbox("Show axes (F4)", &show_axes);
+          imgui.Separator();
+          imgui.Checkbox("Shadows", &fx.enable_shadows);
+          imgui.Checkbox("SSAO", &fx.enable_ssao);
+          imgui.Checkbox("TAA", &fx.enable_taa);
+          imgui.Separator();
+          imgui.SliderFloat("Sun intensity", &fx.sun_intensity, 0.f, 10.f);
+          imgui.SliderFloat("Ambient scale", &fx.ambient_scale, 0.f, 3.f);
+          imgui.SliderFloat("Exposure", &fx.exposure, 0.2f, 3.f);
+          imgui.SliderFloat("Shadow bias", &fx.shadow_bias, 0.0001f, 0.02f);
+          imgui.SliderFloat("Specular power", &fx.specular_power, 1.f, 128.f);
+          imgui.SliderFloat("Local light scale", &fx.local_intensity_scale, 0.f, 4.f);
+          imgui.SliderInt("Shadow cascades", &fx.shadow_cascades, 1, 4);
+          imgui.Separator();
+          if (imgui.Button("Low", 90.f, 0.f)) {
+            const auto q =
+                engine::render::QualitySettings::FromTier(engine::render::QualityTier::Low);
+            fx.enable_ssao = q.enable_ssao;
+            fx.enable_taa = q.enable_taa;
+            fx.shadow_cascades = q.shadow_cascades;
+          }
+          if (imgui.Button("Med", 90.f, 0.f)) {
+            const auto q =
+                engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
+            fx.enable_ssao = q.enable_ssao;
+            fx.enable_taa = q.enable_taa;
+            fx.shadow_cascades = q.shadow_cascades;
+          }
+          if (imgui.Button("High", 90.f, 0.f)) {
+            const auto q =
+                engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
+            fx.enable_ssao = q.enable_ssao;
+            fx.enable_taa = q.enable_taa;
+            fx.shadow_cascades = q.shadow_cascades;
+          }
+          imgui.Separator();
+          if (imgui.Button("Quit", 80.f, 0.f)) {
+            app_ref.window().RequestClose();
           }
         }
+        imgui.EndWindow();
+      } else {
+        if (imgui.BeginWindow("Hint", 16.f, 16.f, 280.f, 72.f)) {
+          imgui.Text("F1 FX | F2 Profiler | F3 Grid | F4 Axes");
+        }
+        imgui.EndWindow();
       }
-      imgui.EndWindow();
-    }
 
-    app_ref.set_ui_want_capture(imgui.want_capture_mouse() || imgui.want_capture_keyboard());
+      if (profiler_open) {
+        if (imgui.BeginWindow("Profiler", 370.f, 48.f, 300.f, 280.f)) {
+          char line[128];
+          std::snprintf(line, sizeof(line), "dt=%.2f ms", app_ref.delta_time() * 1000.f);
+          imgui.Text(line);
+          imgui.Separator();
+          imgui.Text("CPU");
+          for (const auto& [name, ms] : profiler.samples_ms()) {
+            std::snprintf(line, sizeof(line), "  %s: %.3f ms", name.c_str(), ms);
+            imgui.Text(line);
+          }
+          imgui.Separator();
+          imgui.Text("GPU (prev frame)");
+          const auto gpu = app_ref.device().LastGpuPassTimings();
+          if (gpu.empty()) {
+            imgui.Text("  (n/a on this backend)");
+          } else {
+            for (const auto& t : gpu) {
+              std::snprintf(line, sizeof(line), "  %s: %.3f ms", t.name.c_str(), t.ms);
+              imgui.Text(line);
+            }
+          }
+        }
+        imgui.EndWindow();
+      }
+
+      app_ref.set_ui_want_capture(imgui.want_capture_mouse() || imgui.want_capture_keyboard());
+    } else {
+      app_ref.set_ui_want_capture(false);
+    }
     render.set_effect_tuning(fx);
 
     const float aspect = dh > 0.f ? dw / dh : 1.f;
     const auto scene = engine::render::RenderSceneExtractor::Extract(
         app_ref.world(), app_ref.camera(), aspect);
     profiler.Begin("DrawFrame");
-    if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites, nullptr, &dbg);
+    if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites, nullptr,
+                                   use_vulkan ? nullptr : &dbg);
         !st) {
       engine::LogError(st.message());
     }
     profiler.End("DrawFrame");
-    profiler.Begin("ImGui");
-    if (auto st = imgui.Render(app_ref.device()); !st) {
-      engine::LogError(st.message());
+    if (imgui_ready) {
+      profiler.Begin("ImGui");
+      if (auto st = imgui.Render(app_ref.device()); !st) {
+        engine::LogError(st.message());
+      }
+      profiler.End("ImGui");
     }
-    profiler.End("ImGui");
     profiler.End("Frame");
   });
   return status ? 0 : 1;

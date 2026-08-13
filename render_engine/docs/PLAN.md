@@ -347,7 +347,7 @@
 | **M14** P1 提交与显示 | **完成（骨架）**：SubmitConfig |
 | **M15** UI 完整 | **可用加深**：`ImmediateUi` + Sandbox 特效/Profiler；RetainedUi + Rml 工厂 fallback；真 RmlUi 仍待 |
 | **M16** 2D·像素·混合 | **可用加深**：屏空间 `DrawScreenQuads` + Sprite Y-sort、Tiled 导入 |
-| **M17** Vulkan（Windows） | **可用加深**：清屏 + **lit cube**（SPIR-V / `--mesh`）；CSM/阴影/UI 仍待 |
+| **M17** Vulkan（Windows） | **可用加深**：清屏 + lit cube + **CSM 方向光阴影**（`--backend=vulkan`）；纹理/UI/Post 仍待 |
 | **M18** Linux + Vulkan | **完成（文档占位）**：[LINUX_VULKAN.md](LINUX_VULKAN.md) |
 | **M19** 网络层 | **可用加深**：loopback + **cpp-httplib** 明文 HTTP；HTTPS 需 OpenSSL；WS loopback；QUIC stub |
 | **M20** 混合打磨 | **完成（加深）**：统一 Pick（3D AABB / 2D Sprite）、整数 DPI 缩放 |

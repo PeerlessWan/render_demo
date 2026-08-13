@@ -66,3 +66,28 @@ target_compile_definitions(sample_sandbox PRIVATE
 if(MSVC)
   target_compile_options(sample_sandbox PRIVATE /W4)
 endif()
+
+# Vulkan CSM lit path: SPIR-V beside DXIL outputs (Sandbox --backend=vulkan).
+if(ENGINE_WITH_VULKAN)
+  set(_vk_src "${CMAKE_SOURCE_DIR}/shaders/hlsl/lit_cube_vk.hlsl")
+  set(_vk_vs "${_shader_out}/lit_cube_vk.vs.spv")
+  set(_vk_ps "${_shader_out}/lit_cube_vk.ps.spv")
+  set(_vk_sh_vs "${_shader_out}/shadow_vk.vs.spv")
+  engine_compile_hlsl_spirv(
+    TARGET sample_sandbox_vk_lit
+    SOURCE "${_vk_src}"
+    OUTPUT_DIR "${_shader_out}"
+    VS_ENTRY VSMain VS_OUT lit_cube_vk.vs.spv
+    PS_ENTRY PSMain PS_OUT lit_cube_vk.ps.spv
+  )
+  add_custom_command(
+    OUTPUT "${_vk_sh_vs}"
+    COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E ShadowVS -spirv -fspv-target-env=vulkan1.1
+            -fvk-use-dx-layout -fvk-t-shift 2 0 -fvk-s-shift 2 0 -Fo "${_vk_sh_vs}" "${_vk_src}"
+    DEPENDS "${_vk_src}"
+    COMMENT "DXC SPIR-V compile ShadowVS"
+    VERBATIM
+  )
+  add_custom_target(sample_sandbox_vk_shadow DEPENDS "${_vk_sh_vs}")
+  add_dependencies(sample_sandbox sample_sandbox_vk_lit sample_sandbox_vk_shadow)
+endif()

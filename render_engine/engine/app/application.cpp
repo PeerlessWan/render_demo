@@ -203,7 +203,7 @@ Status Application::Run(FrameCallback on_frame) {
     input_.EndFrame();
     debug_draw_.Clear();
 
-    if (headless_ && headless_frames_ > 0 && frame_index_ >= headless_frames_) {
+    if (headless_frames_ > 0 && frame_index_ >= headless_frames_) {
       window_->RequestClose();
     }
   }

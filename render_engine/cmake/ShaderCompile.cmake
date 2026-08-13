@@ -83,12 +83,13 @@ function(engine_compile_hlsl_spirv)
   set(_ps "${ARG_OUTPUT_DIR}/${ARG_PS_OUT}")
 
   # Quote -fspv-target-env so generators do not truncate "vulkan1.1".
+  # Shift t/s so Texture/Sampler registers do not collide with CBV b0/b1.
   add_custom_command(
     OUTPUT "${_vs}" "${_ps}"
     COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E ${ARG_VS_ENTRY} -spirv -fspv-target-env=vulkan1.1
-            -fvk-use-dx-layout -Fo "${_vs}" "${_src}"
+            -fvk-use-dx-layout -fvk-t-shift 2 0 -fvk-s-shift 2 0 -Fo "${_vs}" "${_src}"
     COMMAND "${DXC_EXECUTABLE}" -T ps_6_0 -E ${ARG_PS_ENTRY} -spirv -fspv-target-env=vulkan1.1
-            -fvk-use-dx-layout -Fo "${_ps}" "${_src}"
+            -fvk-use-dx-layout -fvk-t-shift 2 0 -fvk-s-shift 2 0 -Fo "${_ps}" "${_src}"
     DEPENDS "${_src}"
     COMMENT "DXC SPIR-V compile ${_src}"
     VERBATIM

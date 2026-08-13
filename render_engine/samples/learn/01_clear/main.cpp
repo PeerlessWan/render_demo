@@ -65,6 +65,7 @@ int main(int argc, char** argv) {
       engine::rhi::LitMeshShaders shaders{};
       shaders.vs_dxil = shader_dir / "lit_cube_vk.vs.spv";
       shaders.ps_dxil = shader_dir / "lit_cube_vk.ps.spv";
+      shaders.shadow_vs_dxil = shader_dir / "shadow_vk.vs.spv";
       if (auto st = a.device().SetupLitMesh(shaders); !st) {
         engine::LogError(std::string("SetupLitMesh: ") + st.message());
         lit_failed = true;

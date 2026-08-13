@@ -25,6 +25,7 @@ namespace {
 constexpr std::uint32_t kFramesInFlight = 2;
 constexpr std::uint32_t kMaxLitDraws = 64;
 constexpr VkDeviceSize kUniformAlign = 256;
+constexpr std::uint32_t kShadowMapSize = 2048;
 
 std::string VkErr(VkResult r) {
   return "VkResult=" + std::to_string(static_cast<int>(r));
@@ -47,14 +48,24 @@ Result<std::vector<std::uint8_t>> ReadFileBytes(const std::filesystem::path& pat
 
 struct FrameGpu {
   float view_proj[16];
+  float cascade_vp[4][16];
   float sun_dir[3];
   float sun_intensity;
   float ambient[3];
-  float specular_power;
+  float shadow_bias;
   float sun_color[3];
-  float pad_sun;
+  float specular_power;
   float eye[3];
-  float pad_eye;
+  float enable_shadow;
+  float cascade_splits[4];
+  float cam_forward[3];
+  float cascade_count;
+  float tiles_per_row;
+  float pad[3];
+};
+
+struct ShadowFrameGpu {
+  float view_proj[16];
 };
 
 struct ObjectGpu {
@@ -64,6 +75,9 @@ struct ObjectGpu {
   float roughness;
   float pad[2];
 };
+
+constexpr VkDeviceSize kFrameUbSize =
+    (sizeof(FrameGpu) + kUniformAlign - 1) / kUniformAlign * kUniformAlign;
 
 class VulkanDevice final : public IDevice {
  public:
@@ -170,6 +184,7 @@ class VulkanDevice final : public IDevice {
     frame_recording_ = true;
     cleared_ = false;
     pass_active_ = false;
+    shadow_pass_active_ = false;
     lit_draws_this_frame_ = 0;
     return Status::Ok();
   }
@@ -181,7 +196,9 @@ class VulkanDevice final : public IDevice {
     clear_color_ = color;
 
     if (lit_ready_) {
-      return BeginLitRenderPass(color);
+      // Defer color pass so shadow pass can run first; DrawLitCubes begins RP.
+      cleared_ = true;
+      return Status::Ok();
     }
 
     VkCommandBuffer cmd = command_buffers_[frame_index_];
@@ -242,6 +259,19 @@ class VulkanDevice final : public IDevice {
     }
 
     VkCommandBuffer cmd = command_buffers_[frame_index_];
+    if (shadow_pass_active_) {
+      vkCmdEndRenderPass(cmd);
+      shadow_pass_active_ = false;
+      if (shadow_image_ != VK_NULL_HANDLE) {
+        BarrierShadowImage(cmd, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                           VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+      }
+    }
+    if (lit_ready_ && !pass_active_) {
+      if (auto st = BeginLitRenderPass(clear_color_); !st) {
+        return st;
+      }
+    }
     if (pass_active_) {
       vkCmdEndRenderPass(cmd);
       pass_active_ = false;
@@ -322,6 +352,10 @@ class VulkanDevice final : public IDevice {
     if (!ps) {
       return ps.status();
     }
+    auto shadow_vs = ReadFileBytes(shaders.shadow_vs_dxil);
+    if (!shadow_vs) {
+      return shadow_vs.status();
+    }
 
     if (auto st = CreateRenderPass(); !st) {
       return st;
@@ -335,6 +369,9 @@ class VulkanDevice final : public IDevice {
     if (auto st = CreateLitPipeline(vs.value(), ps.value()); !st) {
       return st;
     }
+    if (auto st = CreateShadowResources(shadow_vs.value()); !st) {
+      return st;
+    }
     if (auto st = CreateCubeMesh(); !st) {
       return st;
     }
@@ -343,7 +380,7 @@ class VulkanDevice final : public IDevice {
     }
 
     lit_ready_ = true;
-    LogInfo("Vulkan lit cube ready (depth + directional light, no shadows)");
+    LogInfo("Vulkan lit cube ready (depth + CSM shadows)");
     return Status::Ok();
   }
 
@@ -355,24 +392,46 @@ class VulkanDevice final : public IDevice {
     Mat4 clip_fix = Mat4::Identity();
     clip_fix.m[10] = 0.5f;
     clip_fix.m[14] = 0.5f;
-    const Mat4 view_proj = clip_fix * lighting.view_proj;
+
+    lighting_ = lighting;
+    lighting_.view_proj = clip_fix * lighting.view_proj;
+    lighting_.light_view_proj = clip_fix * lighting.light_view_proj;
+    for (int i = 0; i < 4; ++i) {
+      lighting_.cascade_view_proj[static_cast<std::size_t>(i)] =
+          clip_fix * lighting.cascade_view_proj[static_cast<std::size_t>(i)];
+    }
 
     FrameGpu data{};
-    std::memcpy(data.view_proj, view_proj.m.data(), sizeof(data.view_proj));
-    data.sun_dir[0] = lighting.sun_direction.x;
-    data.sun_dir[1] = lighting.sun_direction.y;
-    data.sun_dir[2] = lighting.sun_direction.z;
-    data.sun_intensity = lighting.sun_intensity;
-    data.ambient[0] = lighting.ambient.r;
-    data.ambient[1] = lighting.ambient.g;
-    data.ambient[2] = lighting.ambient.b;
-    data.specular_power = lighting.specular_power;
-    data.sun_color[0] = lighting.sun_color.r;
-    data.sun_color[1] = lighting.sun_color.g;
-    data.sun_color[2] = lighting.sun_color.b;
-    data.eye[0] = lighting.eye.x;
-    data.eye[1] = lighting.eye.y;
-    data.eye[2] = lighting.eye.z;
+    std::memcpy(data.view_proj, lighting_.view_proj.m.data(), sizeof(data.view_proj));
+    for (int i = 0; i < 4; ++i) {
+      std::memcpy(data.cascade_vp[i],
+                  lighting_.cascade_view_proj[static_cast<std::size_t>(i)].m.data(),
+                  sizeof(data.cascade_vp[i]));
+    }
+    data.sun_dir[0] = lighting_.sun_direction.x;
+    data.sun_dir[1] = lighting_.sun_direction.y;
+    data.sun_dir[2] = lighting_.sun_direction.z;
+    data.sun_intensity = lighting_.sun_intensity;
+    data.ambient[0] = lighting_.ambient.r;
+    data.ambient[1] = lighting_.ambient.g;
+    data.ambient[2] = lighting_.ambient.b;
+    data.shadow_bias = lighting_.shadow_bias;
+    data.sun_color[0] = lighting_.sun_color.r;
+    data.sun_color[1] = lighting_.sun_color.g;
+    data.sun_color[2] = lighting_.sun_color.b;
+    data.specular_power = lighting_.specular_power;
+    data.eye[0] = lighting_.eye.x;
+    data.eye[1] = lighting_.eye.y;
+    data.eye[2] = lighting_.eye.z;
+    data.enable_shadow = lighting_.enable_shadows ? 1.f : 0.f;
+    for (int i = 0; i < 4; ++i) {
+      data.cascade_splits[i] = lighting_.cascade_splits[static_cast<std::size_t>(i)];
+    }
+    data.cam_forward[0] = lighting_.camera_forward.x;
+    data.cam_forward[1] = lighting_.camera_forward.y;
+    data.cam_forward[2] = lighting_.camera_forward.z;
+    data.cascade_count = static_cast<float>(lighting_.cascade_count);
+    data.tiles_per_row = static_cast<float>(lighting_.cascade_tiles_per_row);
 
     void* mapped = nullptr;
     if (vkMapMemory(device_, frame_ub_mem_, 0, sizeof(data), 0, &mapped) != VK_SUCCESS) {
@@ -380,15 +439,139 @@ class VulkanDevice final : public IDevice {
     }
     std::memcpy(mapped, &data, sizeof(data));
     vkUnmapMemory(device_, frame_ub_mem_);
+    bound_cascade_ = -1;
     return Status::Ok();
   }
 
-  Status BeginShadowPass() override { return Status::Fail("Vulkan lit not ready"); }
-  Status BindShadowCascade(int) override { return Status::Fail("Vulkan lit not ready"); }
-  Status DrawShadowCubes(std::span<const LitDrawItem>) override {
-    return Status::Fail("Vulkan lit not ready");
+  Status BeginShadowPass() override {
+    if (!lit_ready_ || shadow_image_ == VK_NULL_HANDLE) {
+      return Status::Fail("SetupLitMesh not called");
+    }
+    if (!frame_recording_) {
+      return Status::Fail("BeginFrame not called");
+    }
+    VkCommandBuffer cmd = command_buffers_[frame_index_];
+    if (pass_active_) {
+      vkCmdEndRenderPass(cmd);
+      pass_active_ = false;
+    }
+
+    if (shadow_layout_ != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+      BarrierShadowImage(cmd, shadow_layout_, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    }
+
+    VkClearValue clear{};
+    clear.depthStencil = {1.f, 0};
+
+    VkRenderPassBeginInfo rp{};
+    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp.renderPass = shadow_render_pass_;
+    rp.framebuffer = shadow_framebuffer_;
+    rp.renderArea.extent = {kShadowMapSize, kShadowMapSize};
+    rp.clearValueCount = 1;
+    rp.pClearValues = &clear;
+    vkCmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+
+    shadow_pass_active_ = true;
+    bound_cascade_ = -1;
+    used_graphics_ = true;
+    return Status::Ok();
   }
-  Status EndShadowPass() override { return Status::Fail("Vulkan lit not ready"); }
+
+  Status BindShadowCascade(int cascade_index) override {
+    if (!lit_ready_ || !shadow_pass_active_) {
+      return Status::Fail("BeginShadowPass not active");
+    }
+    if (cascade_index < 0 || cascade_index >= lighting_.cascade_count) {
+      return Status::Fail(ErrorCode::InvalidArgument, "Invalid cascade index");
+    }
+
+    ShadowFrameGpu frame{};
+    std::memcpy(frame.view_proj,
+                lighting_.cascade_view_proj[static_cast<std::size_t>(cascade_index)].m.data(),
+                sizeof(frame.view_proj));
+    void* mapped = nullptr;
+    if (vkMapMemory(device_, shadow_frame_ub_mem_, 0, sizeof(frame), 0, &mapped) != VK_SUCCESS) {
+      return Status::Fail("Map shadow frame UB failed");
+    }
+    std::memcpy(mapped, &frame, sizeof(frame));
+    vkUnmapMemory(device_, shadow_frame_ub_mem_);
+
+    const int tiles_per_row = (std::max)(1, lighting_.cascade_tiles_per_row);
+    const float tile = static_cast<float>(kShadowMapSize) / static_cast<float>(tiles_per_row);
+    const int ix = cascade_index % tiles_per_row;
+    const int iy = cascade_index / tiles_per_row;
+
+    VkCommandBuffer cmd = command_buffers_[frame_index_];
+    VkViewport vp{};
+    vp.x = static_cast<float>(ix) * tile;
+    vp.y = static_cast<float>(iy) * tile;
+    vp.width = tile;
+    vp.height = tile;
+    vp.minDepth = 0.f;
+    vp.maxDepth = 1.f;
+    vkCmdSetViewport(cmd, 0, 1, &vp);
+
+    VkRect2D scissor{};
+    scissor.offset.x = static_cast<std::int32_t>(vp.x);
+    scissor.offset.y = static_cast<std::int32_t>(vp.y);
+    scissor.extent.width = static_cast<std::uint32_t>(tile);
+    scissor.extent.height = static_cast<std::uint32_t>(tile);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    bound_cascade_ = cascade_index;
+    return Status::Ok();
+  }
+
+  Status DrawShadowCubes(std::span<const LitDrawItem> items) override {
+    if (!lit_ready_ || !shadow_pass_active_) {
+      return Status::Fail("BeginShadowPass not active");
+    }
+    if (items.empty()) {
+      return Status::Ok();
+    }
+
+    VkCommandBuffer cmd = command_buffers_[frame_index_];
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline_);
+
+    const VkDeviceSize vb_offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &cube_vb_, &vb_offset);
+    vkCmdBindIndexBuffer(cmd, cube_ib_, 0, VK_INDEX_TYPE_UINT16);
+
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      ObjectGpu od{};
+      std::memcpy(od.world, items[i].world.m.data(), sizeof(od.world));
+
+      const VkDeviceSize slot = static_cast<VkDeviceSize>(i % kMaxLitDraws) * kUniformAlign;
+      void* mapped = nullptr;
+      if (vkMapMemory(device_, object_ub_mem_, slot, sizeof(od), 0, &mapped) != VK_SUCCESS) {
+        return Status::Fail("Map object UB failed");
+      }
+      std::memcpy(mapped, &od, sizeof(od));
+      vkUnmapMemory(device_, object_ub_mem_);
+
+      const std::uint32_t dyn_offset = static_cast<std::uint32_t>(slot);
+      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline_layout_, 0, 1,
+                              &shadow_desc_set_, 1, &dyn_offset);
+      vkCmdDrawIndexed(cmd, 36, 1, 0, 0, 0);
+    }
+
+    used_graphics_ = true;
+    return Status::Ok();
+  }
+
+  Status EndShadowPass() override {
+    if (!shadow_pass_active_) {
+      return Status::Fail("BeginShadowPass not active");
+    }
+    VkCommandBuffer cmd = command_buffers_[frame_index_];
+    vkCmdEndRenderPass(cmd);
+    shadow_pass_active_ = false;
+    BarrierShadowImage(cmd, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                       VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+    bound_cascade_ = -1;
+    return Status::Ok();
+  }
   Status BeginLocalShadowPass() override { return Status::Fail("Vulkan lit not ready"); }
   Status BindLocalShadowTile(int) override { return Status::Fail("Vulkan lit not ready"); }
   Status EndLocalShadowPass() override { return Status::Fail("Vulkan lit not ready"); }
@@ -895,6 +1078,129 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
 
+  Status CreateImage(std::uint32_t width, std::uint32_t height, VkFormat format,
+                     VkImageUsageFlags usage, VkImage& image, VkDeviceMemory& memory) {
+    VkImageCreateInfo ii{};
+    ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ii.imageType = VK_IMAGE_TYPE_2D;
+    ii.format = format;
+    ii.extent = {width, height, 1};
+    ii.mipLevels = 1;
+    ii.arrayLayers = 1;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT;
+    ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.usage = usage;
+    ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (vkCreateImage(device_, &ii, nullptr, &image) != VK_SUCCESS) {
+      return Status::Fail("vkCreateImage failed");
+    }
+    VkMemoryRequirements req{};
+    vkGetImageMemoryRequirements(device_, image, &req);
+    const std::uint32_t type =
+        FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (type == UINT32_MAX) {
+      return Status::Fail("No device-local memory for image");
+    }
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = type;
+    if (vkAllocateMemory(device_, &ai, nullptr, &memory) != VK_SUCCESS) {
+      return Status::Fail("vkAllocateMemory for image failed");
+    }
+    vkBindImageMemory(device_, image, memory, 0);
+    return Status::Ok();
+  }
+
+  void BarrierShadowImage(VkCommandBuffer cmd, VkImageLayout old_layout,
+                          VkImageLayout new_layout) {
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = old_layout;
+    barrier.newLayout = new_layout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = shadow_image_;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 1;
+
+    VkPipelineStageFlags src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    VkPipelineStageFlags dst_stage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
+        new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+      src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+      dst_stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    } else if (old_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL &&
+               new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+      barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+      src_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+      dst_stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    } else if (old_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL &&
+               new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL) {
+      barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      src_stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+      dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else if (old_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL &&
+               new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+      barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+      src_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+      dst_stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    } else if (old_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL &&
+               new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+      barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      src_stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+      dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else {
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = 0;
+    }
+
+    vkCmdPipelineBarrier(cmd, src_stage, dst_stage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    shadow_layout_ = new_layout;
+  }
+
+  Status ImmediateTransitionShadow(VkImageLayout new_layout) {
+    VkCommandBufferAllocateInfo alloc{};
+    alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    alloc.commandPool = command_pool_;
+    alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(device_, &alloc, &cmd) != VK_SUCCESS) {
+      return Status::Fail("Allocate transition cmd failed");
+    }
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &begin);
+    BarrierShadowImage(cmd, shadow_layout_, new_layout);
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &cmd;
+    vkQueueSubmit(graphics_queue_, 1, &submit, VK_NULL_HANDLE);
+    vkQueueWaitIdle(graphics_queue_);
+    vkFreeCommandBuffers(device_, command_pool_, 1, &cmd);
+    return Status::Ok();
+  }
+
   Status CreateRenderPass() {
     if (render_pass_ != VK_NULL_HANDLE) {
       return Status::Ok();
@@ -1069,7 +1375,7 @@ class VulkanDevice final : public IDevice {
       return st;
     }
 
-    VkDescriptorSetLayoutBinding binds[2]{};
+    VkDescriptorSetLayoutBinding binds[3]{};
     binds[0].binding = 0;
     binds[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     binds[0].descriptorCount = 1;
@@ -1078,10 +1384,14 @@ class VulkanDevice final : public IDevice {
     binds[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     binds[1].descriptorCount = 1;
     binds[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    binds[2].binding = 2;
+    binds[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binds[2].descriptorCount = 1;
+    binds[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo dsl{};
     dsl.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dsl.bindingCount = 2;
+    dsl.bindingCount = 3;
     dsl.pBindings = binds;
     if (vkCreateDescriptorSetLayout(device_, &dsl, nullptr, &lit_set_layout_) != VK_SUCCESS) {
       vkDestroyShaderModule(device_, vs, nullptr);
@@ -1192,6 +1502,210 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
 
+  Status CreateShadowResources(const std::vector<std::uint8_t>& shadow_vs_spv) {
+    if (auto st = CreateImage(kShadowMapSize, kShadowMapSize, VK_FORMAT_D32_SFLOAT,
+                              VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                                  VK_IMAGE_USAGE_SAMPLED_BIT,
+                              shadow_image_, shadow_mem_);
+        !st) {
+      return st;
+    }
+
+    VkImageViewCreateInfo vi{};
+    vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vi.image = shadow_image_;
+    vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vi.format = VK_FORMAT_D32_SFLOAT;
+    vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    vi.subresourceRange.levelCount = 1;
+    vi.subresourceRange.layerCount = 1;
+    if (vkCreateImageView(device_, &vi, nullptr, &shadow_view_) != VK_SUCCESS) {
+      return Status::Fail("Create shadow view failed");
+    }
+
+    shadow_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (auto st = ImmediateTransitionShadow(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        !st) {
+      return st;
+    }
+
+    VkAttachmentDescription depth{};
+    depth.format = VK_FORMAT_D32_SFLOAT;
+    depth.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference depth_ref{0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription sub{};
+    sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.pDepthStencilAttachment = &depth_ref;
+
+    VkSubpassDependency dep{};
+    dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dep.dstSubpass = 0;
+    dep.srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dep.dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dep.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    dep.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+    VkRenderPassCreateInfo rpci{};
+    rpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    rpci.attachmentCount = 1;
+    rpci.pAttachments = &depth;
+    rpci.subpassCount = 1;
+    rpci.pSubpasses = &sub;
+    rpci.dependencyCount = 1;
+    rpci.pDependencies = &dep;
+    if (vkCreateRenderPass(device_, &rpci, nullptr, &shadow_render_pass_) != VK_SUCCESS) {
+      return Status::Fail("Create shadow render pass failed");
+    }
+
+    VkFramebufferCreateInfo fi{};
+    fi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fi.renderPass = shadow_render_pass_;
+    fi.attachmentCount = 1;
+    fi.pAttachments = &shadow_view_;
+    fi.width = kShadowMapSize;
+    fi.height = kShadowMapSize;
+    fi.layers = 1;
+    if (vkCreateFramebuffer(device_, &fi, nullptr, &shadow_framebuffer_) != VK_SUCCESS) {
+      return Status::Fail("Create shadow framebuffer failed");
+    }
+
+    VkSamplerCreateInfo sci{};
+    sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sci.magFilter = VK_FILTER_LINEAR;
+    sci.minFilter = VK_FILTER_LINEAR;
+    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    sci.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    sci.compareEnable = VK_TRUE;
+    sci.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    if (vkCreateSampler(device_, &sci, nullptr, &shadow_sampler_) != VK_SUCCESS) {
+      return Status::Fail("Create shadow comparison sampler failed");
+    }
+
+    VkDescriptorSetLayoutBinding binds[2]{};
+    binds[0].binding = 0;
+    binds[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    binds[0].descriptorCount = 1;
+    binds[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    binds[1].binding = 1;
+    binds[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    binds[1].descriptorCount = 1;
+    binds[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+    VkDescriptorSetLayoutCreateInfo dsl{};
+    dsl.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dsl.bindingCount = 2;
+    dsl.pBindings = binds;
+    if (vkCreateDescriptorSetLayout(device_, &dsl, nullptr, &shadow_set_layout_) != VK_SUCCESS) {
+      return Status::Fail("Create shadow set layout failed");
+    }
+
+    VkPipelineLayoutCreateInfo plci{};
+    plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount = 1;
+    plci.pSetLayouts = &shadow_set_layout_;
+    if (vkCreatePipelineLayout(device_, &plci, nullptr, &shadow_pipeline_layout_) != VK_SUCCESS) {
+      return Status::Fail("Create shadow pipeline layout failed");
+    }
+
+    VkShaderModule vs = VK_NULL_HANDLE;
+    if (auto st = CreateShaderModule(shadow_vs_spv, vs); !st) {
+      return st;
+    }
+
+    VkPipelineShaderStageCreateInfo stage{};
+    stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stage.module = vs;
+    stage.pName = "ShadowVS";
+
+    VkVertexInputBindingDescription bind{};
+    bind.binding = 0;
+    bind.stride = sizeof(LitVertex);
+    bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription attr{};
+    attr.location = 0;
+    attr.binding = 0;
+    attr.format = VK_FORMAT_R32G32B32_SFLOAT;
+    attr.offset = offsetof(LitVertex, px);
+
+    VkPipelineVertexInputStateCreateInfo vi_state{};
+    vi_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vi_state.vertexBindingDescriptionCount = 1;
+    vi_state.pVertexBindingDescriptions = &bind;
+    vi_state.vertexAttributeDescriptionCount = 1;
+    vi_state.pVertexAttributeDescriptions = &attr;
+
+    VkPipelineInputAssemblyStateCreateInfo ia{
+        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    vp.viewportCount = 1;
+    vp.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rs{
+        VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    rs.cullMode = VK_CULL_MODE_BACK_BIT;
+    rs.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rs.lineWidth = 1.f;
+    rs.rasterizerDiscardEnable = VK_FALSE;
+
+    VkPipelineMultisampleStateCreateInfo ms{
+        VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo ds{
+        VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    ds.depthTestEnable = VK_TRUE;
+    ds.depthWriteEnable = VK_TRUE;
+    ds.depthCompareOp = VK_COMPARE_OP_LESS;
+
+    VkPipelineColorBlendStateCreateInfo blend{
+        VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    blend.attachmentCount = 0;
+
+    const VkDynamicState dyn_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dyn{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dyn.dynamicStateCount = 2;
+    dyn.pDynamicStates = dyn_states;
+
+    VkGraphicsPipelineCreateInfo gp{};
+    gp.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    gp.stageCount = 1;
+    gp.pStages = &stage;
+    gp.pVertexInputState = &vi_state;
+    gp.pInputAssemblyState = &ia;
+    gp.pViewportState = &vp;
+    gp.pRasterizationState = &rs;
+    gp.pMultisampleState = &ms;
+    gp.pDepthStencilState = &ds;
+    gp.pColorBlendState = &blend;
+    gp.pDynamicState = &dyn;
+    gp.layout = shadow_pipeline_layout_;
+    gp.renderPass = shadow_render_pass_;
+    gp.subpass = 0;
+
+    const VkResult r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &gp, nullptr,
+                                                 &shadow_pipeline_);
+    vkDestroyShaderModule(device_, vs, nullptr);
+    if (r != VK_SUCCESS) {
+      return Status::Fail("Create shadow pipeline failed: " + VkErr(r));
+    }
+    return Status::Ok();
+  }
+
   Status CreateCubeMesh() {
     const LitVertex verts[] = {
         {-0.5f, -0.5f, 0.5f, 0, 0, 1, 0, 0},  {0.5f, -0.5f, 0.5f, 0, 0, 1, 1, 0},
@@ -1237,8 +1751,13 @@ class VulkanDevice final : public IDevice {
   Status CreateLitBuffersAndDescriptors() {
     const VkMemoryPropertyFlags host =
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    if (auto st = CreateBuffer(kUniformAlign, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, host, frame_ub_,
+    if (auto st = CreateBuffer(kFrameUbSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, host, frame_ub_,
                                frame_ub_mem_);
+        !st) {
+      return st;
+    }
+    if (auto st = CreateBuffer(kUniformAlign, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, host,
+                               shadow_frame_ub_, shadow_frame_ub_mem_);
         !st) {
       return st;
     }
@@ -1249,25 +1768,38 @@ class VulkanDevice final : public IDevice {
       return st;
     }
 
-    VkDescriptorPoolSize sizes[2]{};
-    sizes[0] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
-    sizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1};
+    VkDescriptorPoolSize sizes[3]{};
+    sizes[0] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2};
+    sizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 2};
+    sizes[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
     VkDescriptorPoolCreateInfo pci{};
     pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pci.maxSets = 1;
-    pci.poolSizeCount = 2;
+    pci.maxSets = 2;
+    pci.poolSizeCount = 3;
     pci.pPoolSizes = sizes;
     if (vkCreateDescriptorPool(device_, &pci, nullptr, &lit_desc_pool_) != VK_SUCCESS) {
       return Status::Fail("vkCreateDescriptorPool failed");
     }
 
-    VkDescriptorSetAllocateInfo ai{};
-    ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    ai.descriptorPool = lit_desc_pool_;
-    ai.descriptorSetCount = 1;
-    ai.pSetLayouts = &lit_set_layout_;
-    if (vkAllocateDescriptorSets(device_, &ai, &lit_desc_set_) != VK_SUCCESS) {
-      return Status::Fail("vkAllocateDescriptorSets failed");
+    {
+      VkDescriptorSetAllocateInfo ai{};
+      ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+      ai.descriptorPool = lit_desc_pool_;
+      ai.descriptorSetCount = 1;
+      ai.pSetLayouts = &lit_set_layout_;
+      if (vkAllocateDescriptorSets(device_, &ai, &lit_desc_set_) != VK_SUCCESS) {
+        return Status::Fail("vkAllocateDescriptorSets (lit) failed");
+      }
+    }
+    {
+      VkDescriptorSetAllocateInfo ai{};
+      ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+      ai.descriptorPool = lit_desc_pool_;
+      ai.descriptorSetCount = 1;
+      ai.pSetLayouts = &shadow_set_layout_;
+      if (vkAllocateDescriptorSets(device_, &ai, &shadow_desc_set_) != VK_SUCCESS) {
+        return Status::Fail("vkAllocateDescriptorSets (shadow) failed");
+      }
     }
 
     VkDescriptorBufferInfo frame_info{};
@@ -1280,7 +1812,17 @@ class VulkanDevice final : public IDevice {
     obj_info.offset = 0;
     obj_info.range = sizeof(ObjectGpu);
 
-    VkWriteDescriptorSet writes[2]{};
+    VkDescriptorImageInfo shadow_info{};
+    shadow_info.sampler = shadow_sampler_;
+    shadow_info.imageView = shadow_view_;
+    shadow_info.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+    VkDescriptorBufferInfo shadow_frame_info{};
+    shadow_frame_info.buffer = shadow_frame_ub_;
+    shadow_frame_info.offset = 0;
+    shadow_frame_info.range = sizeof(ShadowFrameGpu);
+
+    VkWriteDescriptorSet writes[5]{};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = lit_desc_set_;
     writes[0].dstBinding = 0;
@@ -1293,14 +1835,73 @@ class VulkanDevice final : public IDevice {
     writes[1].descriptorCount = 1;
     writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     writes[1].pBufferInfo = &obj_info;
-    vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = lit_desc_set_;
+    writes[2].dstBinding = 2;
+    writes[2].descriptorCount = 1;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[2].pImageInfo = &shadow_info;
+    writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[3].dstSet = shadow_desc_set_;
+    writes[3].dstBinding = 0;
+    writes[3].descriptorCount = 1;
+    writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[3].pBufferInfo = &shadow_frame_info;
+    writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[4].dstSet = shadow_desc_set_;
+    writes[4].dstBinding = 1;
+    writes[4].descriptorCount = 1;
+    writes[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    writes[4].pBufferInfo = &obj_info;
+    vkUpdateDescriptorSets(device_, 5, writes, 0, nullptr);
     return Status::Ok();
   }
 
   void DestroyLitResources() {
     lit_ready_ = false;
+    shadow_pass_active_ = false;
+    bound_cascade_ = -1;
     DestroyFramebuffersOnly();
     DestroyDepthOnly();
+
+    if (shadow_pipeline_ != VK_NULL_HANDLE) {
+      vkDestroyPipeline(device_, shadow_pipeline_, nullptr);
+      shadow_pipeline_ = VK_NULL_HANDLE;
+    }
+    if (shadow_pipeline_layout_ != VK_NULL_HANDLE) {
+      vkDestroyPipelineLayout(device_, shadow_pipeline_layout_, nullptr);
+      shadow_pipeline_layout_ = VK_NULL_HANDLE;
+    }
+    if (shadow_set_layout_ != VK_NULL_HANDLE) {
+      vkDestroyDescriptorSetLayout(device_, shadow_set_layout_, nullptr);
+      shadow_set_layout_ = VK_NULL_HANDLE;
+    }
+    if (shadow_framebuffer_ != VK_NULL_HANDLE) {
+      vkDestroyFramebuffer(device_, shadow_framebuffer_, nullptr);
+      shadow_framebuffer_ = VK_NULL_HANDLE;
+    }
+    if (shadow_render_pass_ != VK_NULL_HANDLE) {
+      vkDestroyRenderPass(device_, shadow_render_pass_, nullptr);
+      shadow_render_pass_ = VK_NULL_HANDLE;
+    }
+    if (shadow_sampler_ != VK_NULL_HANDLE) {
+      vkDestroySampler(device_, shadow_sampler_, nullptr);
+      shadow_sampler_ = VK_NULL_HANDLE;
+    }
+    if (shadow_view_ != VK_NULL_HANDLE) {
+      vkDestroyImageView(device_, shadow_view_, nullptr);
+      shadow_view_ = VK_NULL_HANDLE;
+    }
+    if (shadow_image_ != VK_NULL_HANDLE) {
+      vkDestroyImage(device_, shadow_image_, nullptr);
+      shadow_image_ = VK_NULL_HANDLE;
+    }
+    if (shadow_mem_ != VK_NULL_HANDLE) {
+      vkFreeMemory(device_, shadow_mem_, nullptr);
+      shadow_mem_ = VK_NULL_HANDLE;
+    }
+    shadow_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+    shadow_desc_set_ = VK_NULL_HANDLE;
 
     if (lit_pipeline_ != VK_NULL_HANDLE) {
       vkDestroyPipeline(device_, lit_pipeline_, nullptr);
@@ -1332,6 +1933,7 @@ class VulkanDevice final : public IDevice {
     destroy_buf(cube_vb_, cube_vb_mem_);
     destroy_buf(cube_ib_, cube_ib_mem_);
     destroy_buf(frame_ub_, frame_ub_mem_);
+    destroy_buf(shadow_frame_ub_, shadow_frame_ub_mem_);
     destroy_buf(object_ub_, object_ub_mem_);
 
     if (render_pass_ != VK_NULL_HANDLE) {
@@ -1375,7 +1977,10 @@ class VulkanDevice final : public IDevice {
   ColorRgba clear_color_{0.f, 0.f, 0.f, 1.f};
 
   bool lit_ready_ = false;
+  bool shadow_pass_active_ = false;
+  int bound_cascade_ = -1;
   std::uint32_t lit_draws_this_frame_ = 0;
+  FrameLighting lighting_{};
 
   VkRenderPass render_pass_ = VK_NULL_HANDLE;
   VkImage depth_image_ = VK_NULL_HANDLE;
@@ -1389,12 +1994,26 @@ class VulkanDevice final : public IDevice {
   VkDescriptorPool lit_desc_pool_ = VK_NULL_HANDLE;
   VkDescriptorSet lit_desc_set_ = VK_NULL_HANDLE;
 
+  VkImage shadow_image_ = VK_NULL_HANDLE;
+  VkDeviceMemory shadow_mem_ = VK_NULL_HANDLE;
+  VkImageView shadow_view_ = VK_NULL_HANDLE;
+  VkSampler shadow_sampler_ = VK_NULL_HANDLE;
+  VkRenderPass shadow_render_pass_ = VK_NULL_HANDLE;
+  VkFramebuffer shadow_framebuffer_ = VK_NULL_HANDLE;
+  VkDescriptorSetLayout shadow_set_layout_ = VK_NULL_HANDLE;
+  VkPipelineLayout shadow_pipeline_layout_ = VK_NULL_HANDLE;
+  VkPipeline shadow_pipeline_ = VK_NULL_HANDLE;
+  VkDescriptorSet shadow_desc_set_ = VK_NULL_HANDLE;
+  VkImageLayout shadow_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+
   VkBuffer cube_vb_ = VK_NULL_HANDLE;
   VkDeviceMemory cube_vb_mem_ = VK_NULL_HANDLE;
   VkBuffer cube_ib_ = VK_NULL_HANDLE;
   VkDeviceMemory cube_ib_mem_ = VK_NULL_HANDLE;
   VkBuffer frame_ub_ = VK_NULL_HANDLE;
   VkDeviceMemory frame_ub_mem_ = VK_NULL_HANDLE;
+  VkBuffer shadow_frame_ub_ = VK_NULL_HANDLE;
+  VkDeviceMemory shadow_frame_ub_mem_ = VK_NULL_HANDLE;
   VkBuffer object_ub_ = VK_NULL_HANDLE;
   VkDeviceMemory object_ub_mem_ = VK_NULL_HANDLE;
 };
