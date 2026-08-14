@@ -429,6 +429,7 @@ class D3D12Device final : public IDevice {
     const UINT64 compact_bytes =
         (std::max)(static_cast<UINT64>(instance_count) * sizeof(UINT), static_cast<UINT64>(256));
     if (!cull_compact_buf_ || cull_compact_bytes_ < compact_bytes) {
+      WaitGpuSubmitted();
       cull_compact_buf_.Reset();
       D3D12_HEAP_PROPERTIES heap{};
       heap.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -2056,6 +2057,7 @@ class D3D12Device final : public IDevice {
     }
     const UINT64 bytes = static_cast<UINT64>(raw_u32.size() * sizeof(std::uint32_t));
     if (!indirect_args_buf_ || indirect_args_bytes_ < bytes) {
+      WaitGpuSubmitted();
       indirect_args_buf_.Reset();
       D3D12_HEAP_PROPERTIES def{};
       def.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -2079,8 +2081,10 @@ class D3D12Device final : public IDevice {
       indirect_args_state_ = D3D12_RESOURCE_STATE_COMMON;
     }
 
-    if (!indirect_args_upload_ || indirect_args_upload_bytes_ < bytes) {
-      indirect_args_upload_.Reset();
+    if (!indirect_args_upload_[frame_index_] ||
+        indirect_args_upload_bytes_[frame_index_] < bytes) {
+      // This frame slot is idle after BeginFrame wait.
+      indirect_args_upload_[frame_index_].Reset();
       D3D12_HEAP_PROPERTIES upload{};
       upload.Type = D3D12_HEAP_TYPE_UPLOAD;
       D3D12_RESOURCE_DESC buf{};
@@ -2091,29 +2095,29 @@ class D3D12Device final : public IDevice {
       buf.MipLevels = 1;
       buf.SampleDesc.Count = 1;
       buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-      if (FAILED(device_->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buf,
-                                                  D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                                  IID_PPV_ARGS(&indirect_args_upload_)))) {
+      if (FAILED(device_->CreateCommittedResource(
+              &upload, D3D12_HEAP_FLAG_NONE, &buf, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+              IID_PPV_ARGS(&indirect_args_upload_[frame_index_])))) {
         return Status::Fail("Create indirect args upload failed");
       }
-      indirect_args_upload_bytes_ = bytes;
+      indirect_args_upload_bytes_[frame_index_] = bytes;
     }
 
     void* ptr = nullptr;
-    if (FAILED(indirect_args_upload_->Map(0, nullptr, &ptr))) {
+    if (FAILED(indirect_args_upload_[frame_index_]->Map(0, nullptr, &ptr))) {
       return Status::Fail("Map indirect args upload failed");
     }
     // Seed index_count etc.; instance_count may be overwritten by Cull CS.
     std::memcpy(ptr, raw_u32.data(), static_cast<std::size_t>(bytes));
-    indirect_args_upload_->Unmap(0, nullptr);
+    indirect_args_upload_[frame_index_]->Unmap(0, nullptr);
 
     if (command_list_) {
       if (indirect_args_state_ != D3D12_RESOURCE_STATE_COPY_DEST) {
         Transition(indirect_args_buf_.Get(), indirect_args_state_, D3D12_RESOURCE_STATE_COPY_DEST);
         indirect_args_state_ = D3D12_RESOURCE_STATE_COPY_DEST;
       }
-      command_list_->CopyBufferRegion(indirect_args_buf_.Get(), 0, indirect_args_upload_.Get(), 0,
-                                      bytes);
+      command_list_->CopyBufferRegion(indirect_args_buf_.Get(), 0,
+                                      indirect_args_upload_[frame_index_].Get(), 0, bytes);
       Transition(indirect_args_buf_.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
                  D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
       indirect_args_state_ = D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;
@@ -2521,8 +2525,8 @@ class D3D12Device final : public IDevice {
     }
 
     const UINT bytes = static_cast<UINT>(verts.size() * sizeof(QuadVertex));
-    // Never grow mid-frame (WaitGpu-full would poison frame fences). Clip if over capacity.
-    if (!quad_vb_) {
+    auto& quad_vb = quad_vb_[frame_index_];
+    if (!quad_vb) {
       return Status::Fail("Screen quad VB not preallocated");
     }
     const UINT draw_bytes = (std::min)(bytes, quad_vb_capacity_);
@@ -2534,14 +2538,14 @@ class D3D12Device final : public IDevice {
     }
 
     void* mapped = nullptr;
-    if (FAILED(quad_vb_->Map(0, nullptr, &mapped))) {
+    if (FAILED(quad_vb->Map(0, nullptr, &mapped))) {
       return Status::Fail("Map quad VB failed");
     }
     std::memcpy(mapped, verts.data(), draw_verts_aligned * sizeof(QuadVertex));
-    quad_vb_->Unmap(0, nullptr);
+    quad_vb->Unmap(0, nullptr);
 
     D3D12_VERTEX_BUFFER_VIEW vbv{};
-    vbv.BufferLocation = quad_vb_->GetGPUVirtualAddress();
+    vbv.BufferLocation = quad_vb->GetGPUVirtualAddress();
     vbv.SizeInBytes = draw_verts_aligned * sizeof(QuadVertex);
     vbv.StrideInBytes = sizeof(QuadVertex);
 
@@ -2569,34 +2573,26 @@ class D3D12Device final : public IDevice {
 
     const UINT bytes =
         static_cast<UINT>(lines_as_segments.size() * sizeof(DebugLineVertex));
-    if (!debug_vb_ || debug_vb_capacity_ < bytes) {
-      WaitGpuSubmitted();
-      debug_vb_.Reset();
-      D3D12_HEAP_PROPERTIES upload{};
-      upload.Type = D3D12_HEAP_TYPE_UPLOAD;
-      D3D12_RESOURCE_DESC buf{};
-      buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-      buf.Width = bytes;
-      buf.Height = 1;
-      buf.DepthOrArraySize = 1;
-      buf.MipLevels = 1;
-      buf.SampleDesc.Count = 1;
-      buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-      const HRESULT hr = device_->CreateCommittedResource(
-          &upload, D3D12_HEAP_FLAG_NONE, &buf, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-          IID_PPV_ARGS(&debug_vb_));
-      if (FAILED(hr)) {
-        return Status::Fail("Create debug VB failed");
-      }
-      debug_vb_capacity_ = bytes;
+    auto& debug_vb = debug_vb_[frame_index_];
+    // Never grow/destroy mid-frame — clip to preallocated capacity (BeginFrame waited this slot).
+    if (!debug_vb || debug_vb_capacity_ == 0) {
+      return Status::Fail("Debug VB not preallocated");
+    }
+    const UINT draw_bytes = (std::min)(bytes, debug_vb_capacity_);
+    const UINT draw_verts =
+        draw_bytes / static_cast<UINT>(sizeof(DebugLineVertex));
+    const UINT draw_verts_aligned = draw_verts - (draw_verts % 2);
+    if (draw_verts_aligned == 0) {
+      return Status::Ok();
     }
 
     void* mapped = nullptr;
-    if (FAILED(debug_vb_->Map(0, nullptr, &mapped))) {
+    if (FAILED(debug_vb->Map(0, nullptr, &mapped))) {
       return Status::Fail("Map debug VB failed");
     }
-    std::memcpy(mapped, lines_as_segments.data(), bytes);
-    debug_vb_->Unmap(0, nullptr);
+    std::memcpy(mapped, lines_as_segments.data(),
+                draw_verts_aligned * sizeof(DebugLineVertex));
+    debug_vb->Unmap(0, nullptr);
 
     float vp[16]{};
     std::memcpy(vp, lighting_.view_proj.m.data(), sizeof(vp));
@@ -2604,7 +2600,8 @@ class D3D12Device final : public IDevice {
     if (FAILED(debug_cb_->Map(0, nullptr, &cb_ptr))) {
       return Status::Fail("Map debug CB failed");
     }
-    std::memcpy(cb_ptr, vp, sizeof(vp));
+    const UINT64 cb_off = static_cast<UINT64>(frame_index_) * 256ull;
+    std::memcpy(static_cast<char*>(cb_ptr) + cb_off, vp, sizeof(vp));
     debug_cb_->Unmap(0, nullptr);
 
     // Ensure color+depth targets (post restores them; BeginFrame also binds).
@@ -2628,16 +2625,17 @@ class D3D12Device final : public IDevice {
     command_list_->RSSetScissorRects(1, &scissor);
 
     D3D12_VERTEX_BUFFER_VIEW vbv{};
-    vbv.BufferLocation = debug_vb_->GetGPUVirtualAddress();
-    vbv.SizeInBytes = bytes;
+    vbv.BufferLocation = debug_vb->GetGPUVirtualAddress();
+    vbv.SizeInBytes = draw_verts_aligned * sizeof(DebugLineVertex);
     vbv.StrideInBytes = sizeof(DebugLineVertex);
 
     command_list_->SetPipelineState(debug_pso_.Get());
     command_list_->SetGraphicsRootSignature(debug_root_.Get());
-    command_list_->SetGraphicsRootConstantBufferView(0, debug_cb_->GetGPUVirtualAddress());
+    command_list_->SetGraphicsRootConstantBufferView(
+        0, debug_cb_->GetGPUVirtualAddress() + cb_off);
     command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
     command_list_->IASetVertexBuffers(0, 1, &vbv);
-    command_list_->DrawInstanced(static_cast<UINT>(lines_as_segments.size()), 1, 0, 0);
+    command_list_->DrawInstanced(draw_verts_aligned, 1, 0, 0);
     return Status::Ok();
   }
 
@@ -2743,7 +2741,7 @@ class D3D12Device final : public IDevice {
     upload.Type = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_RESOURCE_DESC buf{};
     buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    buf.Width = 256;
+    buf.Width = 256ull * kFrameCount;
     buf.Height = 1;
     buf.DepthOrArraySize = 1;
     buf.MipLevels = 1;
@@ -2756,7 +2754,7 @@ class D3D12Device final : public IDevice {
       return Status::Fail("Create UI CB failed: " + HrToString(hr));
     }
 
-    // Preallocate ImGui mesh so scroll/hover growth is rare and never races GPU.
+    // Preallocate ImGui mesh per in-flight frame so Map never races GPU.
     constexpr UINT kUiVerts = 16384;
     constexpr UINT kUiIdx = 49152;
     auto create_ui_buf = [&](UINT bytes, ComPtr<ID3D12Resource>& out) -> Status {
@@ -2779,13 +2777,17 @@ class D3D12Device final : public IDevice {
       }
       return Status::Ok();
     };
-    if (auto st = create_ui_buf(kUiVerts * static_cast<UINT>(sizeof(UiVertex)), ui_vb_); !st) {
-      return st;
+    for (std::uint32_t fi = 0; fi < kFrameCount; ++fi) {
+      if (auto st = create_ui_buf(kUiVerts * static_cast<UINT>(sizeof(UiVertex)), ui_vb_[fi]);
+          !st) {
+        return st;
+      }
+      if (auto st = create_ui_buf(kUiIdx * static_cast<UINT>(sizeof(std::uint16_t)), ui_ib_[fi]);
+          !st) {
+        return st;
+      }
     }
     ui_vb_capacity_ = kUiVerts * static_cast<UINT>(sizeof(UiVertex));
-    if (auto st = create_ui_buf(kUiIdx * static_cast<UINT>(sizeof(std::uint16_t)), ui_ib_); !st) {
-      return st;
-    }
     ui_ib_capacity_ = kUiIdx * static_cast<UINT>(sizeof(std::uint16_t));
 
     ui_ready_ = true;
@@ -2928,72 +2930,45 @@ class D3D12Device final : public IDevice {
     if (FAILED(ui_cb_->Map(0, nullptr, &mapped))) {
       return Status::Fail("Map UI CB failed");
     }
-    std::memcpy(mapped, &cb, sizeof(cb));
+    const UINT64 ui_cb_off = static_cast<UINT64>(frame_index_) * 256ull;
+    std::memcpy(static_cast<char*>(mapped) + ui_cb_off, &cb, sizeof(cb));
     ui_cb_->Unmap(0, nullptr);
 
     const UINT vb_bytes = static_cast<UINT>(vertices.size() * sizeof(UiVertex));
     const UINT ib_bytes = static_cast<UINT>(indices.size() * sizeof(std::uint16_t));
-    if (!ui_vb_ || ui_vb_capacity_ < vb_bytes || !ui_ib_ || ui_ib_capacity_ < ib_bytes) {
-      // Previous Present may still read these upload buffers — never Reset mid-flight.
-      WaitGpuSubmitted();
-      auto grow = [&](UINT need, UINT& capacity, ComPtr<ID3D12Resource>& res) -> Status {
-        if (res && capacity >= need) {
-          return Status::Ok();
-        }
-        const UINT alloc = (std::max)(need, capacity + capacity / 2 + 1);
-        res.Reset();
-        D3D12_HEAP_PROPERTIES upload{};
-        upload.Type = D3D12_HEAP_TYPE_UPLOAD;
-        D3D12_RESOURCE_DESC buf{};
-        buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        buf.Width = alloc;
-        buf.Height = 1;
-        buf.DepthOrArraySize = 1;
-        buf.MipLevels = 1;
-        buf.SampleDesc.Count = 1;
-        buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        const HRESULT hr = device_->CreateCommittedResource(
-            &upload, D3D12_HEAP_FLAG_NONE, &buf, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-            IID_PPV_ARGS(&res));
-        if (FAILED(hr)) {
-          return Status::Fail("Grow UI mesh buffer failed: " + HrToString(hr));
-        }
-        capacity = alloc;
-        return Status::Ok();
-      };
-      if (auto st = grow(vb_bytes, ui_vb_capacity_, ui_vb_); !st) {
-        return st;
-      }
-      if (auto st = grow(ib_bytes, ui_ib_capacity_, ui_ib_); !st) {
-        return st;
-      }
+    auto& ui_vb = ui_vb_[frame_index_];
+    auto& ui_ib = ui_ib_[frame_index_];
+    // Clip if over preallocated capacity — never Reset/grow mid-frame.
+    if (!ui_vb || !ui_ib || ui_vb_capacity_ < vb_bytes || ui_ib_capacity_ < ib_bytes) {
+      return Status::Fail("UI mesh exceeds preallocated capacity");
     }
 
-    if (FAILED(ui_vb_->Map(0, nullptr, &mapped))) {
+    if (FAILED(ui_vb->Map(0, nullptr, &mapped))) {
       return Status::Fail("Map UI VB failed");
     }
     std::memcpy(mapped, vertices.data(), vb_bytes);
-    ui_vb_->Unmap(0, nullptr);
+    ui_vb->Unmap(0, nullptr);
 
-    if (FAILED(ui_ib_->Map(0, nullptr, &mapped))) {
+    if (FAILED(ui_ib->Map(0, nullptr, &mapped))) {
       return Status::Fail("Map UI IB failed");
     }
     std::memcpy(mapped, indices.data(), ib_bytes);
-    ui_ib_->Unmap(0, nullptr);
+    ui_ib->Unmap(0, nullptr);
 
     D3D12_VERTEX_BUFFER_VIEW vbv{};
-    vbv.BufferLocation = ui_vb_->GetGPUVirtualAddress();
+    vbv.BufferLocation = ui_vb->GetGPUVirtualAddress();
     vbv.SizeInBytes = vb_bytes;
     vbv.StrideInBytes = sizeof(UiVertex);
 
     D3D12_INDEX_BUFFER_VIEW ibv{};
-    ibv.BufferLocation = ui_ib_->GetGPUVirtualAddress();
+    ibv.BufferLocation = ui_ib->GetGPUVirtualAddress();
     ibv.SizeInBytes = ib_bytes;
     ibv.Format = DXGI_FORMAT_R16_UINT;
 
     command_list_->SetPipelineState(ui_pso_.Get());
     command_list_->SetGraphicsRootSignature(ui_root_.Get());
-    command_list_->SetGraphicsRootConstantBufferView(0, ui_cb_->GetGPUVirtualAddress());
+    command_list_->SetGraphicsRootConstantBufferView(
+        0, ui_cb_->GetGPUVirtualAddress() + ui_cb_off);
     ID3D12DescriptorHeap* heaps[] = {ui_srv_heap_.Get()};
     command_list_->SetDescriptorHeaps(1, heaps);
     command_list_->SetGraphicsRootDescriptorTable(
@@ -3031,6 +3006,7 @@ class D3D12Device final : public IDevice {
 
   UINT64 FrameCbOffset() const { return static_cast<UINT64>(frame_index_) * kFrameCbBytes; }
   UINT64 PostCbOffset() const { return static_cast<UINT64>(frame_index_) * kPostCbBytes; }
+  UINT64 SkyCbOffset() const { return static_cast<UINT64>(frame_index_) * 256ull; }
   UINT64 ObjectCbOffset(std::size_t draw_index) const {
     return (static_cast<UINT64>(frame_index_) * kMaxLitDraws +
             static_cast<UINT64>(draw_index % kMaxLitDraws)) *
@@ -3496,7 +3472,7 @@ class D3D12Device final : public IDevice {
     upload.Type = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_RESOURCE_DESC cb{};
     cb.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    cb.Width = 256;
+    cb.Width = 256ull * kFrameCount;
     cb.Height = 1;
     cb.DepthOrArraySize = 1;
     cb.MipLevels = 1;
@@ -3534,18 +3510,20 @@ class D3D12Device final : public IDevice {
     if (!sky_ready_ || !sky_uploaded_ || !command_list_) {
       return Status::Ok();
     }
+    BindSceneColorTargets();
     void* mapped = nullptr;
     if (FAILED(sky_cb_->Map(0, nullptr, &mapped)) || !mapped) {
       return Status::Fail("Map sky CB failed");
     }
-    std::memcpy(mapped, view_rot_proj.m.data(), sizeof(float) * 16);
+    const UINT64 off = SkyCbOffset();
+    std::memcpy(static_cast<char*>(mapped) + off, view_rot_proj.m.data(), sizeof(float) * 16);
     sky_cb_->Unmap(0, nullptr);
 
     command_list_->SetPipelineState(sky_pso_.Get());
     command_list_->SetGraphicsRootSignature(sky_root_.Get());
     ID3D12DescriptorHeap* heaps[] = {sky_srv_heap_.Get()};
     command_list_->SetDescriptorHeaps(1, heaps);
-    command_list_->SetGraphicsRootConstantBufferView(0, sky_cb_->GetGPUVirtualAddress());
+    command_list_->SetGraphicsRootConstantBufferView(0, sky_cb_->GetGPUVirtualAddress() + off);
     command_list_->SetGraphicsRootDescriptorTable(
         1, sky_srv_heap_->GetGPUDescriptorHandleForHeapStart());
     command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -3727,10 +3705,9 @@ class D3D12Device final : public IDevice {
       return Status::Fail("Create quad PSO failed: " + HrToString(hr));
     }
 
-    // Preallocate once so DrawScreenQuads never grows mid-frame.
+    // Preallocate once per frame slot so DrawScreenQuads never grows mid-frame.
     constexpr UINT kMaxQuads = 1024;
     constexpr UINT kVertBytes = kMaxQuads * 6 * (2 + 4) * sizeof(float);  // pos2 + color4
-    quad_vb_.Reset();
     D3D12_HEAP_PROPERTIES upload{};
     upload.Type = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_RESOURCE_DESC buf{};
@@ -3741,11 +3718,14 @@ class D3D12Device final : public IDevice {
     buf.MipLevels = 1;
     buf.SampleDesc.Count = 1;
     buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    hr = device_->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buf,
-                                          D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                          IID_PPV_ARGS(&quad_vb_));
-    if (FAILED(hr)) {
-      return Status::Fail("Create quad VB failed: " + HrToString(hr));
+    for (std::uint32_t fi = 0; fi < kFrameCount; ++fi) {
+      quad_vb_[fi].Reset();
+      hr = device_->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buf,
+                                            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                            IID_PPV_ARGS(&quad_vb_[fi]));
+      if (FAILED(hr)) {
+        return Status::Fail("Create quad VB failed: " + HrToString(hr));
+      }
     }
     quad_vb_capacity_ = kVertBytes;
 
@@ -3822,7 +3802,7 @@ class D3D12Device final : public IDevice {
     upload.Type = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_RESOURCE_DESC buf{};
     buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    buf.Width = 256;
+    buf.Width = 256ull * kFrameCount;
     buf.Height = 1;
     buf.DepthOrArraySize = 1;
     buf.MipLevels = 1;
@@ -3834,6 +3814,23 @@ class D3D12Device final : public IDevice {
     if (FAILED(hr)) {
       return Status::Fail("Create debug CB failed");
     }
+
+    // Preallocate per-frame debug VB (grid+axes+AABBs); never Reset mid-frame.
+    constexpr UINT kMaxDebugVerts = 16384;
+    constexpr UINT kDebugVbBytes =
+        kMaxDebugVerts * static_cast<UINT>(sizeof(DebugLineVertex));
+    D3D12_RESOURCE_DESC vbdesc = buf;
+    vbdesc.Width = kDebugVbBytes;
+    for (std::uint32_t fi = 0; fi < kFrameCount; ++fi) {
+      debug_vb_[fi].Reset();
+      hr = device_->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &vbdesc,
+                                            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                            IID_PPV_ARGS(&debug_vb_[fi]));
+      if (FAILED(hr)) {
+        return Status::Fail("Create debug VB failed");
+      }
+    }
+    debug_vb_capacity_ = kDebugVbBytes;
 
     debug_ready_ = true;
     LogInfo("Debug line path ready");
@@ -4662,7 +4659,7 @@ class D3D12Device final : public IDevice {
   ComPtr<ID3D12RootSignature> debug_root_;
   ComPtr<ID3D12PipelineState> debug_pso_;
   ComPtr<ID3D12Resource> debug_cb_;
-  ComPtr<ID3D12Resource> debug_vb_;
+  std::array<ComPtr<ID3D12Resource>, kFrameCount> debug_vb_{};
   UINT debug_vb_capacity_ = 0;
   ComPtr<ID3D12RootSignature> post_root_;
   ComPtr<ID3D12PipelineState> post_pso_;
@@ -4672,10 +4669,10 @@ class D3D12Device final : public IDevice {
   std::array<ComPtr<ID3D12Resource>, kFrameCount> instance_bufs_{};
   std::array<UINT64, kFrameCount> instance_buf_bytes_{};
   ComPtr<ID3D12Resource> indirect_args_buf_;
-  ComPtr<ID3D12Resource> indirect_args_upload_;
+  std::array<ComPtr<ID3D12Resource>, kFrameCount> indirect_args_upload_{};
   ComPtr<ID3D12Resource> indirect_zero_upload_;
   UINT64 indirect_args_bytes_ = 0;
-  UINT64 indirect_args_upload_bytes_ = 0;
+  std::array<UINT64, kFrameCount> indirect_args_upload_bytes_{};
   D3D12_RESOURCE_STATES indirect_args_state_ = D3D12_RESOURCE_STATE_COMMON;
   ComPtr<ID3D12CommandSignature> draw_indexed_cmd_sig_;
   ComPtr<ID3D12Resource> probe_face_color_;
@@ -4686,15 +4683,15 @@ class D3D12Device final : public IDevice {
   int probe_cube_size_ = 0;
   D3D12_RESOURCE_STATES reflection_cube_state_ = D3D12_RESOURCE_STATE_COMMON;
   ComPtr<ID3D12Resource> post_cb_;
-  ComPtr<ID3D12Resource> quad_vb_;
+  std::array<ComPtr<ID3D12Resource>, kFrameCount> quad_vb_{};
   ComPtr<ID3D12RootSignature> ui_root_;
   ComPtr<ID3D12PipelineState> ui_pso_;
   ComPtr<ID3D12Resource> ui_cb_;
   ComPtr<ID3D12Resource> ui_font_;
   ComPtr<ID3D12Resource> ui_font_upload_;
   ComPtr<ID3D12DescriptorHeap> ui_srv_heap_;
-  ComPtr<ID3D12Resource> ui_vb_;
-  ComPtr<ID3D12Resource> ui_ib_;
+  std::array<ComPtr<ID3D12Resource>, kFrameCount> ui_vb_{};
+  std::array<ComPtr<ID3D12Resource>, kFrameCount> ui_ib_{};
   ComPtr<ID3D12Fence> fence_;
   HANDLE fence_event_ = nullptr;
   UINT64 fence_value_ = 0;

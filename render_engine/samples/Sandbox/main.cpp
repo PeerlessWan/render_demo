@@ -1210,7 +1210,7 @@ int main(int argc, char** argv) {
                         " hiz=" + (engine::QueryFeature("hiz") ? "1" : "0"));
       }
     }
-    if ((app_ref.frame_index() % 8) == 1 && !use_vulkan && !gpu_headless_assert) {
+    if ((app_ref.frame_index() % 64) == 1 && !use_vulkan && !gpu_headless_assert) {
       std::vector<engine::rhi::LitDrawItem> probe_items;
       probe_items.reserve(8);
       for (const auto& inst : scene.instances) {
