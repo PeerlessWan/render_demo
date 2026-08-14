@@ -14,7 +14,7 @@
 
 两条轨道共用同一仓库；学习默认走 **D3D12**，M17+ 可对照 **Vulkan**（Linux 见 M18；网络见 M19）。学习轨通过：
 
-1. **阶梯 Sample**（`samples/learn/NN_*`）  
+1. **阶梯 Sample**（`samples/learn/NN_*`）——每个 demo 的 `README.md` 均含完整教学块（**知识点 / 名词解释 / 原理** 等 2A 模板，见 [SAMPLES.md](SAMPLES.md)）  
 2. **章节文档**（原理 + 代码地图 + 练习）  
 3. **ADR**（关键架构决策）  
 4. **教学开关**（慢路径、校验、强制同步等）  

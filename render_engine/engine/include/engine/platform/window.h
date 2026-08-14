@@ -14,6 +14,8 @@ struct WindowDesc {
   std::uint32_t width = 1280;
   std::uint32_t height = 720;
   bool headless = false;
+  // Create HWND but do not ShowWindow (Vulkan gpu_headless needs a surface).
+  bool hidden = false;
 };
 
 // Per-frame OS input snapshot (filled by PumpEvents).

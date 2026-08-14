@@ -315,9 +315,9 @@ Result<std::unique_ptr<Window>> Window::Create(const WindowDesc& desc) {
   }
 
   window->AttachHwnd(hwnd);
-  ShowWindow(hwnd, SW_SHOW);
+  ShowWindow(hwnd, desc.hidden ? SW_HIDE : SW_SHOW);
   UpdateWindow(hwnd);
-  LogInfo("Win32 window created");
+  LogInfo(desc.hidden ? "Win32 window created (hidden)" : "Win32 window created");
   return Result<std::unique_ptr<Window>>::Ok(std::unique_ptr<Window>(std::move(window)));
 }
 

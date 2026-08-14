@@ -6,7 +6,20 @@
 
 | ID | 项 | 目标 | 验收 |
 |---|---|---|---|
-| — | （空）四轨 100% 已收口 |  |  |
+| — | （空） | 本档已收口 | 见 Done |
+
+### 本档无 vendor 100% 勾选（已完成）
+
+| 勾选 | 项 | 说明 |
+|---|---|---|
+| [x] | Q1 确定性截帧 | 固定 dt；关 TAA/Jitter；冻粒子/物理；golden 稳定 |
+| [x] | Q2 VK 真 Readback | `--backend=vulkan --gpu-headless` 可出 `.rgba` |
+| [x] | C1 Validation CI | `ci_headless -Validation`；无层 SKIP |
+| [x] | HiZ/Cull GPU CS | CS 或等价 GPU 路径可测；Sandbox 可消费 |
+| [x] | VK post 中间 RT | lit→tonemap→`scene_color` blit（中间 RT） |
+| [x] | Bindless Feature 最小路径 | Tier≥2 可查询 + 堆槽索引探针；非全材质迁移 |
+| [x] | Learn 2A README | 全部 `samples/learn/*/README.md` 含完整教学块 |
+| — | 真 RmlUi / OpenSSL / Linux | **外置**（不进本档） |
 
 ---
 
@@ -18,10 +31,7 @@
 | P2 | T-http-tls | OpenSSL HTTPS | **阻塞**：缺 SDK |
 | P3 | T-linux-m18 | Linux + Vulkan | 外置（见 LINUX_VULKAN.md） |
 | P3 | T-ground-slab | 悬浮浅色层切物体 | **搁置** |
-| P3 | T-m14-bindless-full | 全 Bindless 迁移 | 非本口径必须 |
-| P3 | T-hiz-gpu-cs | HiZ/Cull 真 GPU CS | CPU 合同已落地；可换 GPU CS |
-| P3 | T-vk-post-full | Vulkan 全 SPIR-V post 栈 | 子集 tonemap 已有；中间 RT 可扩 |
-| P3 | T-test-deepen | 自动化测试加深 | [PLAN §3.1](PLAN.md)：Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI |
+| P3 | T-m14-bindless-full | 全 Bindless 迁移 | 本档仅 Feature 最小路径 |
 
 ---
 
@@ -29,10 +39,10 @@
 
 | 标签 | 值 |
 |---|---|
-| 安全基线 | `4f68e14`（deepen）或产品波次 `0354878` |
-| 本档回退 | 还原 HiZ/Cull、VK post/local shadow、MCP spawn、golden/matrix |
+| 安全基线 | `4b2f5f5`（四轨 100%） |
+| 本档回退 | 还原 Q1–C1、VK 读回/post RT、GPU HiZ CS、Bindless Feature、learn README |
 
-验证：`scripts/ci_headless.ps1 -Golden`；unit；Sandbox `--gpu-headless`；`--harness-stdio`；`sandbox_mcp` + `ENGINE_SANDBOX_EXE`
+验证：`scripts/ci_headless.ps1 -Golden`；`-Validation`（可选）；unit；Sandbox / learn
 
 ---
 
@@ -40,14 +50,7 @@
 
 | 项 | 说明 |
 |---|---|
-| Track A | D3D12 产品主路径：IBL/CSM/点光影/TAA/探针 GPU/post；gpu-headless |
-| Track B | HiZ + Cull→IndirectArgs + Sandbox 1k 实例化热路径（无 Bindless） |
-| Track C | VK SPIR-V post 子集、局部影 atlas、实例化/Indirect Feature；矩阵更新 |
-| Track D | Harness 真接线；MCP 控真机；golden + matrix smoke；**此后 Harness 冻结 / MCP 不扩**（PLAN §3.21） |
-| W-a-test | TESTING/看板；黄金图脚本；`ENGINE_GOLDEN_DUMP` |
-| W-b1-inst | D3D12 `DrawLitInstanced` + learn22 |
-| W-b2-probe | `CaptureReflectionProbeGpu` + CPU fallback |
-| W-b3-indirect | `UploadIndirectIndexedArgs` / `ExecuteIndirectIndexed` |
-| T-ibl-real | ibl_baker → `ibl_pack.ibl1` |
-| T-gpu-headless | D3D12 offscreen + 读回 |
-| T-learn-core/electives | learn 阶梯 |
+| W-m100-nv | 无 vendor 100% + Learn 2A：Q1–C1、VK 读回/post RT、HiZ Cull CS、Bindless Feature、learn README |
+| Track A–D | 四轨 100%（产品 / GPU-driven / VK 矩阵 / 自动化底座） |
+| W-a-test / golden / matrix | 已落地；Harness 冻结；MCP 不进门禁 |
+| T-ibl-real / T-gpu-headless / learn 阶梯代码 | 已有 |

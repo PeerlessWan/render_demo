@@ -95,6 +95,13 @@ class RenderSystem {
   void set_shadows_enabled(bool on);
   void set_post_enabled(std::string_view name, bool on);
 
+  // Draw during OpaqueLit (before post). Avoids post-then-HDR RT DEVICE_REMOVED.
+  void SetPendingLitInstanced(const rhi::LitDrawItem& prototype, std::uint32_t instance_count) {
+    pending_instanced_ = true;
+    pending_instanced_proto_ = prototype;
+    pending_instanced_count_ = instance_count;
+  }
+
  private:
   void ApplyEffectToQuality();
 
@@ -113,6 +120,9 @@ class RenderSystem {
   std::vector<LocalLight> local_lights_;
   Mat4 prev_view_proj_ = Mat4::Identity();
   bool have_prev_view_proj_ = false;
+  bool pending_instanced_ = false;
+  rhi::LitDrawItem pending_instanced_proto_{};
+  std::uint32_t pending_instanced_count_ = 0;
 };
 
 }  // namespace engine::render

@@ -5,6 +5,7 @@
 #include "engine/net/net_system.h"
 
 #include <cmath>
+#include <cstdlib>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -65,7 +66,15 @@ void Application::SyncInputFromWindow() {
 
 Result<std::unique_ptr<Application>> Application::Create(const ApplicationDesc& desc) {
   WindowDesc wdesc = desc.window;
-  wdesc.headless = desc.headless || desc.window.headless || desc.gpu_headless;
+  // D3D12 gpu_headless: no HWND. Vulkan gpu_headless: hidden HWND for swapchain/surface.
+  const bool vulkan_gpu_headless =
+      desc.gpu_headless && desc.backend == rhi::Backend::Vulkan;
+  if (vulkan_gpu_headless) {
+    wdesc.headless = false;
+    wdesc.hidden = true;
+  } else {
+    wdesc.headless = desc.headless || desc.window.headless || desc.gpu_headless;
+  }
 
   auto window = Window::Create(wdesc);
   if (!window) {
@@ -77,6 +86,10 @@ Result<std::unique_ptr<Application>> Application::Create(const ApplicationDesc& 
   device_desc.width = window.value()->width();
   device_desc.height = window.value()->height();
   device_desc.gpu_headless = desc.gpu_headless;
+  device_desc.enable_validation = desc.enable_validation;
+  if (const char* v = std::getenv("ENGINE_ENABLE_VALIDATION"); v && v[0] == '1') {
+    device_desc.enable_validation = true;
+  }
   // CPU stub only when headless and not requesting real GPU offscreen.
   device_desc.headless = window.value()->is_headless() && !desc.gpu_headless;
 

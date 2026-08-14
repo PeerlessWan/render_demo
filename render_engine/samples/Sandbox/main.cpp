@@ -209,6 +209,17 @@ int main(int argc, char** argv) {
     engine::LogError(st.message());
     return 1;
   }
+  if (!use_vulkan) {
+    const auto cull_cs = shader_dir / "instance_cull_cs.cso";
+    if (auto st = a.device().SetupInstanceCullCompute(cull_cs); !st) {
+      engine::LogWarn(std::string("Cull CS optional: ") + st.message());
+    }
+    if (auto st = a.device().ProbeBindlessMinimalPath(0); !st) {
+      engine::LogWarn(std::string("Bindless Feature path: ") + st.message());
+    } else {
+      engine::LogInfo("Bindless Feature minimal path OK");
+    }
+  }
   // Dense ground plane (slot 4). Fine tris reduce near-plane straddling → no floating slab.
   if (!use_vulkan) {
     constexpr int kSeg = 128;
@@ -649,11 +660,14 @@ int main(int argc, char** argv) {
   bool headless_assert_failed = false;
   const auto status = a.Run([&](engine::Application& app_ref) {
     profiler.Begin("Frame");
-    physics->Step(app_ref.delta_time());
-    {
-      engine::scene::Transform t = app_ref.world().local_transform(phys_node);
-      t.position = physics->body_position(phys_id);
-      app_ref.world().set_local_transform(phys_node, t);
+    // Q1 golden/deterministic: freeze physics + particles under gpu-headless assert.
+    if (!gpu_headless_assert) {
+      physics->Step(app_ref.delta_time());
+      {
+        engine::scene::Transform t = app_ref.world().local_transform(phys_node);
+        t.position = physics->body_position(phys_id);
+        app_ref.world().set_local_transform(phys_node, t);
+      }
     }
     app_ref.world().UpdateTransforms();
 
@@ -839,9 +853,11 @@ int main(int argc, char** argv) {
       env.ambient = {0.20f, 0.21f, 0.24f, 1.f};
     }
 
-    // M7 particles near lamp
-    particles.set_origin({1.8f, 2.6f, 1.0f});
-    particles.Step(app_ref.delta_time());
+    // M7 particles near lamp (frozen under gpu-headless assert for Q1 determinism).
+    if (!gpu_headless_assert) {
+      particles.set_origin({1.8f, 2.6f, 1.0f});
+      particles.Step(app_ref.delta_time());
+    }
 
     // M14 morph upload only when weights change (avoid per-frame GPU buffer destroy).
     if (!use_vulkan &&
@@ -1002,6 +1018,32 @@ int main(int argc, char** argv) {
     }
 
     profiler.Begin("DrawFrame");
+    // Scale path BEFORE DrawFrame so instancing runs in OpaqueLit (pre-post).
+    if (!use_vulkan && !gpu_headless_assert) {
+      std::vector<engine::Mat4> visible;
+      engine::gpu_driven::IndirectDrawArgs iargs{};
+      const auto scale_vp = scene.camera.view_proj_matrix(aspect);
+      const std::uint32_t kept = engine::gpu_driven::CullInstancesToIndirect(
+          scale_worlds, {}, scale_vp, &scale_occ, visible, iargs, 36);
+      if (kept > 0) {
+        (void)app_ref.device().UploadInstanceTransforms(visible);
+        std::uint32_t gpu_vis = kept;
+        (void)app_ref.device().DispatchInstanceCull(scale_vp, kept, gpu_vis);
+        engine::rhi::LitDrawItem proto{};
+        proto.color = {0.35f, 0.55f, 0.32f, 1.f};
+        proto.metallic = 0.05f;
+        proto.roughness = 0.7f;
+        proto.use_albedo = false;
+        render.SetPendingLitInstanced(proto, kept);
+        const auto packed = engine::gpu_driven::PackIndirectArgsU32(iargs);
+        (void)app_ref.device().UploadIndirectIndexedArgs(packed);
+      }
+      if ((app_ref.frame_index() % 60) == 0) {
+        engine::LogInfo("scale instances visible=" + std::to_string(kept) + "/" +
+                        std::to_string(kScaleInstances) +
+                        " hiz=" + (engine::QueryFeature("hiz") ? "1" : "0"));
+      }
+    }
     if ((app_ref.frame_index() % 8) == 1 && !use_vulkan && !gpu_headless_assert) {
       std::vector<engine::rhi::LitDrawItem> probe_items;
       probe_items.reserve(8);
@@ -1040,33 +1082,7 @@ int main(int argc, char** argv) {
         !st) {
       engine::LogError(st.message());
     }
-    // Scale path: cull 1k instances → DrawLitInstanced + UploadIndirectIndexedArgs.
-    // Skip under gpu-headless assert so golden/readback stays on the lit+post main path.
-    if (!use_vulkan && !gpu_headless_assert) {
-      std::vector<engine::Mat4> visible;
-      engine::gpu_driven::IndirectDrawArgs iargs{};
-      const auto scale_vp = scene.camera.view_proj_matrix(aspect);
-      const std::uint32_t kept = engine::gpu_driven::CullInstancesToIndirect(
-          scale_worlds, {}, scale_vp, &scale_occ, visible, iargs, 36);
-      if (kept > 0) {
-        (void)app_ref.device().UploadInstanceTransforms(visible);
-        engine::rhi::LitDrawItem proto{};
-        proto.color = {0.35f, 0.55f, 0.32f, 1.f};
-        proto.metallic = 0.05f;
-        proto.roughness = 0.7f;
-        proto.use_albedo = false;
-        if (auto st = app_ref.device().DrawLitInstanced(proto, kept); !st) {
-          engine::LogError(st.message());
-        }
-        const auto packed = engine::gpu_driven::PackIndirectArgsU32(iargs);
-        (void)app_ref.device().UploadIndirectIndexedArgs(packed);
-      }
-      if ((app_ref.frame_index() % 60) == 0) {
-        engine::LogInfo("scale instances visible=" + std::to_string(kept) + "/" +
-                        std::to_string(kScaleInstances) +
-                        " hiz=" + (engine::QueryFeature("hiz") ? "1" : "0"));
-      }
-    }
+    // (scale path moved above DrawFrame — must not DrawLitInstanced after post)
     if (gpu_headless_assert) {
       const int frames = desc.headless_frames > 0 ? desc.headless_frames : 1;
       if (app_ref.frame_index() + 1 >= static_cast<std::uint64_t>(frames)) {

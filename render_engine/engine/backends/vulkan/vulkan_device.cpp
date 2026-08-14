@@ -15,6 +15,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <fstream>
 #include <span>
 #include <string>
@@ -91,6 +92,10 @@ class VulkanDevice final : public IDevice {
     hwnd_ = static_cast<HWND>(desc.native_window);
     width_ = desc.width;
     height_ = desc.height;
+    enable_validation_ = desc.enable_validation;
+    if (const char* v = std::getenv("ENGINE_ENABLE_VALIDATION"); v && v[0] == '1') {
+      enable_validation_ = true;
+    }
 
     if (auto st = CreateInstance(); !st) {
       return st;
@@ -120,6 +125,14 @@ class VulkanDevice final : public IDevice {
       vkDeviceWaitIdle(device_);
     }
     DestroyLitResources();
+    if (color_readback_buf_ != VK_NULL_HANDLE) {
+      vkDestroyBuffer(device_, color_readback_buf_, nullptr);
+      color_readback_buf_ = VK_NULL_HANDLE;
+    }
+    if (color_readback_mem_ != VK_NULL_HANDLE) {
+      vkFreeMemory(device_, color_readback_mem_, nullptr);
+      color_readback_mem_ = VK_NULL_HANDLE;
+    }
     DestroySwapchain();
     for (std::uint32_t i = 0; i < kFramesInFlight; ++i) {
       if (in_flight_fences_[i] != VK_NULL_HANDLE) {
@@ -188,6 +201,7 @@ class VulkanDevice final : public IDevice {
     cleared_ = false;
     pass_active_ = false;
     shadow_pass_active_ = false;
+    post_resolved_this_frame_ = false;
     lit_draws_this_frame_ = 0;
     return Status::Ok();
   }
@@ -270,7 +284,9 @@ class VulkanDevice final : public IDevice {
                            VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
       }
     }
-    if (lit_ready_ && !pass_active_) {
+    // After ResolvePostEffects we already ended the lit/post pass and may hold scene_color RT;
+    // do not re-open with CLEAR (would wipe tonemap).
+    if (lit_ready_ && !pass_active_ && !post_resolved_this_frame_) {
       if (auto st = BeginLitRenderPass(clear_color_); !st) {
         return st;
       }
@@ -752,9 +768,16 @@ class VulkanDevice final : public IDevice {
     vkCmdDraw(cmd, 3, 1, 0, 0);
     used_graphics_ = true;
 
+    // Intermediate scene RT: snapshot current color into scene_color_ (transfer).
+    if (auto st = CaptureSceneColorIntermediate(cmd); !st) {
+      LogWarn(std::string("VK scene_color intermediate: ") + st.message());
+    } else {
+      post_resolved_this_frame_ = true;
+    }
+
     if (!post_resolve_warned_) {
       LogInfo("Vulkan ResolvePostEffects fullscreen exposure=" + std::to_string(post_exposure_) +
-              " tonemap_mode=" + std::to_string(post_tonemap_mode_));
+              " tonemap_mode=" + std::to_string(post_tonemap_mode_) + " (+ scene_color RT)");
       post_resolve_warned_ = true;
     }
     return Status::Ok();
@@ -906,7 +929,132 @@ class VulkanDevice final : public IDevice {
   Status ReadbackTextureStub(std::vector<std::uint8_t>& out_rgba, int& w, int& h) override {
     w = static_cast<int>(width_);
     h = static_cast<int>(height_);
-    out_rgba.assign(static_cast<std::size_t>(w * h * 4), 0);
+    if (w <= 0 || h <= 0 || device_ == VK_NULL_HANDLE || swapchain_images_.empty()) {
+      return Status::Fail("Vulkan Readback: device not ready");
+    }
+    if (!frame_recording_) {
+      return Status::Fail("Vulkan Readback: BeginFrame not called");
+    }
+    VkCommandBuffer cmd = command_buffers_[frame_index_];
+    if (pass_active_) {
+      vkCmdEndRenderPass(cmd);
+      pass_active_ = false;
+    }
+    if (shadow_pass_active_) {
+      vkCmdEndRenderPass(cmd);
+      shadow_pass_active_ = false;
+    }
+
+    const VkDeviceSize row_pitch =
+        (static_cast<VkDeviceSize>(w) * 4 + 255ull) & ~255ull;  // align 256
+    const VkDeviceSize buf_size = row_pitch * static_cast<VkDeviceSize>(h);
+    if (color_readback_buf_ == VK_NULL_HANDLE || color_readback_size_ < buf_size) {
+      if (color_readback_buf_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, color_readback_buf_, nullptr);
+        color_readback_buf_ = VK_NULL_HANDLE;
+      }
+      if (color_readback_mem_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, color_readback_mem_, nullptr);
+        color_readback_mem_ = VK_NULL_HANDLE;
+      }
+      if (auto st = CreateBuffer(buf_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                 color_readback_buf_, color_readback_mem_);
+          !st) {
+        return st;
+      }
+      color_readback_size_ = buf_size;
+    }
+
+    VkImage image = swapchain_images_[image_index_];
+    // After lit RP, color is typically PRESENT_SRC or COLOR_ATTACHMENT.
+    VkImageMemoryBarrier to_src{};
+    to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_src.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    to_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    to_src.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.image = image;
+    to_src.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    to_src.subresourceRange.levelCount = 1;
+    to_src.subresourceRange.layerCount = 1;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_src);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = {width_, height_, 1};
+    region.bufferRowLength = static_cast<std::uint32_t>(row_pitch / 4);
+    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, color_readback_buf_, 1,
+                           &region);
+
+    VkImageMemoryBarrier to_present{};
+    to_present.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_present.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    to_present.dstAccessMask = 0;
+    to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    to_present.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_present.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_present.image = image;
+    to_present.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    to_present.subresourceRange.levelCount = 1;
+    to_present.subresourceRange.layerCount = 1;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0,
+                         0, nullptr, 0, nullptr, 1, &to_present);
+
+    if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
+      return Status::Fail("Vulkan Readback: EndCommandBuffer failed");
+    }
+    frame_recording_ = false;
+
+    VkSubmitInfo submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &cmd;
+    if (vkQueueSubmit(graphics_queue_, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS) {
+      return Status::Fail("Vulkan Readback: QueueSubmit failed");
+    }
+    vkQueueWaitIdle(graphics_queue_);
+
+    void* mapped = nullptr;
+    if (vkMapMemory(device_, color_readback_mem_, 0, buf_size, 0, &mapped) != VK_SUCCESS ||
+        !mapped) {
+      return Status::Fail("Vulkan Readback: Map failed");
+    }
+    const auto* src = static_cast<const std::uint8_t*>(mapped);
+    out_rgba.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4, 0);
+    for (int y = 0; y < h; ++y) {
+      const auto* row = src + static_cast<std::size_t>(y) * static_cast<std::size_t>(row_pitch);
+      for (int x = 0; x < w; ++x) {
+        const std::size_t di =
+            (static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)) *
+            4;
+        out_rgba[di + 0] = row[x * 4 + 0];
+        out_rgba[di + 1] = row[x * 4 + 1];
+        out_rgba[di + 2] = row[x * 4 + 2];
+        out_rgba[di + 3] = row[x * 4 + 3];
+      }
+    }
+    vkUnmapMemory(device_, color_readback_mem_);
+
+    // Resume recording for Present path (Present expects recording ended already — reopen).
+    if (vkResetCommandBuffer(cmd, 0) != VK_SUCCESS) {
+      return Status::Fail("Vulkan Readback: ResetCommandBuffer failed");
+    }
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vkBeginCommandBuffer(cmd, &begin) != VK_SUCCESS) {
+      return Status::Fail("Vulkan Readback: BeginCommandBuffer failed");
+    }
+    frame_recording_ = true;
+    cleared_ = true;
+    used_graphics_ = true;
     return Status::Ok();
   }
 
@@ -1104,14 +1252,25 @@ class VulkanDevice final : public IDevice {
     app.apiVersion = VK_API_VERSION_1_1;
 
     const char* exts[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
+    const char* layers[] = {"VK_LAYER_KHRONOS_validation"};
 
     VkInstanceCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ci.pApplicationInfo = &app;
     ci.enabledExtensionCount = 2;
     ci.ppEnabledExtensionNames = exts;
+    if (enable_validation_) {
+      ci.enabledLayerCount = 1;
+      ci.ppEnabledLayerNames = layers;
+    }
 
-    const VkResult r = vkCreateInstance(&ci, nullptr, &instance_);
+    VkResult r = vkCreateInstance(&ci, nullptr, &instance_);
+    if (r != VK_SUCCESS && enable_validation_) {
+      LogWarn("Vulkan validation layers unavailable — retry without");
+      ci.enabledLayerCount = 0;
+      ci.ppEnabledLayerNames = nullptr;
+      r = vkCreateInstance(&ci, nullptr, &instance_);
+    }
     if (r != VK_SUCCESS) {
       return Status::Fail("vkCreateInstance failed: " + VkErr(r));
     }
@@ -2011,6 +2170,105 @@ class VulkanDevice final : public IDevice {
       vkDestroyPipelineLayout(device_, post_pipeline_layout_, nullptr);
       post_pipeline_layout_ = VK_NULL_HANDLE;
     }
+    if (scene_color_view_ != VK_NULL_HANDLE) {
+      vkDestroyImageView(device_, scene_color_view_, nullptr);
+      scene_color_view_ = VK_NULL_HANDLE;
+    }
+    if (scene_color_image_ != VK_NULL_HANDLE) {
+      vkDestroyImage(device_, scene_color_image_, nullptr);
+      scene_color_image_ = VK_NULL_HANDLE;
+    }
+    if (scene_color_mem_ != VK_NULL_HANDLE) {
+      vkFreeMemory(device_, scene_color_mem_, nullptr);
+      scene_color_mem_ = VK_NULL_HANDLE;
+    }
+    scene_color_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+  }
+
+  Status EnsureSceneColor() {
+    if (scene_color_image_ != VK_NULL_HANDLE) {
+      return Status::Ok();
+    }
+    if (auto st = CreateImage(width_, height_, surface_format_.format,
+                              VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                  VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+                              scene_color_image_, scene_color_mem_);
+        !st) {
+      return st;
+    }
+    VkImageViewCreateInfo vi{};
+    vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vi.image = scene_color_image_;
+    vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vi.format = surface_format_.format;
+    vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    vi.subresourceRange.levelCount = 1;
+    vi.subresourceRange.layerCount = 1;
+    if (vkCreateImageView(device_, &vi, nullptr, &scene_color_view_) != VK_SUCCESS) {
+      return Status::Fail("scene_color view failed");
+    }
+    scene_color_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+    return Status::Ok();
+  }
+
+  Status CaptureSceneColorIntermediate(VkCommandBuffer cmd) {
+    if (auto st = EnsureSceneColor(); !st) {
+      return st;
+    }
+    if (pass_active_) {
+      vkCmdEndRenderPass(cmd);
+      pass_active_ = false;
+    }
+    VkImage src = swapchain_images_[image_index_];
+    // Present/color → TRANSFER_SRC
+    VkImageMemoryBarrier b0{};
+    b0.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b0.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    b0.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    b0.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    b0.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    b0.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b0.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b0.image = src;
+    b0.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    b0.subresourceRange.levelCount = 1;
+    b0.subresourceRange.layerCount = 1;
+    VkImageMemoryBarrier b1 = b0;
+    b1.srcAccessMask = 0;
+    b1.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    b1.oldLayout = scene_color_layout_;
+    b1.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b1.image = scene_color_image_;
+    VkImageMemoryBarrier bars[] = {b0, b1};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, bars);
+
+    VkImageBlit blit{};
+    blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    blit.srcSubresource.layerCount = 1;
+    blit.dstSubresource = blit.srcSubresource;
+    blit.srcOffsets[1] = {static_cast<std::int32_t>(width_), static_cast<std::int32_t>(height_), 1};
+    blit.dstOffsets[1] = blit.srcOffsets[1];
+    vkCmdBlitImage(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, scene_color_image_,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+
+    VkImageMemoryBarrier b2 = b0;
+    b2.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    b2.dstAccessMask = 0;
+    b2.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    b2.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    b2.image = src;
+    VkImageMemoryBarrier b3 = b1;
+    b3.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    b3.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    b3.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b3.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    b3.image = scene_color_image_;
+    VkImageMemoryBarrier after[] = {b2, b3};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, 2, after);
+    scene_color_layout_ = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    return Status::Ok();
   }
 
   Status CreateShadowResources(const std::vector<std::uint8_t>& shadow_vs_spv) {
@@ -2510,6 +2768,9 @@ class VulkanDevice final : public IDevice {
   VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
   VkSurfaceFormatKHR surface_format_{};
   std::vector<VkImage> swapchain_images_;
+  VkBuffer color_readback_buf_ = VK_NULL_HANDLE;
+  VkDeviceMemory color_readback_mem_ = VK_NULL_HANDLE;
+  VkDeviceSize color_readback_size_ = 0;
   std::vector<VkImageView> swapchain_views_;
 
   VkCommandPool command_pool_ = VK_NULL_HANDLE;
@@ -2528,6 +2789,7 @@ class VulkanDevice final : public IDevice {
   ColorRgba clear_color_{0.f, 0.f, 0.f, 1.f};
 
   bool lit_ready_ = false;
+  bool enable_validation_ = false;
   bool post_stub_ready_ = false;
   bool post_resolve_warned_ = false;
   bool ibl_upload_logged_ = false;
@@ -2538,6 +2800,11 @@ class VulkanDevice final : public IDevice {
   std::vector<std::uint32_t> indirect_args_cpu_;
   VkPipeline post_pipeline_ = VK_NULL_HANDLE;
   VkPipelineLayout post_pipeline_layout_ = VK_NULL_HANDLE;
+  VkImage scene_color_image_ = VK_NULL_HANDLE;
+  VkDeviceMemory scene_color_mem_ = VK_NULL_HANDLE;
+  VkImageView scene_color_view_ = VK_NULL_HANDLE;
+  VkImageLayout scene_color_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+  bool post_resolved_this_frame_ = false;
   int ibl_lut_w_ = 0;
   int ibl_lut_h_ = 0;
   VkImage ibl_cube_image_ = VK_NULL_HANDLE;

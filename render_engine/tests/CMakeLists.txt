@@ -66,6 +66,11 @@ add_test(NAME gpu_headless.sandbox
   COMMAND sample_sandbox --gpu-headless --headless_frames=4 --backend=d3d12)
 set_tests_properties(gpu_headless.sandbox PROPERTIES LABELS "gpu_headless;headless")
 
+# Windowed swapchain path (auto-close): covers post-then-DrawLitInstanced scale path skipped by gpu-headless.
+add_test(NAME windowed.sandbox_scale_path
+  COMMAND sample_sandbox --backend=d3d12 --headless_frames=90)
+set_tests_properties(windowed.sandbox_scale_path PROPERTIES LABELS "gpu;windowed")
+
 if(ENGINE_GOLDEN_TESTS)
   find_package(Python3 COMPONENTS Interpreter)
   if(Python3_Interpreter_FOUND)

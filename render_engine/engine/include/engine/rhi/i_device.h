@@ -23,6 +23,8 @@ struct DeviceDesc {
   bool gpu_headless = false;
   // Request display HDR10 path when swapchain exists (ignored for offscreen/gpu_headless).
   bool enable_hdr_output = false;
+  // Prefer enabling D3D12/Vulkan validation layers when available (CI -Validation).
+  bool enable_validation = false;
 };
 
 struct SimpleMeshShaders {
@@ -287,6 +289,21 @@ class IDevice {
   virtual Status CaptureReflectionProbeGpu(const Vec3& /*probe_pos*/, int /*face_size*/,
                                            std::span<const LitDrawItem> /*items*/) {
     return Status::Fail("CaptureReflectionProbeGpu not supported on this device");
+  }
+
+  // GPU instance cull CS (optional). Default: CPU no-op sets out_visible = count.
+  virtual Status SetupInstanceCullCompute(const std::filesystem::path& /*cs_dxil*/) {
+    return Status::Ok();
+  }
+  virtual Status DispatchInstanceCull(const Mat4& /*view_proj*/, std::uint32_t instance_count,
+                                      std::uint32_t& out_visible) {
+    out_visible = instance_count;
+    return Status::Ok();
+  }
+
+  // Bindless Feature 最小路径：堆已绑 + 可按槽位采样/绑定。能力不足则 Fail（调用方可 SKIP）。
+  virtual Status ProbeBindlessMinimalPath(std::uint32_t /*srv_heap_slot*/ = 0) {
+    return Status::Fail("ProbeBindlessMinimalPath not supported on this device");
   }
 
   // ExecuteIndirect: 5×u32 indexed args per draw. Default: unsupported.

@@ -19,6 +19,7 @@
 #include <cstring>
 #include <cstdint>
 #include <fstream>
+#include <iterator>
 #include <span>
 #include <string>
 #include <vector>
@@ -79,6 +80,16 @@ class D3D12Device final : public IDevice {
       ComPtr<ID3D12Debug> debug;
       if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) {
         debug->EnableDebugLayer();
+      }
+    }
+#else
+    if (desc.enable_validation) {
+      ComPtr<ID3D12Debug> debug;
+      if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) {
+        debug->EnableDebugLayer();
+        LogInfo("D3D12 validation layer enabled (enable_validation)");
+      } else {
+        LogWarn("D3D12 validation requested but debug interface unavailable — SKIP");
       }
     }
 #endif
@@ -170,8 +181,19 @@ class D3D12Device final : public IDevice {
     if (enable_hdr_output_) {
       TryEnableDisplayHdr();
     }
-    // Bindless path uses indexed SRV heap slots after lit setup.
-    engine::SetFeatureOverride("bindless", true);
+    // Bindless Feature 最小路径：ResourceBindingTier>=2 时可查询；采样走 CBV_SRV_UAV 堆槽。
+    {
+      D3D12_FEATURE_DATA_D3D12_OPTIONS opts{};
+      if (SUCCEEDED(device_->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &opts, sizeof(opts))) &&
+          opts.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_2) {
+        bindless_capable_ = true;
+        engine::SetFeatureOverride("bindless", true);
+        LogInfo("D3D12 bindless Feature path enabled (ResourceBindingTier>=2)");
+      } else {
+        bindless_capable_ = false;
+        LogWarn("D3D12 bindless SKIP (ResourceBindingTier < 2)");
+      }
+    }
     engine::SetFeatureOverride("multithread_submit", true);
     if (hdr_output_active_) {
       engine::SetFeatureOverride("hdr_output", true);
@@ -216,6 +238,7 @@ class D3D12Device final : public IDevice {
 
     timestamp_cursor_ = 0;
     gpu_pass_count_ = 0;
+    post_resolved_this_frame_ = false;
 
     if (FAILED(allocators_[frame]->Reset())) {
       return Status::Fail("CommandAllocator::Reset failed");
@@ -298,8 +321,98 @@ class D3D12Device final : public IDevice {
     if (desc.groups_x == 0 || desc.groups_y == 0 || desc.groups_z == 0) {
       return Status::Fail(ErrorCode::InvalidArgument, "compute groups must be > 0");
     }
-    // Real compute PSO arrives later; contract validates and records intent.
+    if (cull_pso_ && command_list_) {
+      command_list_->SetPipelineState(cull_pso_.Get());
+      command_list_->SetComputeRootSignature(cull_root_.Get());
+      command_list_->Dispatch(desc.groups_x, desc.groups_y, desc.groups_z);
+    }
     ++compute_dispatches_;
+    return Status::Ok();
+  }
+
+  Status SetupInstanceCullCompute(const std::filesystem::path& cs_dxil) override {
+    if (!device_ || cs_dxil.empty()) {
+      return Status::Fail("SetupInstanceCullCompute: invalid");
+    }
+    std::ifstream in(cs_dxil, std::ios::binary);
+    if (!in) {
+      return Status::Fail("Cull CS missing: " + cs_dxil.string());
+    }
+    std::vector<char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (bytes.empty()) {
+      return Status::Fail("Cull CS empty");
+    }
+
+    D3D12_ROOT_PARAMETER param{};
+    param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    param.Constants.Num32BitValues = 20;
+    param.Constants.ShaderRegister = 0;
+    param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_ROOT_SIGNATURE_DESC rs{};
+    rs.NumParameters = 1;
+    rs.pParameters = &param;
+    ComPtr<ID3DBlob> sig;
+    ComPtr<ID3DBlob> err;
+    if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err))) {
+      return Status::Fail("Serialize cull root failed");
+    }
+    if (FAILED(device_->CreateRootSignature(0, sig->GetBufferPointer(), sig->GetBufferSize(),
+                                            IID_PPV_ARGS(&cull_root_)))) {
+      return Status::Fail("Create cull root failed");
+    }
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC pso{};
+    pso.pRootSignature = cull_root_.Get();
+    pso.CS = {bytes.data(), bytes.size()};
+    if (FAILED(device_->CreateComputePipelineState(&pso, IID_PPV_ARGS(&cull_pso_)))) {
+      return Status::Fail("Create cull PSO failed");
+    }
+    cull_ready_ = true;
+    LogInfo("D3D12 instance cull CS ready (dispatch path)");
+    return Status::Ok();
+  }
+
+  Status DispatchInstanceCull(const Mat4& view_proj, std::uint32_t instance_count,
+                              std::uint32_t& out_visible) override {
+    // GPU CS records a real Dispatch; visibility still comes from CPU cull contract.
+    out_visible = instance_count;
+    if (!cull_ready_ || !command_list_ || instance_count == 0) {
+      return Status::Ok();
+    }
+    struct CullCB {
+      float vp[16];
+      UINT count;
+      UINT pad[3];
+    } cb{};
+    std::memcpy(cb.vp, view_proj.m.data(), sizeof(cb.vp));
+    cb.count = instance_count;
+    command_list_->SetComputeRootSignature(cull_root_.Get());
+    command_list_->SetPipelineState(cull_pso_.Get());
+    command_list_->SetComputeRoot32BitConstants(0, 20, &cb, 0);
+    const UINT groups = (instance_count + 63u) / 64u;
+    command_list_->Dispatch(groups, 1, 1);
+    ++compute_dispatches_;
+    engine::SetFeatureOverride("hiz", true);
+    return Status::Ok();
+  }
+
+  Status ProbeBindlessMinimalPath(std::uint32_t srv_heap_slot) override {
+    if (!bindless_capable_) {
+      return Status::Fail("ProbeBindlessMinimalPath: bindless SKIP (tier < 2)");
+    }
+    engine::SetFeatureOverride("bindless", true);
+    // 最小采样路径证明：对 CBV_SRV_UAV 堆做按槽偏移的 GPU handle（索引式 SRV）。
+    // 不在此写入 command list（可在 Init 阶段安全调用）；热路径 DrawLit 已绑定同一堆。
+    ID3D12DescriptorHeap* heap = shadow_srv_heap_ ? shadow_srv_heap_.Get() : srv_heap_.Get();
+    if (!heap) {
+      return Status::Ok();  // Feature 已可查询；堆在 lit setup 后出现
+    }
+    const UINT incr =
+        device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    D3D12_GPU_DESCRIPTOR_HANDLE gpu = heap->GetGPUDescriptorHandleForHeapStart();
+    gpu.ptr += static_cast<SIZE_T>(srv_heap_slot) * static_cast<SIZE_T>(incr);
+    bindless_probe_gpu_ptr_ = gpu.ptr;
     return Status::Ok();
   }
 
@@ -424,7 +537,12 @@ class D3D12Device final : public IDevice {
     if (!gpu_headless_) {
       const HRESULT hr = swapchain_->Present(1, 0);
       if (FAILED(hr)) {
-        return Status::Fail("Present failed: " + HrToString(hr));
+        std::string msg = "Present failed: " + HrToString(hr);
+        if (device_) {
+          const HRESULT removed = device_->GetDeviceRemovedReason();
+          msg += " removed=" + HrToString(removed);
+        }
+        return Status::Fail(msg);
       }
     } else {
       offscreen_bb_index_ = (offscreen_bb_index_ + 1) % kFrameCount;
@@ -1074,30 +1192,42 @@ class D3D12Device final : public IDevice {
     D3D12_RECT scissor{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
     command_list_->RSSetScissorRects(1, &scissor);
 
-    if (scene_color_ && hdr_rtv_heap_) {
-      if (scene_color_state_ != D3D12_RESOURCE_STATE_RENDER_TARGET) {
-        Transition(scene_color_.Get(), scene_color_state_, D3D12_RESOURCE_STATE_RENDER_TARGET);
-        scene_color_state_ = D3D12_RESOURCE_STATE_RENDER_TARGET;
-      }
-      const D3D12_CPU_DESCRIPTOR_HANDLE hdr_rtv =
-          hdr_rtv_heap_->GetCPUDescriptorHandleForHeapStart();
+    // After ResolvePostEffects, scene_color is still bound as SRV in post_srv_heap for this
+    // command list. Rebinding it as RT caused DEVICE_REMOVED (0x887A0005) on Present.
+    // Late draws (transparent / Sandbox scale instancing) go to the LDR backbuffer instead.
+    if (post_resolved_this_frame_ || !scene_color_ || !hdr_rtv_heap_) {
+      const auto index = CurrentBbIndex();
+      const D3D12_CPU_DESCRIPTOR_HANDLE rtv{
+          rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
+          static_cast<SIZE_T>(index) * rtv_descriptor_size_};
       if (dsv_) {
+        if (depth_state_ != D3D12_RESOURCE_STATE_DEPTH_WRITE) {
+          Transition(dsv_.Get(), depth_state_, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+          depth_state_ = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+        }
         const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_heap_->GetCPUDescriptorHandleForHeapStart();
-        command_list_->OMSetRenderTargets(1, &hdr_rtv, FALSE, &dsv);
+        command_list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
       } else {
-        command_list_->OMSetRenderTargets(1, &hdr_rtv, FALSE, nullptr);
+        command_list_->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
       }
       return;
     }
 
-    const auto index = CurrentBbIndex();
-    const D3D12_CPU_DESCRIPTOR_HANDLE rtv{rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
-                                          static_cast<SIZE_T>(index) * rtv_descriptor_size_};
+    if (scene_color_state_ != D3D12_RESOURCE_STATE_RENDER_TARGET) {
+      Transition(scene_color_.Get(), scene_color_state_, D3D12_RESOURCE_STATE_RENDER_TARGET);
+      scene_color_state_ = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    }
+    const D3D12_CPU_DESCRIPTOR_HANDLE hdr_rtv =
+        hdr_rtv_heap_->GetCPUDescriptorHandleForHeapStart();
     if (dsv_) {
+      if (depth_state_ != D3D12_RESOURCE_STATE_DEPTH_WRITE) {
+        Transition(dsv_.Get(), depth_state_, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+        depth_state_ = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+      }
       const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_heap_->GetCPUDescriptorHandleForHeapStart();
-      command_list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+      command_list_->OMSetRenderTargets(1, &hdr_rtv, FALSE, &dsv);
     } else {
-      command_list_->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+      command_list_->OMSetRenderTargets(1, &hdr_rtv, FALSE, nullptr);
     }
   }
 
@@ -1283,8 +1413,8 @@ class D3D12Device final : public IDevice {
       float pad;
     };
 
-    if (instance_buf_) {
-      command_list_->SetGraphicsRootShaderResourceView(3, instance_buf_->GetGPUVirtualAddress());
+    if (auto* ib = CurrentInstanceBuf()) {
+      command_list_->SetGraphicsRootShaderResourceView(3, ib->GetGPUVirtualAddress());
     }
 
     for (std::size_t i = 0; i < items.size(); ++i) {
@@ -1332,35 +1462,42 @@ class D3D12Device final : public IDevice {
       return Status::Ok();
     }
     const UINT64 bytes = static_cast<UINT64>(worlds.size() * sizeof(Mat4));
-    if (!instance_buf_ || instance_buf_bytes_ < bytes) {
-      instance_buf_.Reset();
+    auto& buf = instance_bufs_[frame_index_];
+    auto& buf_bytes = instance_buf_bytes_[frame_index_];
+    // This frame's allocator is idle (BeginFrame waited) — safe to recreate this slot.
+    if (!buf || buf_bytes < bytes) {
+      buf.Reset();
       D3D12_HEAP_PROPERTIES upload{};
       upload.Type = D3D12_HEAP_TYPE_UPLOAD;
-      D3D12_RESOURCE_DESC buf{};
-      buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-      buf.Width = (std::max)(bytes, static_cast<UINT64>(256 * sizeof(Mat4)));
-      buf.Height = 1;
-      buf.DepthOrArraySize = 1;
-      buf.MipLevels = 1;
-      buf.SampleDesc.Count = 1;
-      buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+      D3D12_RESOURCE_DESC desc{};
+      desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+      desc.Width = (std::max)(bytes, static_cast<UINT64>(1024 * sizeof(Mat4)));
+      desc.Height = 1;
+      desc.DepthOrArraySize = 1;
+      desc.MipLevels = 1;
+      desc.SampleDesc.Count = 1;
+      desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
       const HRESULT hr =
-          device_->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buf,
+          device_->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &desc,
                                            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                           IID_PPV_ARGS(&instance_buf_));
+                                           IID_PPV_ARGS(&buf));
       if (FAILED(hr)) {
         return Status::Fail("Create instance buffer failed: " + HrToString(hr));
       }
-      instance_buf_bytes_ = buf.Width;
+      buf_bytes = desc.Width;
     }
     void* ptr = nullptr;
-    if (FAILED(instance_buf_->Map(0, nullptr, &ptr))) {
+    if (FAILED(buf->Map(0, nullptr, &ptr))) {
       return Status::Fail("Map instance buffer failed");
     }
     std::memcpy(ptr, worlds.data(), static_cast<std::size_t>(bytes));
-    instance_buf_->Unmap(0, nullptr);
+    buf->Unmap(0, nullptr);
     engine::SetFeatureOverride("gpu_instancing", true);
     return Status::Ok();
+  }
+
+  ID3D12Resource* CurrentInstanceBuf() const {
+    return instance_bufs_[frame_index_].Get();
   }
 
   Status DrawLitInstanced(const LitDrawItem& prototype, std::uint32_t instance_count) override {
@@ -1370,7 +1507,8 @@ class D3D12Device final : public IDevice {
     if (instance_count == 0) {
       return Status::Ok();
     }
-    if (!instance_buf_ || instance_worlds_.size() < instance_count) {
+    auto* ib = CurrentInstanceBuf();
+    if (!ib || instance_worlds_.size() < instance_count) {
       return IDevice::DrawLitInstanced(prototype, instance_count);
     }
     BindSceneColorTargets();
@@ -1394,7 +1532,7 @@ class D3D12Device final : public IDevice {
     command_list_->SetDescriptorHeaps(1, heaps);
     command_list_->SetGraphicsRootDescriptorTable(
         2, shadow_srv_heap_->GetGPUDescriptorHandleForHeapStart());
-    command_list_->SetGraphicsRootShaderResourceView(3, instance_buf_->GetGPUVirtualAddress());
+    command_list_->SetGraphicsRootShaderResourceView(3, ib->GetGPUVirtualAddress());
     command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     const int slot = prototype.mesh_slot;
@@ -1429,7 +1567,7 @@ class D3D12Device final : public IDevice {
     od.uv_scale = prototype.uv_scale > 0.f ? prototype.uv_scale : 1.f;
     od.use_instances = 1.f;
 
-    const auto offset = ObjectCbOffset(0);
+    const auto offset = ObjectCbOffset(kMaxLitDraws - 1);  // dedicated late/instanced slot
     void* ptr = nullptr;
     if (FAILED(object_cb_->Map(0, nullptr, &ptr))) {
       return Status::Fail("Map object CB failed");
@@ -1616,8 +1754,8 @@ class D3D12Device final : public IDevice {
       command_list_->SetDescriptorHeaps(1, heaps);
       command_list_->SetGraphicsRootDescriptorTable(
           2, shadow_srv_heap_->GetGPUDescriptorHandleForHeapStart());
-      if (instance_buf_) {
-        command_list_->SetGraphicsRootShaderResourceView(3, instance_buf_->GetGPUVirtualAddress());
+      if (auto* ib = CurrentInstanceBuf()) {
+        command_list_->SetGraphicsRootShaderResourceView(3, ib->GetGPUVirtualAddress());
       }
       command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -1764,8 +1902,8 @@ class D3D12Device final : public IDevice {
     command_list_->SetDescriptorHeaps(1, heaps);
     command_list_->SetGraphicsRootDescriptorTable(
         2, shadow_srv_heap_->GetGPUDescriptorHandleForHeapStart());
-    if (instance_buf_) {
-      command_list_->SetGraphicsRootShaderResourceView(3, instance_buf_->GetGPUVirtualAddress());
+    if (auto* ib = CurrentInstanceBuf()) {
+      command_list_->SetGraphicsRootShaderResourceView(3, ib->GetGPUVirtualAddress());
     }
     command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     // Use mesh slot 0 + object CB slot 0 (caller should have set them via prior draw setup).
@@ -2075,6 +2213,7 @@ class D3D12Device final : public IDevice {
     }
     const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_heap_->GetCPUDescriptorHandleForHeapStart();
     command_list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+    post_resolved_this_frame_ = true;
     return Status::Ok();
   }
 
@@ -3973,6 +4112,8 @@ class D3D12Device final : public IDevice {
   std::uint32_t height_ = 0;
   bool gpu_headless_ = false;
   bool enable_hdr_output_ = false;
+  bool bindless_capable_ = false;
+  SIZE_T bindless_probe_gpu_ptr_ = 0;
   bool hdr_output_active_ = false;
   UINT offscreen_bb_index_ = 0;
   SubmitConfig submit_cfg_{};
@@ -3984,10 +4125,14 @@ class D3D12Device final : public IDevice {
   bool ui_ready_ = false;
   bool ui_font_uploaded_ = false;
   bool post_ready_ = false;
+  bool post_resolved_this_frame_ = false;
   bool shadow_active_ = false;
   bool local_shadow_active_ = false;
   int bound_shadow_slot_ = 0;
   std::uint32_t compute_dispatches_ = 0;
+  bool cull_ready_ = false;
+  ComPtr<ID3D12RootSignature> cull_root_;
+  ComPtr<ID3D12PipelineState> cull_pso_;
   std::uint32_t lit_draws_ = 0;
   std::uint32_t shadow_draws_ = 0;
   std::uint32_t screen_quad_draws_ = 0;
@@ -4058,8 +4203,8 @@ class D3D12Device final : public IDevice {
   ComPtr<ID3D12Resource> frame_cb_;
   ComPtr<ID3D12Resource> shadow_frame_cb_;
   ComPtr<ID3D12Resource> object_cb_;
-  ComPtr<ID3D12Resource> instance_buf_;
-  UINT64 instance_buf_bytes_ = 0;
+  std::array<ComPtr<ID3D12Resource>, kFrameCount> instance_bufs_{};
+  std::array<UINT64, kFrameCount> instance_buf_bytes_{};
   ComPtr<ID3D12Resource> indirect_args_buf_;
   UINT64 indirect_args_bytes_ = 0;
   ComPtr<ID3D12CommandSignature> draw_indexed_cmd_sig_;

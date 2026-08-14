@@ -1,5 +1,5 @@
 // Vulkan post subset: fullscreen exposure multiply (+ mild tonemap curve on scale).
-// Drawn with dst*src blend over the lit swapchain color (no intermediate RT).
+// Drawn with dst*src blend over lit swapchain; device then blits into scene_color RT.
 
 struct VSOut {
   float4 pos : SV_Position;

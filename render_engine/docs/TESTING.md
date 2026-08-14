@@ -270,7 +270,8 @@ scripts\ci_headless.ps1 -Golden
 - `CreateHeadlessDevice`：无 HWND，支持 Clear / DispatchCompute / ReadbackTextureStub / Present  
 - `ApplicationDesc.headless` / `gpu_headless` + `headless_frames`  
 - 标签：`headless.engine_unit_tests`、`gpu_headless.sandbox`（`--backend=d3d12`）  
-- Vulkan `gpu_headless` 仍走 CPU stub（见 [VULKAN_PARITY.md](VULKAN_PARITY.md)）
+- **窗口路径冒烟**：`sample_sandbox --backend=d3d12 --headless_frames=12`（**无** `--gpu-headless`）覆盖 post 后的 scale 实例化；`ci_headless.ps1` 与 `windowed.sandbox_scale_path` 已接  
+- Vulkan `gpu_headless`：隐藏 HWND + 真 Readback（见 [VULKAN_PARITY.md](VULKAN_PARITY.md)）
 
 
 
@@ -302,7 +303,8 @@ scripts\ci_headless.ps1 -Golden
 |---|---|---|---|
 | 纯逻辑 | 单测：epsilon / 元素相等 | `engine_unit_tests`；`ctest -L headless` | **已落地** |
 | CPU headless 集成 | 无窗口泵帧、物理射线、序列化 | 同二进制 `[headless]` | **已落地**（尚未拆 `tests/integration/`） |
-| 帧级冒烟 | `--gpu-headless` 固定 N 帧；读回拒绝全黑/全白 | `sample_sandbox --gpu-headless --backend=d3d12`；`scripts/ci_headless.ps1` | **D3D12 已落地**；VK 读回仍 stub |
+| 帧级冒烟 | `--gpu-headless` 固定 N 帧；读回拒绝全黑/全白 | `sample_sandbox --gpu-headless --backend=d3d12`；`scripts/ci_headless.ps1` | **D3D12 已落地**；VK 真读回已接 |
+| 窗口 scale 冒烟 | 有 HWND、跑 post 后 `DrawLitInstanced`（gpu-headless 会跳过） | `--backend=d3d12 --headless_frames=12`；`windowed.sandbox_scale_path` | **已落地**（防 DEVICE_REMOVED 回归） |
 | 像素级黄金图 | 离屏 Readback → `.rgba`；RMSE + 最大通道差 | `python tests/scripts/run_golden.py`；`-Golden` | **落地**（≥1 条 Sandbox 基线；无基线 SKIP） |
 | 特性矩阵抽样 | 固定 `dt`；切质量档/TAA/阴影后再 capture | `run_matrix_smoke.py` + Harness | **落地**（d3d12 质量×toggle；VK 抽样） |
 | Harness | **保留冻结**：矩阵抽样接口；不再加命令 | `--harness-stdio`；`run_matrix_smoke.py` | **落地** |
@@ -341,7 +343,8 @@ Harness：**CI 直连** `--harness-stdio` 或 `run_golden.py` / `run_matrix_smok
 | **DXC 编译日志** | 变体/宏导致的 PSO 失败 | 粉红材质、Keyword 缺失 |
 | **引擎内 Debug 视图 / DebugDraw / Profiler** | Albedo/Normal/Cascade/Overdraw；AABB/光锥；CPU/GPU Pass 时间 | 人工走查与调优第一轮；**先于**外部抓帧 |
 
-工具测的产出是诊断，不是 CI 绿。把抓帧结论写进 PR / 章节「建议看什么」，不要把 PIX 截图当黄金图。
+工具测的产出是诊断，不是 CI 绿。把抓帧结论写进 PR / 章节「建议看什么」，不要把 PIX 截图当黄金图。  
+**RenderDoc / PIX 不进 CI 门禁**（[PLAN.md](PLAN.md) §3.1）；GPU 状态类自动化优先 Validation。
 
 ### 8.5 能覆盖多少（水位，非行覆盖率）
 

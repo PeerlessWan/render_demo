@@ -375,8 +375,31 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
         if (auto st = device.DrawLitCubes(opaque); !st) {
           LogError(st.message());
         }
+        if (pending_instanced_ && pending_instanced_count_ > 0) {
+          if (auto st =
+                  device.DrawLitInstanced(pending_instanced_proto_, pending_instanced_count_);
+              !st) {
+            LogError(st.message());
+          }
+          pending_instanced_ = false;
+          pending_instanced_count_ = 0;
+        }
         device.GpuPassEnd();
       });
+  if (!transparent.empty()) {
+    graph_.AddPass("Transparent", {"Color", "Depth"}, {"Color"}, [&] {
+      device.GpuPassBegin("Transparent");
+      if (auto st = device.SetFrameLighting(lighting); !st) {
+        LogError(st.message());
+        device.GpuPassEnd();
+        return;
+      }
+      if (auto st = device.DrawTransparentLitCubes(transparent); !st) {
+        LogError(st.message());
+      }
+      device.GpuPassEnd();
+    });
+  }
   const bool want_tonemap = true;  // HDR scene color always tonemaps to LDR swapchain
   const bool want_auto_exp = effect_.enable_auto_exposure && post_.enabled("AutoExposure");
   const bool want_bloom = effect_.enable_bloom && post_.enabled("Bloom");
@@ -419,20 +442,6 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       post.jitter_x = lighting.jitter_x;
       post.jitter_y = lighting.jitter_y;
       if (auto st = device.ResolvePostEffects(post); !st) {
-        LogError(st.message());
-      }
-      device.GpuPassEnd();
-    });
-  }
-  if (!transparent.empty()) {
-    graph_.AddPass("Transparent", {"Color", "Depth"}, {"Color"}, [&] {
-      device.GpuPassBegin("Transparent");
-      if (auto st = device.SetFrameLighting(lighting); !st) {
-        LogError(st.message());
-        device.GpuPassEnd();
-        return;
-      }
-      if (auto st = device.DrawTransparentLitCubes(transparent); !st) {
         LogError(st.message());
       }
       device.GpuPassEnd();

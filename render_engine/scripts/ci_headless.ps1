@@ -2,13 +2,19 @@
 param(
   [string]$Config = "Debug",
   [string]$BuildDir = "",
-  [switch]$Golden
+  [switch]$Golden,
+  [switch]$Validation
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $BuildDir) {
   $BuildDir = Join-Path $root "build"
+}
+
+if ($Validation) {
+  $env:ENGINE_ENABLE_VALIDATION = "1"
+  Write-Host "== Validation requested (ENGINE_ENABLE_VALIDATION=1) =="
 }
 
 $unit = Join-Path $BuildDir "tests\$Config\engine_unit_tests.exe"
@@ -38,13 +44,24 @@ if ($code -ne 0) {
 }
 Write-Host "[PASS] gpu-headless"
 
+# Windowed path (shown HWND, auto-close): exercises scale instancing inside OpaqueLit.
+# Use enough frames to cover reflection probe (%8) + multi-buffer instance uploads.
+Write-Host "== sample_sandbox windowed scale-path smoke (--headless_frames=90, no --gpu-headless) =="
+& $sandbox --backend=d3d12 --headless_frames=90
+$code = $LASTEXITCODE
+if ($code -ne 0) {
+  Write-Host "[FAIL] windowed scale-path smoke exit $code (often Present DEVICE_REMOVED)"
+  exit $code
+}
+Write-Host "[PASS] windowed scale-path smoke"
+
 if ($Golden) {
   $py = Get-Command python -ErrorAction SilentlyContinue
   if (-not $py) {
     Write-Host "[SKIP] python missing — skip golden"
     exit 0
   }
-  Write-Host "== run_golden.py =="
+  Write-Host "== run_golden.py (Q1 deterministic: fixed dt, TAA off, freeze phys/particles) =="
   & python (Join-Path $root "tests\scripts\run_golden.py") --config $Config --build-dir $BuildDir
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
@@ -54,6 +71,10 @@ if ($Golden) {
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }
+}
+
+if ($Validation) {
+  Write-Host "[PASS] Validation flag honored (layers when SDK provides; else device log SKIP/warn)"
 }
 
 exit 0

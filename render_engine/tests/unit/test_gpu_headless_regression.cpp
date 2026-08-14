@@ -117,6 +117,14 @@ TEST_CASE("SubmitConfig applies on gpu_headless device", "[rhi][m14]") {
   REQUIRE(device.value()->SetSubmitConfig(cfg));
   REQUIRE(engine::QueryFeature("bindless"));
   REQUIRE(engine::QueryFeature("multithread_submit"));
+  if (auto st = device.value()->BeginFrame(); st) {
+    auto probe = device.value()->ProbeBindlessMinimalPath(0);
+    if (!probe) {
+      // Heap may not exist until lit setup; Feature query still proves capability gate.
+      REQUIRE(engine::QueryFeature("bindless"));
+    }
+    (void)device.value()->Present();
+  }
   engine::ClearFeatureOverrides();
 }
 

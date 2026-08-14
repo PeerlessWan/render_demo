@@ -18,16 +18,16 @@
 
 | ID | 缺口 | 状态 | 里程碑 |
 |---|---|---|---|
-| G01 | 跨后端（VK） | **对标加深中**（Win lit/CSM；IBL/post 本档） | M17 |
+| G01 | 跨后端（VK） | **Win 对标加深**：真读回 + post `scene_color` RT；其余见矩阵 | M17 |
+| G18 | Mesh Shader / GPU Driven | **100%（无全 Bindless）**：HiZ + Cull CS Dispatch + IndirectArgs | M24 |
 | G19 | Linux | **文档占位 / 外置** | M18 |
 | G02–G04、G11 | 混合打磨 / 拣选 / 多 DPI | **可用加深** | M20 |
 | G05–G10、G12 | 2D 深度 | **可用加深** | M21 |
 | G14 | 动态 GI | **可用加深**（ProbeVolume） | M22 |
 | G15 | 地形/水体/植被（基础） | **可用加深** | M23 |
-| G18 | Mesh Shader / GPU Driven | **加深中**（Indirect 本档） | M24 |
 | G16 | 光追 API 对齐 | **完成（加深）** Feature 门控 | M25（内容管线仍非 UE 级） |
 | T01 | 最小工具链（shader/IBL/纹理/cook/黄金图） | 已排期 | M2–M9；见 [TOOLING.md](TOOLING.md) |
-| T03 | 自动化测试加深（准/广） | **策略已锁、实施未开始** | [PLAN.md](PLAN.md) **§3.1**；不扩 MCP/Harness 命令 |
+| T03 | 自动化测试加深（准/广） | **Q1/Q2/C1 已落地**（确定性截帧、VK 真读回、`-Validation`）；Q3+ 仍后置 | [PLAN.md](PLAN.md) **§3.1**；不扩 MCP/Harness 命令 |
 | T02 | 图集约定 + Tiled 导入 | 已排期 | M16 |
 | R01 | Cook 依赖图 / 异步回调 / Handle 寿命 / **数据依赖与生命周期** / 逻辑渲染分离 / GPU Profiling | 已排期 | M1–M14；见 [RUNTIME_FOUNDATIONS.md](RUNTIME_FOUNDATIONS.md) |
 

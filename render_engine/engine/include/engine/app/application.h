@@ -30,6 +30,7 @@ struct ApplicationDesc {
   // Real D3D12 without HWND (offscreen). Implies headless window + frame limit behavior.
   bool gpu_headless = false;
   int headless_frames = 0;  // >0: auto RequestClose after N frames (headless CI)
+  bool enable_validation = false;  // C1: prefer API validation layers
 };
 
 class Application {

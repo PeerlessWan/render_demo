@@ -14,8 +14,11 @@ Result<std::unique_ptr<IDevice>> CreateDevice(Backend backend, const DeviceDesc&
       }
       return CreateD3D12Device(desc);
     case Backend::Vulkan:
-      // Unit/CI: always headless device (no real VkInstance required).
-      if (desc.headless || desc.gpu_headless) {
+      // CPU stub: unit tests / --headless without GPU. gpu_headless wants real Vk + HWND.
+      if (desc.headless && !desc.gpu_headless) {
+        return CreateHeadlessDevice(desc);
+      }
+      if (desc.gpu_headless && desc.native_window == nullptr) {
         return CreateHeadlessDevice(desc);
       }
 #if defined(ENGINE_WITH_VULKAN) && ENGINE_WITH_VULKAN
