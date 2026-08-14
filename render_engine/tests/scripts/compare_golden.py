@@ -50,12 +50,45 @@ def max_abs(a: bytes, b: bytes) -> int:
     return m
 
 
+def apply_roi_mask(
+    rgba: bytes, w: int, h: int, ignore_rects: list[tuple[int, int, int, int]]
+) -> bytes:
+    """Zero out ignore rectangles (x0,y0,x1,y1) for Q5 HUD/sprite ROI."""
+    if not ignore_rects:
+        return rgba
+    buf = bytearray(rgba)
+    for x0, y0, x1, y1 in ignore_rects:
+        x0 = max(0, min(w, x0))
+        x1 = max(0, min(w, x1))
+        y0 = max(0, min(h, y0))
+        y1 = max(0, min(h, y1))
+        for y in range(y0, y1):
+            row = y * w * 4
+            for x in range(x0, x1):
+                i = row + x * 4
+                buf[i : i + 4] = b"\x00\x00\x00\x00"
+    return bytes(buf)
+
+
+def default_sandbox_ignore_rects(w: int, h: int) -> list[tuple[int, int, int, int]]:
+    """Ignore top-right Perf HUD + orange sprite region (Q5)."""
+    return [
+        (max(0, w - 280), 0, w, min(h, 160)),  # Perf / ImGui corner
+        (max(0, w - 96), 0, w, min(h, 96)),  # orange sprite
+    ]
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--baseline", required=True, type=Path)
     p.add_argument("--candidate", required=True, type=Path)
     p.add_argument("--rmse-max", type=float, default=8.0, help="max RMSE over bytes [0,255]")
     p.add_argument("--max-abs", type=int, default=48, help="max per-channel abs diff")
+    p.add_argument(
+        "--roi-ignore-hud",
+        action="store_true",
+        help="Q5: zero top-right Perf/sprite ROI before compare",
+    )
     args = p.parse_args()
 
     if not args.baseline.is_file():
@@ -70,6 +103,12 @@ def main() -> int:
     if (bw, bh) != (cw, ch):
         print(f"[FAIL] resolution {bw}x{bh} vs {cw}x{ch}")
         return 1
+
+    if args.roi_ignore_hud:
+        rects = default_sandbox_ignore_rects(bw, bh)
+        b = apply_roi_mask(b, bw, bh, rects)
+        c = apply_roi_mask(c, cw, ch, rects)
+        print(f"roi_ignore_hud rects={rects}")
 
     err = rmse(b, c)
     mx = max_abs(b, c)

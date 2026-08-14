@@ -97,9 +97,9 @@ VSOutput VSMain(VSInput input, uint iid : SV_InstanceID) {
   o.velocity = curr_ndc - prev_ndc;
   o.uv = input.uv;
   float vz = dot(o.world_pos - g_eye, normalize(g_cam_forward));
-  // Floors: clip anything closer than 0.35m in view space.
-  // Other meshes keep full geometry (negative clip distance never triggers).
-  o.clip_near = (abs(input.normal.y) > 0.85) ? (vz - 0.35) : 1.0;
+  // Floors: clip anything closer than 0.5m in view space (near-plane straddling
+  // otherwise becomes a floating screen-space white slab).
+  o.clip_near = (abs(input.normal.y) > 0.85) ? (vz - 0.5) : 1.0;
   return o;
 }
 
@@ -289,9 +289,9 @@ float4 PSMain(VSOutput input) : SV_Target {
   float spec = pow(saturate(dot(n, h)), max(1.0, g_specular_power * (1.0 - roughness))) *
                (1.0 - roughness) * lerp(0.04, 1.0, metallic) * ndotl;
   // Grazing views of large floors create a bright horizon band that reads as a
-  // floating white slab; fade specular when looking across the surface.
+  // floating white slab; fade specular hard when looking across the surface.
   float ndotv = saturate(dot(n, v));
-  spec *= ndotv * ndotv;
+  spec *= ndotv * ndotv * ndotv;
   float sh = ShadowFactor(input.world_pos);
 
   float ao = tex_ao;

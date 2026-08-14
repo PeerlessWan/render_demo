@@ -17,6 +17,7 @@ TARGETS = {
         "rmse_max": 8.0,
         "max_abs": 48,
         "frames": 3,
+        "roi_ignore_hud": True,
     },
     "sandbox_depth": {
         "kind": "sandbox",
@@ -28,6 +29,7 @@ TARGETS = {
         "frames": 3,
         # Also set color dump unused; depth dump is primary for this target.
         "also_color_dump": False,
+        "roi_ignore_hud": True,
     },
     "learn06": {
         "kind": "learn",
@@ -123,20 +125,21 @@ def run_one(root: Path, build_dir: Path, config: str, name: str, approve: bool) 
         return 0
 
     compare = Path(__file__).with_name("compare_golden.py")
-    return subprocess.call(
-        [
-            sys.executable,
-            str(compare),
-            "--baseline",
-            str(baseline),
-            "--candidate",
-            str(out),
-            "--rmse-max",
-            str(meta["rmse_max"]),
-            "--max-abs",
-            str(meta["max_abs"]),
-        ]
-    )
+    cmd = [
+        sys.executable,
+        str(compare),
+        "--baseline",
+        str(baseline),
+        "--candidate",
+        str(out),
+        "--rmse-max",
+        str(meta["rmse_max"]),
+        "--max-abs",
+        str(meta["max_abs"]),
+    ]
+    if meta.get("roi_ignore_hud"):
+        cmd.append("--roi-ignore-hud")
+    return subprocess.call(cmd)
 
 
 def main() -> int:

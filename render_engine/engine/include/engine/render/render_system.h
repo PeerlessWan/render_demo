@@ -42,7 +42,7 @@ struct RenderSystemDesc {
 struct EffectTuning {
   float sun_intensity = 4.2f;
   float ambient_scale = 1.35f;
-  float shadow_bias = 0.0015f;
+  float shadow_bias = 0.0025f;
   float specular_power = 64.f;
   float local_intensity_scale = 1.15f;
   float exposure = 1.2f;

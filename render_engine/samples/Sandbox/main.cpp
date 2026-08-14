@@ -225,7 +225,8 @@ int main(int argc, char** argv) {
   a.set_hide_cursor_on_look(false);
   a.camera().position = {0.f, 2.2f, 6.2f};
   a.camera().pitch = -0.22f;
-  a.camera().z_near = 0.2f;
+  // Slightly larger near plane + dense ground + SV_ClipDistance avoid floating slabs.
+  a.camera().z_near = 0.35f;
 
   auto ground = a.world().CreateNode("ground");
   {
@@ -294,6 +295,12 @@ int main(int argc, char** argv) {
     rdesc.shadow_vs = shader_dir / "shadow_vk.vs.spv";
     rdesc.post_vs = shader_dir / "post_tonemap_vk.vs.spv";
     rdesc.post_ps = shader_dir / "post_tonemap_vk.ps.spv";
+    rdesc.quad_vs = shader_dir / "quad_vk.vs.spv";
+    rdesc.quad_ps = shader_dir / "quad_vk.ps.spv";
+    rdesc.debug_vs = shader_dir / "debug_line_vk.vs.spv";
+    rdesc.debug_ps = shader_dir / "debug_line_vk.ps.spv";
+    rdesc.sky_vs = shader_dir / "skybox_vk.vs.spv";
+    rdesc.sky_ps = shader_dir / "skybox_vk.ps.spv";
     rdesc.enable_shadows = true;
     rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
     rdesc.quality.enable_ssao = false;
@@ -334,7 +341,7 @@ int main(int argc, char** argv) {
     }
   }
   // Dense ground plane (slot 4). Fine tris reduce near-plane straddling → no floating slab.
-  if (!use_vulkan) {
+  {
     constexpr int kSeg = 128;
     constexpr float kHalf = 12.f;
     std::vector<engine::rhi::LitVertex> gverts;
@@ -391,12 +398,8 @@ int main(int argc, char** argv) {
     if (auto alb = loader->LoadFile(brick_diff)) {
       if (auto st = a.device().UploadLitAlbedoRgba(alb->rgba.data(), alb->width, alb->height, 0);
           !st) {
-        if (use_vulkan) {
-          engine::LogInfo(std::string("Skip albedo upload on Vulkan: ") + st.message());
-        } else {
-          engine::LogError(st.message());
-          return 1;
-        }
+        engine::LogError(st.message());
+        return 1;
       } else {
         engine::LogInfo("Albedo slot0: Poly Haven red_brick_03");
         albedo_ok = true;
@@ -405,18 +408,14 @@ int main(int argc, char** argv) {
       if (auto st = a.device().UploadLitAlbedoRgba(alb_fallback->rgba.data(), alb_fallback->width,
                                                     alb_fallback->height, 0);
           !st) {
-        if (use_vulkan) {
-          engine::LogInfo(std::string("Skip albedo upload on Vulkan: ") + st.message());
-        } else {
-          engine::LogError(st.message());
-          return 1;
-        }
+        engine::LogError(st.message());
+        return 1;
       } else {
         engine::LogInfo("Albedo slot0: fallback albedo_brick.png");
         albedo_ok = true;
       }
     }
-    if (!albedo_ok && !use_vulkan) {
+    if (!albedo_ok) {
       engine::LogError("Failed to load any albedo texture");
       return 1;
     }
@@ -425,12 +424,8 @@ int main(int argc, char** argv) {
     if (auto arm = loader->LoadFile(brick_arm)) {
       auto orm = ArmToOrm(arm.value());
       if (auto st = a.device().UploadLitOrmRgba(orm.rgba.data(), orm.width, orm.height, 0); !st) {
-        if (use_vulkan) {
-          engine::LogInfo(std::string("Skip ORM upload on Vulkan: ") + st.message());
-        } else {
-          engine::LogError(st.message());
-          return 1;
-        }
+        engine::LogError(st.message());
+        return 1;
       } else {
         engine::LogInfo("ORM slot0: Poly Haven brick ARM");
         orm_ok = true;
@@ -439,18 +434,14 @@ int main(int argc, char** argv) {
       if (auto st = a.device().UploadLitOrmRgba(orm_fallback->rgba.data(), orm_fallback->width,
                                                 orm_fallback->height, 0);
           !st) {
-        if (use_vulkan) {
-          engine::LogInfo(std::string("Skip ORM upload on Vulkan: ") + st.message());
-        } else {
-          engine::LogError(st.message());
-          return 1;
-        }
+        engine::LogError(st.message());
+        return 1;
       } else {
         engine::LogInfo("ORM slot0: fallback orm_brick.png");
         orm_ok = true;
       }
     }
-    if (!orm_ok && !use_vulkan) {
+    if (!orm_ok) {
       engine::LogError("Failed to load any ORM texture");
       return 1;
     }
@@ -463,63 +454,45 @@ int main(int argc, char** argv) {
         verts[i] = {v.px, v.py, v.pz, v.nx, v.ny, v.nz, v.u, v.v};
       }
       if (auto st = a.device().UploadLitGeometry(1, verts, mesh->indices); !st) {
-        if (use_vulkan) {
-          engine::LogInfo(std::string("Skip helmet mesh on Vulkan: ") + st.message());
-        } else {
-          engine::LogError(st.message());
-          return 1;
-        }
+        engine::LogError(st.message());
+        return 1;
       } else {
         if (mesh->has_albedo) {
           if (auto st = a.device().UploadLitAlbedoRgba(mesh->albedo.rgba.data(), mesh->albedo.width,
                                                        mesh->albedo.height, 1);
               !st) {
-            if (use_vulkan) {
-              engine::LogInfo(std::string("Skip helmet albedo on Vulkan: ") + st.message());
-            } else {
-              engine::LogError(st.message());
-              return 1;
-            }
+            engine::LogError(st.message());
+            return 1;
           }
         }
         if (mesh->has_orm) {
           if (auto st = a.device().UploadLitOrmRgba(mesh->orm.rgba.data(), mesh->orm.width,
                                                    mesh->orm.height, 1);
               !st) {
-            if (use_vulkan) {
-              engine::LogInfo(std::string("Skip helmet ORM on Vulkan: ") + st.message());
-            } else {
-              engine::LogError(st.message());
-              return 1;
-            }
+            engine::LogError(st.message());
+            return 1;
           }
         }
         engine::LogInfo("DamagedHelmet.glb uploaded (mesh slot1 + tex slot1)");
       }
     } else {
-      if (use_vulkan) {
-        engine::LogInfo(std::string("Helmet load skipped: ") + mesh.status().message());
-      } else {
-        engine::LogError(std::string("Helmet load failed: ") + mesh.status().message());
-        return 1;
-      }
+      engine::LogError(std::string("Helmet load failed: ") + mesh.status().message());
+      return 1;
     }
   }
   {
     std::vector<engine::render::LocalLight> lights;
-    if (!use_vulkan) {
-      // Keep local lights small/warm. A wide cool light washed the floor cyan wherever
-      // sun/CSM dipped — looked like a floating blue slab that tracked camera motion.
-      engine::render::LocalLight lamp;
-      lamp.id = 1;
-      lamp.position = {1.8f, 2.8f, 1.0f};
-      lamp.range = 5.5f;
-      lamp.color = {1.f, 0.78f, 0.55f, 1.f};
-      lamp.intensity = 1.35f;
-      lamp.shadow_resolution = 512;
-      lamp.cast_shadows = true;
-      lights.push_back(lamp);
-    }
+    // Keep local lights small/warm. A wide cool light washed the floor cyan wherever
+    // sun/CSM dipped — looked like a floating blue slab that tracked camera motion.
+    engine::render::LocalLight lamp;
+    lamp.id = 1;
+    lamp.position = {1.8f, 2.8f, 1.0f};
+    lamp.range = 5.5f;
+    lamp.color = {1.f, 0.78f, 0.55f, 1.f};
+    lamp.intensity = 1.35f;
+    lamp.shadow_resolution = 512;
+    lamp.cast_shadows = true;
+    lights.push_back(lamp);
     render.set_local_lights(lights);
   }
 
@@ -560,17 +533,15 @@ int main(int argc, char** argv) {
       return 1;
     }
     engine::LogInfo("Dear ImGui not available; continuing without UI panel");
-  } else if (!use_vulkan) {
+  } else {
     engine::ui::ImmediateUiDesc ui_desc;
-    ui_desc.ui_vs = shader_dir / "ui_imgui.vs.cso";
-    ui_desc.ui_ps = shader_dir / "ui_imgui.ps.cso";
+    ui_desc.ui_vs = shader_dir / (use_vulkan ? "ui_imgui_vk.vs.spv" : "ui_imgui.vs.cso");
+    ui_desc.ui_ps = shader_dir / (use_vulkan ? "ui_imgui_vk.ps.spv" : "ui_imgui.ps.cso");
     if (auto st = imgui.Init(a.device(), ui_desc); !st) {
       engine::LogError(st.message());
       return 1;
     }
     imgui_ready = true;
-  } else {
-    engine::LogInfo("ImGui skipped on Vulkan (UI SPIR-V not wired yet)");
   }
 
   auto physics = engine::physics::CreateDefaultPhysicsWorld();
@@ -607,7 +578,7 @@ int main(int argc, char** argv) {
   }
   const auto terrain_mesh =
       engine::terrain::BuildTerrainMesh(heightmap, {-22.f, -0.35f, -22.f});
-  if (!use_vulkan && !terrain_mesh.indices.empty()) {
+  if (!terrain_mesh.indices.empty()) {
     std::vector<engine::rhi::LitVertex> tverts(terrain_mesh.positions.size() / 3);
     for (std::size_t i = 0; i < tverts.size(); ++i) {
       tverts[i] = {terrain_mesh.positions[i * 3 + 0], terrain_mesh.positions[i * 3 + 1],
@@ -680,7 +651,10 @@ int main(int argc, char** argv) {
   }
 
   engine::gi::ProbeVolume probes;
-  probes.Configure({-4.f, 0.5f, -4.f}, {2.f, 1.5f, 2.f}, 5, 3, 5);
+  // Densers grid + incremental update budget (W-gi-deepen). Overlay ambient only;
+  // does not replace IBL/Lightmap — F1 "Probe GI" toggles this additive tint.
+  probes.Configure({-6.f, 0.25f, -6.f}, {1.5f, 1.25f, 1.5f}, 9, 4, 9);
+  probes.set_budget_per_frame(48);
   bool enable_gi = false;
 
   engine::gi::ReflectionProbe reflection_probe;
@@ -1039,11 +1013,18 @@ int main(int argc, char** argv) {
     }
     render.set_effect_tuning(fx);
 
-    // M22: probe irradiance → ambient tint
+    // M22 / W-gi-deepen: probe irradiance → ambient tint (additive over base;
+    // IBL still applied in lit shader when enable_ibl). Does not replace sky/IBL.
     probes.set_enabled(enable_gi);
     if (enable_gi) {
+      engine::gi::ProbeLight pl;
+      pl.position = {1.8f, 2.8f, 1.0f};
+      pl.color = {1.f, 0.78f, 0.55f, 1.f};
+      pl.intensity = 1.35f;
+      pl.range = 5.5f;
+      probes.UpdateFromLights({&pl, 1});
       const auto irr = probes.Sample(app_ref.camera().position);
-      env.ambient = {0.12f + irr.r, 0.13f + irr.g, 0.15f + irr.b, 1.f};
+      env.ambient = {0.12f + irr.r * 0.35f, 0.13f + irr.g * 0.35f, 0.15f + irr.b * 0.35f, 1.f};
     } else {
       env.ambient = {0.20f, 0.21f, 0.24f, 1.f};
     }
@@ -1055,8 +1036,7 @@ int main(int argc, char** argv) {
     }
 
     // M14 morph upload only when weights change (avoid per-frame GPU buffer destroy).
-    if (!use_vulkan &&
-        (std::fabs(morph_w0 - morph_w0_uploaded) > 1e-4f ||
+    if ((std::fabs(morph_w0 - morph_w0_uploaded) > 1e-4f ||
          std::fabs(morph_w1 - morph_w1_uploaded) > 1e-4f)) {
       std::vector<engine::Vec3> morphed;
       engine::animation::ApplyMorphTargets(morph_bind, morph_targets, {morph_w0, morph_w1},
@@ -1182,7 +1162,7 @@ int main(int argc, char** argv) {
 
     profiler.Begin("DrawFrame");
     // Scale path BEFORE DrawFrame so instancing runs in OpaqueLit (pre-post).
-    if (!use_vulkan && !gpu_headless_assert) {
+    if (!gpu_headless_assert) {
       std::vector<engine::Mat4> visible;
       engine::gpu_driven::IndirectDrawArgs iargs{};
       const auto scale_vp = scene.camera.view_proj_matrix(aspect);
@@ -1197,6 +1177,7 @@ int main(int argc, char** argv) {
         proto.use_albedo = false;
         render.SetPendingLitInstanced(proto, kept);
         // Seed IndirectArgs (instance_count=0); Cull CS writes instance_count via UAV.
+        // Vulkan: CPU expand path still honors UploadInstanceTransforms + DrawLitInstanced.
         engine::gpu_driven::IndirectDrawArgs seed = iargs;
         seed.instance_count = 0;
         const auto packed = engine::gpu_driven::PackIndirectArgsU32(seed);
@@ -1242,8 +1223,7 @@ int main(int argc, char** argv) {
       }
       reflection_probe.ClearDirty();
     }
-    if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites, nullptr,
-                                   use_vulkan ? nullptr : &dbg);
+    if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites, nullptr, &dbg);
         !st) {
       engine::LogError(st.message());
     }

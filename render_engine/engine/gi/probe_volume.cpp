@@ -11,6 +11,7 @@ void ProbeVolume::Configure(const Vec3& origin, const Vec3& spacing, int nx, int
   nx_ = std::max(1, nx);
   ny_ = std::max(1, ny);
   nz_ = std::max(1, nz);
+  update_cursor_ = 0;
   probes_.clear();
   probes_.reserve(static_cast<std::size_t>(nx_ * ny_ * nz_));
   for (int z = 0; z < nz_; ++z) {
@@ -28,11 +29,19 @@ void ProbeVolume::Configure(const Vec3& origin, const Vec3& spacing, int nx, int
   }
 }
 
+void ProbeVolume::set_budget_per_frame(int n) {
+  budget_per_frame_ = std::max(1, n);
+}
+
 void ProbeVolume::UpdateFromLights(std::span<const ProbeLight> lights) {
   if (probes_.empty()) {
     return;
   }
-  for (auto& probe : probes_) {
+  const int total = static_cast<int>(probes_.size());
+  const int count = (std::min)(budget_per_frame_, total);
+  for (int k = 0; k < count; ++k) {
+    const int idx = (update_cursor_ + k) % total;
+    auto& probe = probes_[static_cast<std::size_t>(idx)];
     ColorRgba acc{0.05f, 0.05f, 0.06f, 1.f};
     for (const auto& light : lights) {
       const Vec3 d = probe.position - light.position;
@@ -46,25 +55,46 @@ void ProbeVolume::UpdateFromLights(std::span<const ProbeLight> lights) {
       acc.g += light.color.g * w;
       acc.b += light.color.b * w;
     }
-    probe.irradiance = acc;
+    // Temporal blend so partial updates don't flicker.
+    probe.irradiance.r = probe.irradiance.r * 0.35f + acc.r * 0.65f;
+    probe.irradiance.g = probe.irradiance.g * 0.35f + acc.g * 0.65f;
+    probe.irradiance.b = probe.irradiance.b * 0.35f + acc.b * 0.65f;
   }
+  update_cursor_ = (update_cursor_ + count) % total;
 }
 
 ColorRgba ProbeVolume::Sample(const Vec3& world_pos) const {
   if (!enabled_ || probes_.empty()) {
     return {0, 0, 0, 1};
   }
-  std::size_t best = 0;
-  float best_d = 1e30f;
-  for (std::size_t i = 0; i < probes_.size(); ++i) {
-    const Vec3 d = probes_[i].position - world_pos;
-    const float d2 = Dot(d, d);
-    if (d2 < best_d) {
-      best_d = d2;
-      best = i;
-    }
-  }
-  return probes_[best].irradiance;
+  // Trilinear blend of the 8 surrounding grid cells (clamped).
+  const float fx = (world_pos.x - origin_.x) / std::max(spacing_.x, 1e-4f);
+  const float fy = (world_pos.y - origin_.y) / std::max(spacing_.y, 1e-4f);
+  const float fz = (world_pos.z - origin_.z) / std::max(spacing_.z, 1e-4f);
+  const int x0 = (std::max)(0, (std::min)(nx_ - 1, static_cast<int>(std::floor(fx))));
+  const int y0 = (std::max)(0, (std::min)(ny_ - 1, static_cast<int>(std::floor(fy))));
+  const int z0 = (std::max)(0, (std::min)(nz_ - 1, static_cast<int>(std::floor(fz))));
+  const int x1 = (std::min)(nx_ - 1, x0 + 1);
+  const int y1 = (std::min)(ny_ - 1, y0 + 1);
+  const int z1 = (std::min)(nz_ - 1, z0 + 1);
+  const float tx = (std::max)(0.f, (std::min)(1.f, fx - static_cast<float>(x0)));
+  const float ty = (std::max)(0.f, (std::min)(1.f, fy - static_cast<float>(y0)));
+  const float tz = (std::max)(0.f, (std::min)(1.f, fz - static_cast<float>(z0)));
+
+  auto at = [&](int x, int y, int z) -> const ColorRgba& {
+    const int i = x + nx_ * (y + ny_ * z);
+    return probes_[static_cast<std::size_t>(i)].irradiance;
+  };
+  auto lerp4 = [](const ColorRgba& a, const ColorRgba& b, float t) {
+    return ColorRgba{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1.f};
+  };
+  const ColorRgba c00 = lerp4(at(x0, y0, z0), at(x1, y0, z0), tx);
+  const ColorRgba c10 = lerp4(at(x0, y1, z0), at(x1, y1, z0), tx);
+  const ColorRgba c01 = lerp4(at(x0, y0, z1), at(x1, y0, z1), tx);
+  const ColorRgba c11 = lerp4(at(x0, y1, z1), at(x1, y1, z1), tx);
+  const ColorRgba c0 = lerp4(c00, c10, ty);
+  const ColorRgba c1 = lerp4(c01, c11, ty);
+  return lerp4(c0, c1, tz);
 }
 
 }  // namespace engine::gi

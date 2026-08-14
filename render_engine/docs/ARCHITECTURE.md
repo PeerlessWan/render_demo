@@ -202,7 +202,7 @@ Application::Run()
 
 - `IModule`：可选依赖声明，按依赖序初始化/更新/销毁。  
 - 产品入口：`ENGINE_MAIN(MyApp)` 或显式 `Application` 子类。  
-- **编辑器循环**为变体（先 EditorUI / 编辑相机；Play 时再挂 game_kit），见 [editor/docs/ARCHITECTURE.md](../../editor/docs/ARCHITECTURE.md)。  
+- **编辑器循环**为变体（先 EditorUI / 编辑相机；Play 时再挂 game_kit）。循环细节**不在本文**；见工作区独立 `editor/` 工程。  
 
 ### 4.2 外设接入层（Input）
 
@@ -288,6 +288,7 @@ Visibility.Cull(camera) → RenderScene
 
 - 方向光 **CSM** 为光栅阴影主路径。
 - **反射探针**（盒/球）提供局部反射。
+- **ProbeVolume（W-gi-deepen）**：CPU 密网格 irradiance；帧预算增量更新 + 三线性采样；Sandbox F1「Probe GI」叠加 ambient（**不替代** IBL / Lightmap / Sky）。
 - **Lightmap / 简化烘焙 GI**：tools 烘焙 + 运行时采样。
 - 光追开启时可用 RT 阴影/反射等示范路径，失败则降级。
 

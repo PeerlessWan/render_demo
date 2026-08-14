@@ -1084,6 +1084,9 @@ class D3D12Device final : public IDevice {
     shadow_pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
     shadow_pso.RasterizerState.FrontCounterClockwise = TRUE;
     shadow_pso.RasterizerState.DepthClipEnable = TRUE;
+    shadow_pso.RasterizerState.DepthBias = 1500;
+    shadow_pso.RasterizerState.SlopeScaledDepthBias = 2.0f;
+    shadow_pso.RasterizerState.DepthBiasClamp = 0.f;
     shadow_pso.DepthStencilState.DepthEnable = TRUE;
     shadow_pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
     shadow_pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;

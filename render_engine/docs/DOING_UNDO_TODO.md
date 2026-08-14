@@ -2,17 +2,21 @@
 
 > 与 [PLAN.md](PLAN.md) 里程碑进度表互补：本文件跟踪**当前迭代**的进行中项、待办队列与回退方式。
 
-## 主线水位（截至板梳理）
+## 主线水位（截至 W-vk-parity 大波）
 
 | 层 | 状态 |
 |---|---|
 | **W-auto-1** | **已收口**（`061e478`） |
-| **W-auto-2** | **已收口**（`7603a4d`）：C6；C4 薄对标；OpenSSL SKIP |
-| **W-env-sky** | **已收口**（`7603a4d`）：真 HDR IBL+天空盒；Sandbox 开关 |
-| **HUD 清理** | **已收口**（`101c364`）：去掉左下 Retained HUD |
+| **W-auto-2** | **已收口**（`7603a4d`） |
+| **W-env-sky** | **已收口**（`7603a4d`） |
+| **HUD 清理** | **已收口**（`101c364`） |
+| **W-vk-parity** | **已收口**：几何/贴图/天空/点光/UI/Debug/scale/IBL |
+| **T-c4-strict** | **可用**：`--strict` / CI `-StrictParity`；主门禁仍默认非硬堵 |
+| **W-test-polish** | **已收口**：C7 加载 fuzz + Q5 ROI |
+| **W-gi-deepen** | **已收口**：密网格 + 增量更新 + 三线性采样 |
 
 ```text
-安全基线：101c364
+安全基线：见 git tip（本波落地后）
 ```
 
 ---
@@ -20,22 +24,18 @@
 ## 约束
 
 - **不扩** Harness 命令、不扩 MCP、CI 不依赖 MCP
-- **不静默安装** 系统 OpenSSL；`T-https-openssl-on` 需你授权
-- C4 默认 `[REGRESSION-NOTED]`；`--strict` 仅在 `W-vk-parity` 后另开
-- 大气（C05）、Linux、Q4 WARP：P3，不挡 GI / 薄 SoftBody 排队
-- 布料/软体：**薄** `IPhysicsWorld` + Jolt（C22 / [ADR 0029](learn/adr/0029-physics-softbody-boundary.md)）；不做服装管线/破坏/轮胎产品化
+- **不静默安装** 系统 OpenSSL
+- C4：默认 ROI；超阈 `[REGRESSION-NOTED]`；`-StrictParity` / `--strict` 才 FAIL
+- 大气 / Linux / SoftBody 实现：仍排队
+- **不要动 `editor/`**（并行会话）
 
-验收总闸：`ci_headless.ps1 -Golden`
+验收总闸：`ci_headless.ps1 -Golden`（可选 `-StrictParity`）
 
 ---
 
 ## Doing
 
-| ID | 项 | 目标 | 验收 |
-|---|---|---|---|
-| **W-vk-parity** | Win Vulkan lit/post/sky 对标 | 压低 C4 RMSE | 同机 C4 明显下降；`-Golden` 绿；严 C4 仍默认关 |
-
-> 本轮板梳理已落地文档；**实现波未开工**——下令「开 W-vk-parity」后再改代码。
+（空 — 本大波已收口）
 
 ---
 
@@ -43,19 +43,19 @@
 
 | 优先级 | ID | 项 | 备注 |
 |---|---|---|---|
-| P0 | W-vk-parity | 见 Doing | 默认下一实现波 |
-| P1 | W-test-polish | C7 加载 fuzz ± Q5 ROI（忽略 Perf/橙块） | 不扩 Harness |
-| P1 | W-gi-deepen | ProbeVolume 加深；与 IBL/Lightmap 共存；可关 | G14；非完整 DDGI |
 | P1 | W-phys-soft | 薄 SoftBody/Cloth：`IPhysicsWorld` + Jolt + Demo | KNOWN_GAPS **C22** |
 | 闸门 | T-https-openssl-on | 授权装 SDK 后 HTTPS loopback | 现 SKIP |
-| 后置 | T-c4-strict | VK 收紧后可选严 C4 | 现 RMSE≈120 |
 | 后置 | T-bindless-stable | Bindless 热路径 | 黄金图曾漂 |
 | P3 | T-q4-warp / Linux | WARP / M18 | |
 | P3 | T-c05-atmosphere | 大气 / 体积云 | C05 |
 
-### 近端工程债（摘要）
+### 产品轨（不进本板实现波）
 
-HTTPS · C4/VK · Bindless · VK sky/ImGui/Debug · Q4/Q5/C7 · Linux · 可选橙块清理
+| 优先级 | ID | 项 | 备注 |
+|---|---|---|---|
+| 产品 P0 | W-game-kit | GK0–GK3 | **仅文档**；下令后再开工 |
+| 产品 P1 | W-prefab | GK4 Prefab + Manifest | |
+| 引擎候选 | C20 | 轻量 CLI | 非视口编辑器 |
 
 ---
 
@@ -63,7 +63,7 @@ HTTPS · C4/VK · Bindless · VK sky/ImGui/Debug · Q4/Q5/C7 · Linux · 可选�
 
 | 标签 | 值 |
 |---|---|
-| 安全基线 | `101c364` |
+| 安全基线 | `101c364`（本波前） |
 
 验证：`ci_headless.ps1 -Golden`
 
@@ -73,8 +73,9 @@ HTTPS · C4/VK · Bindless · VK sky/ImGui/Debug · Q4/Q5/C7 · Linux · 可选�
 
 | 项 | 说明 |
 |---|---|
-| **板梳理** | 基线 `101c364`；波次化 Todo；GI / 薄 SoftBody 入队；布料从「不做」上调 C22 |
-| **HUD 清理** | `101c364` 去掉左下 Retained HUD |
-| **W-env-sky** | Environment；真 HDR；天空盒；黄金/哈希重批 |
-| **W-auto-2** | C6 + C4 薄对标；OpenSSL SKIP |
-| W-auto-1 | C3/C5；Cull；VK local；RmlUi；HTTPS 用例 |
+| **W-vk-parity** | Vulkan lit 贴图/mesh/天空/UI/Debug/点光/IBL；Sandbox 解禁 |
+| **T-c4-strict** | ROI + `--strict` / `-StrictParity` |
+| **W-test-polish** | C7 unit + Q5 ROI |
+| **W-gi-deepen** | ProbeVolume 增量 + 三线性；Sandbox F1 叠加 ambient |
+| **板梳理** | 基线 `101c364`；布料 C22 |
+| **HUD 清理 / W-env-sky / W-auto-*** | 既有 |

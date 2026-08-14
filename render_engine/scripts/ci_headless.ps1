@@ -3,6 +3,7 @@ param(
   [string]$Config = "Debug",
   [string]$BuildDir = "",
   [switch]$Golden,
+  [switch]$StrictParity,
   [switch]$Validation
 )
 
@@ -88,8 +89,13 @@ if ($Golden) {
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }
-  Write-Host "== run_backend_parity.py (C4 thin) =="
-  & python (Join-Path $root "tests\scripts\run_backend_parity.py") --config $Config --build-dir $BuildDir
+  Write-Host "== run_backend_parity.py (C4) =="
+  $parityArgs = @("--config", $Config, "--build-dir", $BuildDir)
+  if ($StrictParity) {
+    Write-Host "  (StrictParity: --strict)"
+    $parityArgs += "--strict"
+  }
+  & python (Join-Path $root "tests\scripts\run_backend_parity.py") @parityArgs
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }

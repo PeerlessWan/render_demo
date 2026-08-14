@@ -114,7 +114,7 @@ struct FrameLighting {
   ColorRgba sun_color{1.f, 0.96f, 0.9f, 1.f};
   Vec3 eye{0, 1, 4};
   Vec3 camera_forward{0, 0, -1};
-  float shadow_bias = 0.0015f;
+  float shadow_bias = 0.0025f;
   float specular_power = 64.f;
   float jitter_x = 0.f;  // NDC sub-pixel offset when TAA on
   float jitter_y = 0.f;

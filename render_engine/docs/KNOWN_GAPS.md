@@ -12,7 +12,7 @@
 | 3D | P0/P1 + 简化 GI | + 动态 GI；地形/水体/植被基础；GPU Driven；VK RT |
 | 2D | 像素混合基础（M16） | + 阴影/MV/分层后处理/拣选；流式；骨骼；光雾等 |
 | 网络 | HTTP/WS/QUIC 传输 | 同左 |
-| 玩法 | 不在引擎内 | 同左 |
+| 玩法 | 不在引擎内 | 同左；工作区「游戏可用」主缺口是 **`game_kit` GK0–GK3**（见 [PLAN.md](PLAN.md) **§1.9**），不是再堆引擎 Pass |
 
 ## 2. 缺口 ↔ 里程碑（已排期）
 
@@ -23,11 +23,11 @@
 | G19 | Linux | **文档占位 / 外置** | M18 |
 | G02–G04、G11 | 混合打磨 / 拣选 / 多 DPI | **可用加深** | M20 |
 | G05–G10、G12 | 2D 深度 | **可用加深** | M21 |
-| G14 | 动态 GI | **可用加深**（ProbeVolume）；下一加深波 **W-gi-deepen**（看板） | M22 |
+| G14 | 动态 GI | **已加深**（ProbeVolume 密网格 + 帧预算增量 + 三线性；F1 可关；与 IBL 叠加 ambient） | M22 |
 | G15 | 地形/水体/植被（基础） | **可用加深** | M23 |
 | G16 | 光追 API 对齐 | **完成（加深）** Feature 门控 | M25（内容管线仍非 UE 级） |
 | T01 | 最小工具链（shader/IBL/纹理/cook/黄金图） | 已排期 | M2–M9；见 [TOOLING.md](TOOLING.md) |
-| T03 | 自动化测试加深（准/广） | **Q1–Q3 + C1–C3 + C5–C6 已落地**；C4 双后端比图已跑通并**记对标**（RMSE≈120，默认不堵 CI；`--strict` 可严） | [PLAN.md](PLAN.md) **§3.1**；不扩 MCP/Harness 命令 |
+| T03 | 自动化测试加深（准/广） | **Q1–Q3 + C1–C3 + C5–C7 + Q5 ROI 已落地**；C4 双后端比图（默认 ROI + 松闸≈90 PASS，现 RMSE≈74；`--strict` / `-StrictParity` 紧闸 48 可选严） | [PLAN.md](PLAN.md) **§3.1**；不扩 MCP/Harness 命令 |
 | T02 | 图集约定 + Tiled 导入 | 已排期 | M16 |
 | R01 | Cook 依赖图 / 异步回调 / Handle 寿命 / **数据依赖与生命周期** / 逻辑渲染分离 / GPU Profiling | 已排期 | M1–M14；见 [RUNTIME_FOUNDATIONS.md](RUNTIME_FOUNDATIONS.md) |
 
@@ -105,8 +105,8 @@
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
 | **C19** | `IScriptHost` 抽象（默认可空） | 见 [game_kit/docs](../../game_kit/docs/README.md)；VM 在外层 | 中 |
-| **C20** | 轻量内容工具 | Manifest 浏览等；可先于 [editor](../../editor/docs/README.md) | 中 |
-| **C21** | 独立 `editor/` 视口编辑器 | 规格见 [editor/docs](../../editor/docs/README.md) | 低～中 |
+| **C20** | 轻量内容工具 | Manifest 浏览、场景 JSON 校验、依赖图 CLI；属引擎 `tools/` 候选，**不是**视口编辑器 | 中 |
+| **C21** | 独立 `editor/` 视口编辑器 | 工作区独立工程；**规格/排期不在本目录**（见 [LAYERS](../../docs/LAYERS.md)） | 低～中 |
 
 ### 4.7 立项规则
 
@@ -132,12 +132,11 @@
 
 ## 6. 相关文档
 
-- [../../docs/LAYERS.md](../../docs/LAYERS.md) — **工作区分层权威**  
-- [HOSTING.md](HOSTING.md) — **玩法层 / 脚本 / 编辑器如何外挂**  
+- [../../docs/LAYERS.md](../../docs/LAYERS.md) — **工作区分层权威**（独立 `editor/` 规格不在本目录）  
+- [HOSTING.md](HOSTING.md) — **玩法层 / 脚本如何外挂**  
 - [../../game_kit/docs/README.md](../../game_kit/docs/README.md) — **通用玩法壳 + 脚本规格**  
 - [../../genre_kits/README.md](../../genre_kits/README.md) · [../../games/README.md](../../games/README.md) — 品类层 / 游戏工程  
-- [../../editor/docs/README.md](../../editor/docs/README.md) — **编辑器规格**  
-- [PLAN.md](PLAN.md) §1.7 / §1.8 / §4  
+- [PLAN.md](PLAN.md) §1.7 / §1.8 / **§1.9 游戏可用水位** / §4  
 - [TOOLING.md](TOOLING.md)  
 - [POSITIONING.md](POSITIONING.md)  
 - [learn/adr/0023-engine-gap-fill-m20-m25.md](learn/adr/0023-engine-gap-fill-m20-m25.md)  

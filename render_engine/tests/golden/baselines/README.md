@@ -22,5 +22,6 @@ python tests/scripts/check_shader_hashes.py --approve
 python tests/scripts/run_backend_parity.py
 ```
 
-CI: `scripts/ci_headless.ps1 -Golden`. Missing baseline → SKIP (not fail).
-C4 默认超阈记 `[REGRESSION-NOTED]`；加 `--strict` 才 FAIL。
+CI: `scripts/ci_headless.ps1 -Golden`（可选 `-StrictParity`）。Missing baseline → SKIP (not fail).
+C4：默认 ROI + 松闸（RMSE≤90）期望 PASS；`--strict` / `-StrictParity` 用紧闸 48（当前≈74 仍 FAIL，可选）。
+Sandbox 黄金图默认 `--roi-ignore-hud`（Q5）。

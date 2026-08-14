@@ -72,6 +72,7 @@ TEST_CASE("IndirectDrawArgs FillIndirectArgs", "[wave][gpu_driven]") {
 TEST_CASE("ProbeVolume UpdateFromLights changes Sample", "[wave][gi]") {
   engine::gi::ProbeVolume vol;
   vol.Configure({0, 0, 0}, {2, 2, 2}, 2, 1, 1);
+  vol.set_budget_per_frame(8);
   const auto before = vol.Sample({0.1f, 0.1f, 0.1f});
   engine::gi::ProbeLight light;
   light.position = {0.1f, 0.1f, 0.1f};
@@ -81,6 +82,26 @@ TEST_CASE("ProbeVolume UpdateFromLights changes Sample", "[wave][gi]") {
   vol.UpdateFromLights({&light, 1});
   const auto after = vol.Sample({0.1f, 0.1f, 0.1f});
   REQUIRE(after.r > before.r);
+}
+
+TEST_CASE("ProbeVolume trilinear Sample and incremental budget", "[wave][gi]") {
+  engine::gi::ProbeVolume vol;
+  vol.Configure({0, 0, 0}, {1, 1, 1}, 3, 3, 3);
+  vol.set_budget_per_frame(4);
+  REQUIRE(vol.probes().size() == 27);
+  engine::gi::ProbeLight light;
+  light.position = {1.f, 1.f, 1.f};
+  light.intensity = 4.f;
+  light.range = 4.f;
+  light.color = {0.f, 1.f, 0.f, 1.f};
+  vol.UpdateFromLights({&light, 1});
+  const auto mid = vol.Sample({1.f, 1.f, 1.f});
+  REQUIRE(mid.g >= 0.f);
+  // Second tick continues cursor; should still be finite.
+  vol.UpdateFromLights({&light, 1});
+  const auto mid2 = vol.Sample({1.2f, 0.8f, 1.1f});
+  REQUIRE(std::isfinite(mid2.r));
+  REQUIRE(std::isfinite(mid2.g));
 }
 
 TEST_CASE("LoadAtlasJson failure path", "[wave][render2d]") {

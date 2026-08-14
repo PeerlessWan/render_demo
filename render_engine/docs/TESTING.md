@@ -265,6 +265,7 @@ Sandbox 在 `--gpu-headless` 且设置 `ENGINE_GOLDEN_DUMP=<path.rgba>` 时写�
 ctest --test-dir build -C Debug -L headless --output-on-failure
 scripts\ci_headless.ps1
 scripts\ci_headless.ps1 -Golden
+scripts\ci_headless.ps1 -Golden -StrictParity   # 可选：C4 超阈 FAIL（默认仍记对标）
 ```
 
 - `CreateHeadlessDevice`：无 HWND，支持 Clear / DispatchCompute / ReadbackTextureStub / Present  
@@ -400,6 +401,8 @@ merge / 每日 → GPU 帧级冒烟（主路径存活）
 1. 锁死：场景、相机、分辨率、DPI=1、档位、特性开关、`dt`、帧序号。  
 2. 离屏读回写成 `.rgba`（`u32 w` + `u32 h` + `w*h*4` RGBA8）。环境变量 `ENGINE_GOLDEN_DUMP`。  
 3. `compare_golden.py`：分辨率必须一致；**RMSE ≤ 8**（字节 0–255）；**单通道 max abs ≤ 48**（可调）。  
+   - **Q5 ROI**：`--roi-ignore-hud` 将右上 Perf/橙块区域置零后再比（Sandbox 黄金图 / C4 默认开）。  
+4. 失败时保留候选图；批准基线用 `run_golden.py --approve`（人工）。  
 4. 深度/法线比对若做，用更严阈值，且与 LDR 颜色分文件。  
 5. 基线按 **backend / OS / GPU 族** 分目录（目标）；现状仅 D3D12 一条 `sandbox_gpu_headless.rgba`。  
 6. 更新基线 **仅** `--approve`；CI 不得覆盖。

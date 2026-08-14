@@ -1,4 +1,5 @@
 // Vulkan post: sample scene_color then apply exposure/tonemap to swapchain.
+// D3D-style Y-up NDC; backend uses negative viewport height for upright FB.
 
 struct VSOut {
   float4 pos : SV_Position;
@@ -20,6 +21,7 @@ SamplerState g_linear_samp : register(s1);
 VSOut VSMain(uint vid : SV_VertexID) {
   VSOut o;
   const float2 uv = float2((vid << 1) & 2, vid & 2);
+  // D3D clip Y-up fullscreen triangle; uv (0,0) = top-left of texture.
   o.pos = float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
   o.uv = uv;
   return o;
@@ -28,7 +30,6 @@ VSOut VSMain(uint vid : SV_VertexID) {
 float3 Tonemap(float3 c, float e, float mode) {
   float3 x = max(c * max(e, 0.01), 0.0.xxx);
   if (mode >= 1.5) {
-    // ACES fitted
     x = saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
   } else if (mode >= 0.5) {
     x = x / (1.0 + x);

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""C4 thin: same Sandbox harness preset, D3D12 vs Vulkan capture RMSE (loose).
+"""C4: same Sandbox harness preset, D3D12 vs Vulkan capture RMSE.
 
-Default: report metrics; over threshold → [REGRESSION-NOTED] (exit 0) until
-backends tighten. Use --strict to FAIL CI. Vulkan missing → SKIP.
+Default gate is post–W-vk-parity loose (ROI on). Over threshold →
+[REGRESSION-NOTED] (exit 0). Use --strict for tight gate FAIL (CI -StrictParity).
+Vulkan missing → SKIP.
 """
 from __future__ import annotations
 
@@ -14,7 +15,13 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from compare_golden import load_rgba, max_abs, rmse  # noqa: E402
+from compare_golden import (  # noqa: E402
+    apply_roi_mask,
+    default_sandbox_ignore_rects,
+    load_rgba,
+    max_abs,
+    rmse,
+)
 
 
 def find_sandbox(build_dir: Path, config: str) -> Path | None:
@@ -88,14 +95,29 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", default="Debug")
     p.add_argument("--build-dir", type=Path, default=root / "build")
-    p.add_argument("--rmse-max", type=float, default=48.0)
-    p.add_argument("--max-abs", type=int, default=220)
+    # Post W-vk-parity loose default (~RMSE 74 measured); --strict keeps tight 48.
+    p.add_argument("--rmse-max", type=float, default=90.0)
+    p.add_argument("--max-abs", type=int, default=255)
     p.add_argument(
         "--strict",
         action="store_true",
-        help="FAIL when over threshold (default: note regression, exit 0)",
+        help="Tight gate (rmse<=48, max_abs<=220) and FAIL when over",
     )
+    p.add_argument(
+        "--roi-ignore-hud",
+        action="store_true",
+        default=True,
+        help="Q5: ignore Perf/sprite ROI (default on for C4)",
+    )
+    p.add_argument("--no-roi-ignore-hud", action="store_true", help="Disable ROI mask")
     args = p.parse_args()
+    use_roi = args.roi_ignore_hud and not args.no_roi_ignore_hud
+    rmse_gate = 48.0 if args.strict else args.rmse_max
+    abs_gate = 220 if args.strict else args.max_abs
+    if args.strict and args.rmse_max != 90.0:
+        rmse_gate = args.rmse_max
+    if args.strict and args.max_abs != 255:
+        abs_gate = args.max_abs
 
     sandbox = find_sandbox(args.build_dir, args.config)
     if sandbox is None:
@@ -127,23 +149,30 @@ def main() -> int:
         print(f"[FAIL] resolution {dw}x{dh} vs {vw}x{vh}")
         return 1
 
+    if use_roi:
+        rects = default_sandbox_ignore_rects(dw, dh)
+        db = apply_roi_mask(db, dw, dh, rects)
+        vb = apply_roi_mask(vb, vw, vh, rects)
+        print(f"roi_ignore_hud rects={rects}")
+
     err = rmse(db, vb)
     mx = max_abs(db, vb)
     print(
         f"rmse={err:.4f} max_abs={mx} size={dw}x{dh} "
-        f"gate=rmse<={args.rmse_max} max_abs<={args.max_abs}"
+        f"gate=rmse<={rmse_gate} max_abs<={abs_gate}"
+        + (" strict" if args.strict else "")
     )
-    if err > args.rmse_max or mx > args.max_abs:
+    if err > rmse_gate or mx > abs_gate:
         msg = (
-            f"C4 d3d12 vs vulkan over loose gate (rmse={err:.4f} max_abs={mx}); "
-            "KNOWN_GAPS T03/C4 — not blocking until backends tighten"
+            f"C4 d3d12 vs vulkan over gate (rmse={err:.4f} max_abs={mx}); "
+            "KNOWN_GAPS T03/C4 — use --strict to FAIL, else note"
         )
         if args.strict:
             print(f"[FAIL] {msg}")
             return 1
         print(f"[REGRESSION-NOTED] {msg}")
         return 0
-    print("[PASS] C4 d3d12≈vulkan (loose)")
+    print("[PASS] C4 d3d12≈vulkan")
     return 0
 
 

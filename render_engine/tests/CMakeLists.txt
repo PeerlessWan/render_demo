@@ -6,6 +6,7 @@ add_executable(engine_unit_tests
   unit/test_config.cpp
   unit/test_path.cpp
   unit/test_assets_m3.cpp
+  unit/test_c7_load_fuzz.cpp
   unit/test_m4_m19.cpp
   unit/test_m20_m25_headless.cpp
   unit/test_product_wave_stubs.cpp

@@ -4,7 +4,8 @@
 > 教学封装：[learn/README.md](learn/README.md) · 路径：[learn/PATH.md](learn/PATH.md)  
 > 定位：**Windows（D3D12 + Vulkan）/ Linux（Vulkan）通用 2D·3D 渲染引擎**  
 > 范围分段：M1–M16（既有能力）+ M17–M19（后端/Linux/网络）+ **M20–M25 引擎缺口补齐（P2）**。  
-> **当前迭代看板**（Doing / Undo / Todo）：[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)
+> **当前迭代看板**（Doing / Undo / Todo）：[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)  
+> **游戏可用 ≠ 渲染可用**：工作区可玩产品水位见 **§1.9**（主缺口 `game_kit` GK0–GK3）。
 
 ## 1. 总验收目标
 
@@ -201,6 +202,53 @@
 
 
 
+### 1.9 2D/3D 游戏可用水位（工作区）
+
+> 对标 **Godot / Unity 中小 PC 项目**，不是 UE5 开放世界。  
+> **渲染内核 ≠ 可玩游戏。** Sandbox 能演示画面；可玩产品 = `game_kit` + `render_engine`（± `editor` / `genre_kits` / `games`）。分层：[LAYERS](../../docs/LAYERS.md)、[HOSTING.md](HOSTING.md)。
+
+**现状：** D3D12 主路径（场景/PBR/阴影/后处理/天空盒/2D Sprite·Tilemap/物理刚体/输入/HUD）已达「桌面渲染内核」可用加深。`game_kit` / `editor` / `genre_kits` **仅文档、无代码**。
+
+#### 口径
+
+| 口径 | 含义 | 不宣称 |
+|---|---|---|
+| **渲染可用** | Win D3D12 能出 2D/3D 游戏画面 | 双后端发版、手机、开放世界 |
+| **游戏可用** | 一条 2D **或** 3D 小关能走完：切关、暂停、存档槽、脚本不毁 Device | Godot/Unity 开箱模板 |
+| **对标主流** | 编辑器摆关、Prefab、动画树、寻路、空间音频、热重载 | Lumen/Nanite/复制同步（明确不做或外挂） |
+
+#### 缺口（按痛，非渲染再堆 Pass）
+
+| 优先级 | 缺什么 | 层 | 里程碑 |
+|---|---|---|---|
+| **P0** | 关卡流 / Entity / 事件 / 暂停 / 存档槽 | `game_kit` | **GK0–GK1**（无代码） |
+| **P0** | 脚本白名单绑定；异常不毁 GPU | `game_kit` | **GK2** |
+| **P0** | 垂直切片：移动、触发、HUD | `game_kit` | **GK3** |
+| **P1** | Prefab + Manifest 同一套 | `game_kit` + 引擎 schema | **GK4** |
+| **P1** | 视口摆关（独立工程） | 工作区 `editor/` | **文档不在本目录** |
+| **P1** | 动画混合 / 简单状态机 | 引擎候选 **C10** 或上层自建 | 不进 M1–M25 除非另开 |
+| **P1** | 真 RmlUi / 字体 DPI | 引擎 M15 加深 | 阻塞：vendor |
+| **P1** | Win Vulkan 观感对齐 | 引擎 | **W-vk-parity**（看板） |
+| **P2** | 寻路 | **中间件**，不进 `engine/` | — |
+| **P2** | 2D 骨骼产品化 | 引擎 M21 加深 + 许可 | — |
+| **P2** | 3D 衰减/混音 | **不做引擎 DSP**；上层或中间件 | ADR 0013 |
+| **P2** | 资源/着色器热重载 | **C16** | M25 后候选 |
+
+**明确不追齐（对标主流会一直弱）：** mac/移动/Metal；引擎内脚本/完整编辑器；VT/Nanite；Lumen 级 GI；复制/匹配；材质节点图；FBX/USD 一站式；Linux 外置至 M18。
+
+#### 落地顺序（工作区）
+
+```text
+1. game_kit GK0–GK3     ← 游戏可用的主缺口（优先于大气/云/Bindless 全量）
+2. Prefab + 场景能存     ← 手改 JSON 可先发；GK4
+3. 动画状态机 C10 或上层自建
+4. W-vk-parity          ← 仅当要 Win 双后端发版
+5. C20 CLI（引擎 tools 候选）→ 视口编辑器见工作区 editor/（规格不在本目录）
+6. 品类 → genre_kits；内容 → games/<title>
+```
+
+引擎近端债（VK 对标、GI 加深、薄 SoftBody）见看板，**不替代** GK0。`game_kit` 细则：[game_kit/docs/PLAN.md](../../game_kit/docs/PLAN.md)。编辑器排期与规格**只写在**工作区 `editor/docs`，不进 `render_engine/docs`。
+
 ## 2. 范围清单
 
 
@@ -237,7 +285,7 @@
 | 质量          | Low/Med/High（含 P0/P1 与像素相关开关）                                                                                                           |
 | 教学          | Learn 双轨随里程碑补                                                                                                                           |
 | **测试**      | 单测 + 集成 + 自动化/黄金图（TESTING §8）；Harness 冻结；MCP 不扩；**加深策略 PLAN §3.1（准优先于广）**                                                               |
-| 交付          | Sandbox、tools、文档                                                                                                                        |
+| 交付          | Sandbox（渲染验收）；**可玩游戏**走 game_kit + games（见 §1.9）                                                                                                                        |
 
 
 
@@ -286,7 +334,9 @@
   - **Harness 保留**：`--harness-stdio` 为矩阵抽样稳定接口（`run_matrix_smoke.py`）；**不再加命令**。门禁准确度仍靠黄金图 + `--gpu-headless`，不靠 MCP。  
     - **MCP 冻结**：`sandbox_mcp` 仅 Cursor 薄适配；**不扩**编辑器/运维/脚本语义；CI **不依赖** MCP。本机不用 Agent 控 Sandbox 时可删 `tools/sandbox_mcp`，不影响正确性。  
     - 协议与挂法：[SANDBOX_MCP.md](SANDBOX_MCP.md)。
-22. **自动化测试加深**：**准优先于广**；不扩 Harness 命令、不扩 MCP、不追像素全覆盖。实施顺序与不做项见 **§3.1**。
+22. **自动化测试加深**：**准优先于广**；不扩 Harness 命令、不扩 MCP、不追像素全覆盖。实施顺序与不做项见 **§3.1**。  
+23. **游戏可用 ≠ 渲染可用**：2D/3D 可玩产品以 **`game_kit` GK0–GK3 为主缺口**；不把玩法做进 `engine/`；不把大气/云当「能做游戏」的前提。口径与顺序见 **§1.9**。  
+24. **编辑器文档不进引擎**：视口编辑器规格/排期只在工作区 `editor/docs`；本目录不写 ED 里程碑、不收录 editor PLAN。引擎侧仅保留 **C20**（轻量 CLI 候选）与「独立 `editor/`」边界。
 
 
 
@@ -319,10 +369,10 @@
 | C1  | **Validation 进 CI** | Debug：D3D12/Vulkan 校验层报错 → FAIL                 | `ci_headless` 可选 `-Validation`；无校验层 SKIP |
 | C2  | **learn 小场景黄金图**    | `06_rhi_triangle`、`09_pbr_ibl` 各 1 条（确定性预设）     | 比再截一张满屏 Sandbox 更稳                       |
 | C3  | **矩阵格升级为比图**        | `run_matrix_smoke.py` 对抽样格 `capture` + 基线（命令已有） | **已落地**：D3D12 默认 / TAA off / 阴影 off 三格        |
-| C4  | **双后端一致性**          | 同场景同预设 D3D12 vs VK 比 SSIM/RMSE（无「绝对正确」基线）       | **薄落地**：`run_backend_parity.py`；超阈值默认 `[REGRESSION-NOTED]`（现 RMSE≈120）；`--strict` 才 FAIL |
+| C4  | **双后端一致性**          | 同场景同预设 D3D12 vs VK 比 SSIM/RMSE（无「绝对正确」基线）       | **已落地**：`run_backend_parity.py`（默认 Q5 ROI；松闸 RMSE≤90，现≈74 PASS）；`--strict` / CI `-StrictParity` 紧闸 48（现仍 FAIL，可选） |
 | C5  | **语义断言**            | 平均亮度区间；TAA on≠off；阴影 on 更暗                      | **已落地**：`[gpu_headless][semantic]`；不替代黄金图                |
 | C6  | **着色器字节码哈希**        | DXIL/SPIR-V 无意变更可检出                             | **已落地**：`check_shader_hashes.py` + `shader_hashes.json`（含 skybox）；进 `-Golden` |
-| C7  | **加载 fuzz（可选）**     | glTF/序列化畸形输入不崩、路径不逃逸                            | unit/integration；与像素无关                   |
+| C7  | **加载 fuzz（可选）**     | glTF/序列化畸形输入不崩、路径不逃逸                            | **已落地**：`test_c7_load_fuzz.cpp` unit |
 
 
 
@@ -523,9 +573,10 @@ Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
 
 - [README.md](README.md) — 文档总索引  
 - [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md) — **当前迭代 Doing / Undo / Todo**  
-- [../../docs/LAYERS.md](../../docs/LAYERS.md) — **工作区分层权威**  
+- [../../docs/LAYERS.md](../../docs/LAYERS.md) — **工作区分层权威**（`editor/` 规格不在本目录）  
+- [../../game_kit/docs/PLAN.md](../../game_kit/docs/PLAN.md) — **游戏可用主缺口 GK0–GK3**（见 §1.9）  
 - [GETTING_STARTED_M1.md](GETTING_STARTED_M1.md) — **M1 可执行清单**  
-- [HOSTING.md](HOSTING.md) — **玩法层 / 脚本 / 编辑器外挂**  
+- [HOSTING.md](HOSTING.md) — **玩法层 / 脚本外挂**；独立编辑器不在本树  
 - [HOST_API.md](HOST_API.md) — **Host API v0**  
 - [PREFAB_SCHEMA.md](PREFAB_SCHEMA.md) — **场景/Prefab schema**  
 - [RUNTIME_FOUNDATIONS.md](RUNTIME_FOUNDATIONS.md) — **Cook/异步/线程分离/寿命/数据依赖与生命周期/GPU Profiling**  

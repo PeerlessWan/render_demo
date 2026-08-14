@@ -120,5 +120,36 @@ if(ENGINE_WITH_VULKAN)
     VERBATIM
   )
   add_custom_target(sample_sandbox_vk_shadow DEPENDS "${_vk_sh_vs}")
-  add_dependencies(sample_sandbox sample_sandbox_vk_lit sample_sandbox_vk_post sample_sandbox_vk_shadow)
+
+  engine_compile_hlsl_spirv(
+    TARGET sample_sandbox_vk_sky
+    SOURCE "${_sky_src}"
+    OUTPUT_DIR "${_shader_out}"
+    VS_ENTRY VSMain VS_OUT skybox_vk.vs.spv
+    PS_ENTRY PSMain PS_OUT skybox_vk.ps.spv
+  )
+  engine_compile_hlsl_spirv(
+    TARGET sample_sandbox_vk_ui
+    SOURCE "${CMAKE_SOURCE_DIR}/shaders/hlsl/ui_imgui_vk.hlsl"
+    OUTPUT_DIR "${_shader_out}"
+    VS_ENTRY VSMain VS_OUT ui_imgui_vk.vs.spv
+    PS_ENTRY PSMain PS_OUT ui_imgui_vk.ps.spv
+  )
+  engine_compile_hlsl_spirv(
+    TARGET sample_sandbox_vk_debug
+    SOURCE "${_dbg_src}"
+    OUTPUT_DIR "${_shader_out}"
+    VS_ENTRY VSMain VS_OUT debug_line_vk.vs.spv
+    PS_ENTRY PSMain PS_OUT debug_line_vk.ps.spv
+  )
+  engine_compile_hlsl_spirv(
+    TARGET sample_sandbox_vk_quad
+    SOURCE "${CMAKE_SOURCE_DIR}/shaders/hlsl/quad_vk.hlsl"
+    OUTPUT_DIR "${_shader_out}"
+    VS_ENTRY VSMain VS_OUT quad_vk.vs.spv
+    PS_ENTRY PSMain PS_OUT quad_vk.ps.spv
+  )
+  add_dependencies(sample_sandbox
+    sample_sandbox_vk_lit sample_sandbox_vk_post sample_sandbox_vk_shadow
+    sample_sandbox_vk_sky sample_sandbox_vk_ui sample_sandbox_vk_debug sample_sandbox_vk_quad)
 endif()
