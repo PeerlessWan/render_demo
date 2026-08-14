@@ -31,6 +31,7 @@ FeatureSet QueryFeatures() {
   f.hdr_output = false;
   f.gpu_instancing = false;
   f.execute_indirect = false;
+  f.hiz = false;
 
   std::lock_guard lock(g_feature_mu);
   auto apply = [&](const char* name, bool& dst) {
@@ -46,6 +47,7 @@ FeatureSet QueryFeatures() {
   apply("quic", f.quic);
   apply("gpu_instancing", f.gpu_instancing);
   apply("execute_indirect", f.execute_indirect);
+  apply("hiz", f.hiz);
   return f;
 }
 
@@ -67,6 +69,7 @@ bool QueryFeature(std::string_view name) {
   if (name == "hdr_output") return f.hdr_output;
   if (name == "gpu_instancing") return f.gpu_instancing;
   if (name == "execute_indirect") return f.execute_indirect;
+  if (name == "hiz") return f.hiz;
   return false;
 }
 

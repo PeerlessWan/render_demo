@@ -569,43 +569,193 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
   Status BeginLocalShadowPass() override {
-    if (!local_shadow_warned_) {
-      LogWarn("Vulkan local shadow: Feature unavailable (CSM only); pass skipped");
-      local_shadow_warned_ = true;
-      engine::SetFeatureOverride("local_shadow", false);
+    if (!lit_ready_ || shadow_image_ == VK_NULL_HANDLE) {
+      return Status::Fail("SetupLitMesh not called");
     }
+    if (!frame_recording_) {
+      return Status::Fail("BeginFrame not called");
+    }
+    VkCommandBuffer cmd = command_buffers_[frame_index_];
+    if (pass_active_) {
+      vkCmdEndRenderPass(cmd);
+      pass_active_ = false;
+    }
+    // Keep CSM contents: LOAD pass into the same atlas (min local-shadow path).
+    if (shadow_layout_ != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+      BarrierShadowImage(cmd, shadow_layout_, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    }
+    VkRenderPassBeginInfo rp{};
+    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp.renderPass =
+        shadow_render_pass_load_ != VK_NULL_HANDLE ? shadow_render_pass_load_ : shadow_render_pass_;
+    rp.framebuffer = shadow_framebuffer_;
+    rp.renderArea.extent = {kShadowMapSize, kShadowMapSize};
+    rp.clearValueCount = 0;
+    vkCmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    shadow_pass_active_ = true;
     local_shadow_stub_active_ = true;
+    bound_cascade_ = -1;
+    used_graphics_ = true;
+    engine::SetFeatureOverride("local_shadow", true);
+    if (!local_shadow_warned_) {
+      LogInfo("Vulkan local shadow pass active (atlas LOAD + Feature)");
+      local_shadow_warned_ = true;
+    }
     return Status::Ok();
   }
-  Status BindLocalShadowTile(int) override {
-    if (!local_shadow_stub_active_) {
+  Status BindLocalShadowTile(int tile) override {
+    if (!local_shadow_stub_active_ || !shadow_pass_active_) {
       return Status::Fail("BeginLocalShadowPass not active");
     }
+    if (tile < 0 || tile >= lighting_.local_shadow_tile_count) {
+      return Status::Fail(ErrorCode::InvalidArgument, "Invalid local shadow tile");
+    }
+    ShadowFrameGpu frame{};
+    const Mat4& vp_mat =
+        lighting_.local_shadow_tile_count > 0
+            ? lighting_.local_shadow_vps[static_cast<std::size_t>(tile)]
+            : lighting_.local_shadow_vp;
+    std::memcpy(frame.view_proj, vp_mat.m.data(), sizeof(frame.view_proj));
+    void* mapped = nullptr;
+    if (vkMapMemory(device_, shadow_frame_ub_mem_, 0, sizeof(frame), 0, &mapped) != VK_SUCCESS) {
+      return Status::Fail("Map shadow frame UB failed");
+    }
+    std::memcpy(mapped, &frame, sizeof(frame));
+    vkUnmapMemory(device_, shadow_frame_ub_mem_);
+
+    const int tiles_per_row = (std::max)(1, lighting_.local_shadow_tiles_per_row);
+    const float tile_px = static_cast<float>(kShadowMapSize) / static_cast<float>(tiles_per_row);
+    const int ix = tile % tiles_per_row;
+    const int iy = tile / tiles_per_row;
+    VkCommandBuffer cmd = command_buffers_[frame_index_];
+    VkViewport vp{};
+    vp.x = static_cast<float>(ix) * tile_px;
+    vp.y = static_cast<float>(iy) * tile_px;
+    vp.width = tile_px;
+    vp.height = tile_px;
+    vp.minDepth = 0.f;
+    vp.maxDepth = 1.f;
+    vkCmdSetViewport(cmd, 0, 1, &vp);
+    VkRect2D scissor{};
+    scissor.offset.x = static_cast<std::int32_t>(vp.x);
+    scissor.offset.y = static_cast<std::int32_t>(vp.y);
+    scissor.extent.width = static_cast<std::uint32_t>(tile_px);
+    scissor.extent.height = static_cast<std::uint32_t>(tile_px);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
     return Status::Ok();
   }
   Status EndLocalShadowPass() override {
+    if (!local_shadow_stub_active_) {
+      return Status::Ok();
+    }
     local_shadow_stub_active_ = false;
+    return EndShadowPass();
+  }
+
+  Status UploadInstanceTransforms(std::span<const Mat4> worlds) override {
+    instance_worlds_.assign(worlds.begin(), worlds.end());
+    engine::SetFeatureOverride("gpu_instancing", true);
     return Status::Ok();
   }
+
+  Status DrawLitInstanced(const LitDrawItem& prototype, std::uint32_t instance_count) override {
+    // Vulkan: CPU expand to DrawLitCubes (Feature gpu_instancing marks API parity).
+    return IDevice::DrawLitInstanced(prototype, instance_count);
+  }
+
+  Status UploadIndirectIndexedArgs(std::span<const std::uint32_t> raw_u32) override {
+    if (raw_u32.empty() || (raw_u32.size() % 5) != 0) {
+      return Status::Fail("Invalid indirect args");
+    }
+    indirect_args_cpu_.assign(raw_u32.begin(), raw_u32.end());
+    engine::SetFeatureOverride("execute_indirect", true);
+    return Status::Ok();
+  }
+
+  Status ExecuteIndirectIndexed(std::uint32_t draw_count) override {
+    if (indirect_args_cpu_.size() < 5 || draw_count == 0) {
+      return Status::Fail("ExecuteIndirect not ready");
+    }
+    LitDrawItem item{};
+    item.world = Mat4::Identity();
+    item.color = {0.35f, 0.55f, 0.32f, 1.f};
+    item.use_albedo = false;
+    const std::uint32_t ic = indirect_args_cpu_[1];
+    const std::uint32_t n = (std::min)(ic, static_cast<std::uint32_t>(instance_worlds_.size()));
+    std::vector<LitDrawItem> items(std::max<std::uint32_t>(1, n), item);
+    for (std::uint32_t i = 0; i < n; ++i) {
+      items[i].world = instance_worlds_[i];
+    }
+    return DrawLitCubes(items);
+  }
+
   Status SetupPostMesh(const PostShaders& shaders) override {
-    (void)shaders;
+    DestroyPostResources();
+    auto vs = ReadFileBytes(shaders.vs_dxil);
+    if (!vs) {
+      return vs.status();
+    }
+    auto ps = ReadFileBytes(shaders.ps_dxil);
+    if (!ps) {
+      return ps.status();
+    }
+    if (auto st = CreatePostPipeline(vs.value(), ps.value()); !st) {
+      return st;
+    }
     post_stub_ready_ = true;
-    // SPIR-V path not compiled separately yet: resolve applies exposure via present tonemap flag.
-    LogInfo("Vulkan post mesh ready (tonemap/exposure via ResolvePostEffects)");
+    LogInfo("Vulkan post mesh ready (SPIR-V tonemap fullscreen)");
     return Status::Ok();
   }
 
   Status ResolvePostEffects(const PostResolveDesc& desc) override {
-    if (!post_stub_ready_) {
+    if (!post_stub_ready_ || post_pipeline_ == VK_NULL_HANDLE) {
       return Status::Fail("SetupPostMesh not called");
     }
-    if (desc.NeedsResolve()) {
-      post_exposure_ = desc.exposure;
-      if (!post_resolve_warned_) {
-        LogInfo("Vulkan ResolvePostEffects: exposure=" + std::to_string(desc.exposure) +
-                " (full post SPIR-V stack subset)");
-        post_resolve_warned_ = true;
+    if (!desc.NeedsResolve()) {
+      return Status::Ok();
+    }
+    if (!frame_recording_) {
+      return Status::Fail("BeginFrame not called");
+    }
+    post_exposure_ = desc.exposure > 0.01f ? desc.exposure : 1.f;
+    post_tonemap_mode_ = desc.tonemap_mode;
+    if (!pass_active_) {
+      if (auto st = BeginLitRenderPass(clear_color_); !st) {
+        return st;
       }
+    }
+
+    struct PostPC {
+      float exposure;
+      float tonemap_mode;
+      float enable_ssao;
+      float enable_taa;
+    } pc{};
+    pc.exposure = desc.enable_tonemap ? post_exposure_ : 1.f;
+    pc.tonemap_mode = static_cast<float>(post_tonemap_mode_);
+    pc.enable_ssao = desc.enable_ssao ? 1.f : 0.f;
+    pc.enable_taa = desc.enable_taa ? 1.f : 0.f;
+
+    VkCommandBuffer cmd = command_buffers_[frame_index_];
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, post_pipeline_);
+    vkCmdPushConstants(cmd, post_pipeline_layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc),
+                       &pc);
+    VkViewport vp{};
+    vp.width = static_cast<float>(width_);
+    vp.height = static_cast<float>(height_);
+    vp.minDepth = 0.f;
+    vp.maxDepth = 1.f;
+    vkCmdSetViewport(cmd, 0, 1, &vp);
+    VkRect2D scissor{};
+    scissor.extent = {width_, height_};
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+    used_graphics_ = true;
+
+    if (!post_resolve_warned_) {
+      LogInfo("Vulkan ResolvePostEffects fullscreen exposure=" + std::to_string(post_exposure_) +
+              " tonemap_mode=" + std::to_string(post_tonemap_mode_));
+      post_resolve_warned_ = true;
     }
     return Status::Ok();
   }
@@ -1742,6 +1892,127 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
 
+  Status CreatePostPipeline(const std::vector<std::uint8_t>& vs_spv,
+                            const std::vector<std::uint8_t>& ps_spv) {
+    if (render_pass_ == VK_NULL_HANDLE) {
+      return Status::Fail("Lit render pass missing for post");
+    }
+    VkShaderModule vs = VK_NULL_HANDLE;
+    VkShaderModule ps = VK_NULL_HANDLE;
+    if (auto st = CreateShaderModule(vs_spv, vs); !st) {
+      return st;
+    }
+    if (auto st = CreateShaderModule(ps_spv, ps); !st) {
+      vkDestroyShaderModule(device_, vs, nullptr);
+      return st;
+    }
+
+    VkPushConstantRange pc{};
+    pc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pc.offset = 0;
+    pc.size = 16;  // exposure, tonemap_mode, enable_ssao, enable_taa
+
+    VkPipelineLayoutCreateInfo plci{};
+    plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &pc;
+    if (vkCreatePipelineLayout(device_, &plci, nullptr, &post_pipeline_layout_) != VK_SUCCESS) {
+      vkDestroyShaderModule(device_, vs, nullptr);
+      vkDestroyShaderModule(device_, ps, nullptr);
+      return Status::Fail("Create post pipeline layout failed");
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vs;
+    stages[0].pName = "VSMain";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = ps;
+    stages[1].pName = "PSMain";
+
+    VkPipelineVertexInputStateCreateInfo vi{
+        VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    VkPipelineInputAssemblyStateCreateInfo ia{
+        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    vp.viewportCount = 1;
+    vp.scissorCount = 1;
+    VkPipelineRasterizationStateCreateInfo rs{
+        VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    rs.cullMode = VK_CULL_MODE_NONE;
+    rs.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rs.lineWidth = 1.f;
+    VkPipelineMultisampleStateCreateInfo ms{
+        VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineDepthStencilStateCreateInfo ds{
+        VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    ds.depthTestEnable = VK_FALSE;
+    ds.depthWriteEnable = VK_FALSE;
+
+    // dstColor = srcColor * dstColor (exposure multiply over lit result).
+    VkPipelineColorBlendAttachmentState blend_att{};
+    blend_att.blendEnable = VK_TRUE;
+    blend_att.srcColorBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
+    blend_att.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    blend_att.colorBlendOp = VK_BLEND_OP_ADD;
+    blend_att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blend_att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    blend_att.alphaBlendOp = VK_BLEND_OP_ADD;
+    blend_att.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                               VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo blend{
+        VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    blend.attachmentCount = 1;
+    blend.pAttachments = &blend_att;
+
+    const VkDynamicState dyn_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dyn{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dyn.dynamicStateCount = 2;
+    dyn.pDynamicStates = dyn_states;
+
+    VkGraphicsPipelineCreateInfo gp{};
+    gp.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    gp.stageCount = 2;
+    gp.pStages = stages;
+    gp.pVertexInputState = &vi;
+    gp.pInputAssemblyState = &ia;
+    gp.pViewportState = &vp;
+    gp.pRasterizationState = &rs;
+    gp.pMultisampleState = &ms;
+    gp.pDepthStencilState = &ds;
+    gp.pColorBlendState = &blend;
+    gp.pDynamicState = &dyn;
+    gp.layout = post_pipeline_layout_;
+    gp.renderPass = render_pass_;
+    gp.subpass = 0;
+
+    const VkResult r =
+        vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &gp, nullptr, &post_pipeline_);
+    vkDestroyShaderModule(device_, vs, nullptr);
+    vkDestroyShaderModule(device_, ps, nullptr);
+    if (r != VK_SUCCESS) {
+      return Status::Fail("Create post pipeline failed: " + VkErr(r));
+    }
+    return Status::Ok();
+  }
+
+  void DestroyPostResources() {
+    post_stub_ready_ = false;
+    if (post_pipeline_ != VK_NULL_HANDLE) {
+      vkDestroyPipeline(device_, post_pipeline_, nullptr);
+      post_pipeline_ = VK_NULL_HANDLE;
+    }
+    if (post_pipeline_layout_ != VK_NULL_HANDLE) {
+      vkDestroyPipelineLayout(device_, post_pipeline_layout_, nullptr);
+      post_pipeline_layout_ = VK_NULL_HANDLE;
+    }
+  }
+
   Status CreateShadowResources(const std::vector<std::uint8_t>& shadow_vs_spv) {
     if (auto st = CreateImage(kShadowMapSize, kShadowMapSize, VK_FORMAT_D32_SFLOAT,
                               VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
@@ -1802,6 +2073,11 @@ class VulkanDevice final : public IDevice {
     rpci.pDependencies = &dep;
     if (vkCreateRenderPass(device_, &rpci, nullptr, &shadow_render_pass_) != VK_SUCCESS) {
       return Status::Fail("Create shadow render pass failed");
+    }
+
+    depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    if (vkCreateRenderPass(device_, &rpci, nullptr, &shadow_render_pass_load_) != VK_SUCCESS) {
+      return Status::Fail("Create shadow LOAD render pass failed");
     }
 
     VkFramebufferCreateInfo fi{};
@@ -2126,6 +2402,7 @@ class VulkanDevice final : public IDevice {
     lit_ready_ = false;
     shadow_pass_active_ = false;
     bound_cascade_ = -1;
+    DestroyPostResources();
     DestroyIblCube();
     if (ibl_sampler_ != VK_NULL_HANDLE) {
       vkDestroySampler(device_, ibl_sampler_, nullptr);
@@ -2149,6 +2426,10 @@ class VulkanDevice final : public IDevice {
     if (shadow_framebuffer_ != VK_NULL_HANDLE) {
       vkDestroyFramebuffer(device_, shadow_framebuffer_, nullptr);
       shadow_framebuffer_ = VK_NULL_HANDLE;
+    }
+    if (shadow_render_pass_load_ != VK_NULL_HANDLE) {
+      vkDestroyRenderPass(device_, shadow_render_pass_load_, nullptr);
+      shadow_render_pass_load_ = VK_NULL_HANDLE;
     }
     if (shadow_render_pass_ != VK_NULL_HANDLE) {
       vkDestroyRenderPass(device_, shadow_render_pass_, nullptr);
@@ -2253,6 +2534,10 @@ class VulkanDevice final : public IDevice {
   bool local_shadow_warned_ = false;
   bool local_shadow_stub_active_ = false;
   float post_exposure_ = 1.f;
+  int post_tonemap_mode_ = 2;
+  std::vector<std::uint32_t> indirect_args_cpu_;
+  VkPipeline post_pipeline_ = VK_NULL_HANDLE;
+  VkPipelineLayout post_pipeline_layout_ = VK_NULL_HANDLE;
   int ibl_lut_w_ = 0;
   int ibl_lut_h_ = 0;
   VkImage ibl_cube_image_ = VK_NULL_HANDLE;
@@ -2281,6 +2566,7 @@ class VulkanDevice final : public IDevice {
   VkImageView shadow_view_ = VK_NULL_HANDLE;
   VkSampler shadow_sampler_ = VK_NULL_HANDLE;
   VkRenderPass shadow_render_pass_ = VK_NULL_HANDLE;
+  VkRenderPass shadow_render_pass_load_ = VK_NULL_HANDLE;
   VkFramebuffer shadow_framebuffer_ = VK_NULL_HANDLE;
   VkDescriptorSetLayout shadow_set_layout_ = VK_NULL_HANDLE;
   VkPipelineLayout shadow_pipeline_layout_ = VK_NULL_HANDLE;

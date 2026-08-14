@@ -27,6 +27,7 @@
 | G18 | Mesh Shader / GPU Driven | **加深中**（Indirect 本档） | M24 |
 | G16 | 光追 API 对齐 | **完成（加深）** Feature 门控 | M25（内容管线仍非 UE 级） |
 | T01 | 最小工具链（shader/IBL/纹理/cook/黄金图） | 已排期 | M2–M9；见 [TOOLING.md](TOOLING.md) |
+| T03 | 自动化测试加深（准/广） | **策略已锁、实施未开始** | [PLAN.md](PLAN.md) **§3.1**；不扩 MCP/Harness 命令 |
 | T02 | 图集约定 + Tiled 导入 | 已排期 | M16 |
 | R01 | Cook 依赖图 / 异步回调 / Handle 寿命 / **数据依赖与生命周期** / 逻辑渲染分离 / GPU Profiling | 已排期 | M1–M14；见 [RUNTIME_FOUNDATIONS.md](RUNTIME_FOUNDATIONS.md) |
 

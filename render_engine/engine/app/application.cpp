@@ -40,11 +40,12 @@ input::Key MapVk(std::size_t vk) {
 }  // namespace
 
 Application::Application(std::unique_ptr<Window> window, std::unique_ptr<rhi::IDevice> device,
-                         ColorRgba clear_color, bool headless, int headless_frames)
+                         ColorRgba clear_color, bool headless, int headless_frames, bool fixed_dt)
     : window_(std::move(window)),
       device_(std::move(device)),
       clear_color_(clear_color),
       headless_(headless),
+      fixed_dt_(fixed_dt),
       headless_frames_(headless_frames) {
   input_.InstallFlyCameraDefaults();
 }
@@ -86,9 +87,10 @@ Result<std::unique_ptr<Application>> Application::Create(const ApplicationDesc& 
   }
 
   const bool app_headless = desc.headless || desc.gpu_headless || device_desc.headless;
+  const bool fixed_dt = desc.headless || desc.gpu_headless;
   auto app = std::unique_ptr<Application>(
       new Application(std::move(window.value()), std::move(device.value()), desc.clear_color,
-                      app_headless, desc.headless_frames));
+                      app_headless, desc.headless_frames, fixed_dt));
   return Result<std::unique_ptr<Application>>::Ok(std::move(app));
 }
 
@@ -104,9 +106,14 @@ Status Application::Run(FrameCallback on_frame) {
   Clock clock;
 
   while (!window_->should_close()) {
-    dt_ = static_cast<float>(clock.Tick());
-    if (dt_ <= 0.f) {
+    if (fixed_dt_) {
+      (void)clock.Tick();
       dt_ = 1.f / 60.f;
+    } else {
+      dt_ = static_cast<float>(clock.Tick());
+      if (dt_ <= 0.f) {
+        dt_ = 1.f / 60.f;
+      }
     }
     ++frame_index_;
 

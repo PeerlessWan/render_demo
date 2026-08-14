@@ -35,7 +35,7 @@
 | [../STANDARDS.md](../STANDARDS.md) | **编码 / 架构 / 模块通讯等工程规范** |
 | [../TOOLING.md](../TOOLING.md) | **离线工具链**（shader/IBL/cook；ADR 0025） |
 | [../GETTING_STARTED_M1.md](../GETTING_STARTED_M1.md) | **M1 可执行清单** |
-| [../TESTING.md](../TESTING.md) | **单测 / 集成 / 自动化测试** |
+| [../TESTING.md](../TESTING.md) | **单测 / 集成 / 自动化**；§8 自动化·人工·工具 |
 | [../DEBUG_TUNE_TROUBLESHOOT.md](../DEBUG_TUNE_TROUBLESHOOT.md) | 调试 / 调优 / 排错方法 |
 
 章节正文随实现进度逐步补齐（`chapters/CHXX_*.md`），本阶段先定 **封装结构与路径**。

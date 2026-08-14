@@ -258,7 +258,7 @@ Sample / 产品 Module
 
 ## 10. 测试与质量门禁
 
-见 [TESTING.md](TESTING.md)。补充：
+见 [TESTING.md](TESTING.md)（含 **§8 自动化 / 人工 / 工具**）。补充：
 
 | 门禁 | 要求 |
 |---|---|

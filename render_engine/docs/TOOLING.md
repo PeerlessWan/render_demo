@@ -15,6 +15,8 @@
 | **最小 cook / 清单 / 依赖图 / 可选打包** | 资产表 + 依赖边 + 可选包；发版与流式可复现 | **M3 约定，M9 落地** | 见 [RUNTIME_FOUNDATIONS.md](RUNTIME_FOUNDATIONS.md) §2 |
 | **tools/lightmap_baker** | 简化 Lightmap / 烘焙 GI 输出运行时可读格式 | **M6–M8** | 探针/Lightmap Sample 可复现；可先简陋 |
 | **黄金图跑测脚本** | 离屏截图、比对、报告（见 TESTING） | **M9** | tests/scripts 可跑 v0 |
+| **SandboxHarness**（冻结） | JSON 行协议；`run_matrix_smoke.py` 抽样 | **已落地** | **保留、不再加命令**（[PLAN §3.21](PLAN.md)） |
+| **sandbox_mcp**（冻结） | Cursor 薄适配 | **已落地** | **不扩**；CI 不依赖；不用可删 |
 | **图集格式约定** | 外部打图集（TexturePacker 等），引擎只定 JSON/元数据契约 | **M16 前文档定稿** | 2D Sample 按约定加载 |
 | **Tiled JSON 导入** | 运行时/工具侧导入（渲染向） | **M16** | Tilemap 可见 |
 
@@ -39,6 +41,7 @@
 | FBX/USD 一站式工业管线 | 主路径 **glTF**；其它格式后置或外部转换 |
 | NavMesh / 音频中间件专用工具 | 范围外 |
 | 自研 PIX 级帧调试器 | 用 PIX / RenderDoc |
+| **MCP 扩成编辑器/运维/脚本宿主** | `sandbox_mcp` 仅薄适配；见 [PLAN.md](PLAN.md) §3.21 |
 | 资产生态 / 商店 | 不做 |
 
 ## 4. 与运行时边界
@@ -74,5 +77,7 @@ tests/
 - [ARCHITECTURE.md](ARCHITECTURE.md)  
 - [THIRD_PARTY.md](THIRD_PARTY.md)  
 - [TESTING.md](TESTING.md)  
+- [SANDBOX_MCP.md](SANDBOX_MCP.md) — Harness 保留 / MCP 冻结  
+- [STANDARDS.md](STANDARDS.md)  
 - [STANDARDS.md](STANDARDS.md)  
 - [learn/adr/0025-toolchain-minimum-viable.md](learn/adr/0025-toolchain-minimum-viable.md)  

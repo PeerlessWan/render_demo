@@ -159,6 +159,8 @@
 | **必要** | 最小 asset cook / 资产清单 + **依赖图** + 可选打包 | M3 定约定，**M9 前落地**（见 RUNTIME_FOUNDATIONS） |
 | **较必要** | `lightmap_baker`（可简陋） | M6–M8 |
 | **必要** | 黄金图跑测脚本 | M9 |
+| **保留（冻结）** | SandboxHarness JSON 控制面；`run_matrix_smoke.py` 抽样 | 已落地；**保留、不再加命令**（见 §3.21） |
+| **冻结（可选）** | `sandbox_mcp` Cursor 适配器 | 已落地；**不扩功能**；CI 不依赖；本机不用可删 |
 | **必要（2D）** | 图集格式约定（外部打包）；Tiled JSON 导入 | M16 前 / M16 |
 | **可后置** | meshoptimizer 离线 LOD；Feature 导出小工具；地形数据校验 | M10+ / M23 |
 | **可后置（C20）** | Manifest/AssetId 浏览器、场景 JSON 校验、依赖图检查 CLI | 不挡 M1–M9；可先于视口 `editor/`（C21） |
@@ -196,7 +198,7 @@
 | 调试 | DebugDraw、视图模式、控制台、**ImGui 调试**、**CPU/GPU Profiler（Pass 时间戳）**、Readback、Validation；见 DEBUG + RUNTIME_FOUNDATIONS |
 | 质量 | Low/Med/High（含 P0/P1 与像素相关开关） |
 | 教学 | Learn 双轨随里程碑补 |
-| **测试** | 单测 + 集成 + 自动化/黄金图（见 TESTING.md）；含 2D/像素离屏用例 |
+| **测试** | 单测 + 集成 + 自动化/黄金图（TESTING §8）；Harness 冻结；MCP 不扩；**加深策略 PLAN §3.1（准优先于广）** |
 | 交付 | Sandbox、tools、文档 |
 
 ### 2.2 明确不做（仍不进引擎）
@@ -213,6 +215,7 @@
 - **游戏玩法系统**  
 - 商业资产生态 / 商店  
 - **完整可视化内容编辑器**（关卡/材质节点/UI）及 FBX/USD 一站式工业管线（主路径 glTF；见 TOOLING）  
+- **MCP 扩成编辑器 / 远程运维 / 脚本宿主**（`sandbox_mcp` 仅薄适配，见 §3.21）  
 
 说明：动态 GI、地形/水体/植被、2D 骨骼等已纳入 **M20–M25**；**macOS/移动明确不做**；**最小工具链**见 §1.8，不是「无工具」。
 
@@ -228,7 +231,7 @@
 8. 物理以第三方库 + **抽象层**封装交付（可替换实现）。  
 9. P0 完成前不宣称 3D 通用渲染验收通过。  
 10. UI：即时+保留；无可视化 UI 编辑器；三方 UI 经引擎 UI 抽象。  
-11. 测试：PR 过 unit；发版过 GPU 冒烟与黄金图；**D3D12 与 Vulkan 至少各有冒烟**（Linux CI 可选自托管）。  
+11. 测试：PR 过 unit；发版过 GPU 冒烟与黄金图；**D3D12 与 Vulkan 至少各有冒烟**（Linux CI 可选自托管）。**不做像素/帧级全覆盖**（抽样，见 TESTING §8）。  
 12. 玩法系统不进引擎核心；外挂见 [HOSTING.md](HOSTING.md)、[LAYERS](../../docs/LAYERS.md)、ADR 0028。  
 13. 网络：HTTP / WS / QUIC 可靠流走轻量三方 + **抽象层**；玩法同步/匹配/反作弊不进引擎。  
 14. **所有三方库必须经抽象/适配层**；禁止业务直链三方头（ADR 0017）。  
@@ -238,6 +241,57 @@
 18. 工具链：按 [TOOLING.md](TOOLING.md) 落地最小可行集（ADR 0025）；**不做**可视化内容编辑器进引擎。  
 19. 运行时基础：Cook/依赖、异步回调、逻辑/渲染分离、Handle+Fence、**数据依赖与生命周期**、GPU Profiling（[RUNTIME_FOUNDATIONS.md](RUNTIME_FOUNDATIONS.md)、ADR 0026）。  
 20. 脚本与编辑器：默认外挂（[HOSTING.md](HOSTING.md)、ADR 0027）；品类分层 ADR 0028；候选 C19–C21，不进 M1–M25。  
+21. **Harness / MCP（冻结）**：  
+    - **Harness 保留**：`--harness-stdio` 为矩阵抽样稳定接口（`run_matrix_smoke.py`）；**不再加命令**。门禁准确度仍靠黄金图 + `--gpu-headless`，不靠 MCP。  
+    - **MCP 冻结**：`sandbox_mcp` 仅 Cursor 薄适配；**不扩**编辑器/运维/脚本语义；CI **不依赖** MCP。本机不用 Agent 控 Sandbox 时可删 `tools/sandbox_mcp`，不影响正确性。  
+    - 协议与挂法：[SANDBOX_MCP.md](SANDBOX_MCP.md)。  
+22. **自动化测试加深**：**准优先于广**；不扩 Harness 命令、不扩 MCP、不追像素全覆盖。实施顺序与不做项见 **§3.1**。  
+
+## 3.1 自动化测试加深策略（准 / 广）
+
+> 现状水位与测法：[TESTING.md](TESTING.md) §8。Harness/MCP 冻结见 §3.21。  
+> 目标：提高 **失败=真回归** 的概率（准），再增加 **可断言路径**（广）。不是把 RMSE 收到 0，也不是笛卡尔积。
+
+**原则：** 准靠去掉时间/驱动噪声；广靠小场景、双后端一致性、校验层。MCP 不参与。
+
+### 准（优先）
+
+| 序 | 项 | 做法 | 验收 |
+|---|---|---|---|
+| Q1 | **确定性截帧** | 黄金图预设：固定 `dt`、抽干异步、GPU idle；**关 TAA/Jitter、冻粒子/物理**（用现有 `toggle`，不加命令） | 同机连续两次 RMSE 接近噪声下限；flaky 明显下降 |
+| Q2 | **Vulkan 真 Readback** | 对齐 D3D12 `ReadbackTextureStub`；VK `gpu_headless` 不再 CPU stub | `--backend=vulkan --gpu-headless` 可出 `.rgba`；无能力 SKIP |
+| Q3 | **中间缓冲黄金图** | 法线 / 线性深度（可选阴影图）与 LDR **分文件**；中间缓冲更严阈值 | 至少 1 条 depth 或 world-normal 基线；失败能区分「曝光漂」vs「几何漂」 |
+| Q4 | **D3D12 WARP 基线（可选）** | CI 用 WARP 锁算法；真 GPU 仍冒烟 + 发版抽样 | 无独显 runner 可跑黄金图；文档写明 WARP ≠ 游戏 GPU 观感 |
+| Q5 | **度量升级（可选）** | ROI 掩膜（忽略 HUD/粒子）；SSIM 或 FLIP 辅 RMSE | 1px 对齐偏移不再轻易假红；不取消 `--approve` |
+
+### 广（Q1–Q2 之后）
+
+| 序 | 项 | 做法 | 验收 |
+|---|---|---|---|
+| C1 | **Validation 进 CI** | Debug：D3D12/Vulkan 校验层报错 → FAIL | `ci_headless` 可选 `-Validation`；无校验层 SKIP |
+| C2 | **learn 小场景黄金图** | `06_rhi_triangle`、`09_pbr_ibl` 各 1 条（确定性预设） | 比再截一张满屏 Sandbox 更稳 |
+| C3 | **矩阵格升级为比图** | `run_matrix_smoke.py` 对抽样格 `capture` + 基线（命令已有） | 至少 D3D12：默认 / TAA off / 阴影 off 三格 |
+| C4 | **双后端一致性** | 同场景同预设 D3D12 vs VK 比 SSIM/RMSE（无「绝对正确」基线） | Q2 之后；差超阈值 FAIL 或记对标回归 |
+| C5 | **语义断言** | 平均亮度区间；TAA on≠off；阴影 on 更暗 | 进 `[gpu_headless]`；不替代黄金图 |
+| C6 | **着色器字节码哈希** | DXIL/SPIR-V 无意变更可检出 | 极便宜；不替代画面 |
+| C7 | **加载 fuzz（可选）** | glTF/序列化畸形输入不崩、路径不逃逸 | unit/integration；与像素无关 |
+
+### 明确不做（本策略）
+
+- 扩 Harness 命令、扩 MCP、CI 依赖 MCP  
+- 自研 PIX/命令流 diff（TOOLING）  
+- 全组合特性矩阵、每张 GPU 一张黄金图  
+- 无确定性预设就把 RMSE 收到接近 0（只会假红）
+
+### 实施顺序
+
+```text
+Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
+  → C2 learn 小场景 + Q3 中间缓冲 → C3 矩阵比图
+  →（可选）Q4 WARP / Q5 SSIM·FLIP / C4 双后端一致性 / C5–C7
+```
+
+不单开渲染里程碑；作为 **测试加深轨** 排入看板（[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)）。缺口登记：[KNOWN_GAPS.md](KNOWN_GAPS.md) **T03**。
 
 ## 4. 里程碑
 
@@ -325,7 +379,7 @@
 | M20–M21 | 混合/2D 深度 API 与拣选约定 |
 | M22–M23 | 动态 GI 与地形/水体/植被模块说明 |
 | M24–M25 | GPU Driven / RT 能力矩阵 |
-| 持续 | 按 [TESTING.md](TESTING.md) 扩展用例与 CI |
+| 持续 | 按 [TESTING.md](TESTING.md) 扩展用例与 CI；测试加深按 **§3.1** |
 
 ## 6. 进度表
 
@@ -343,19 +397,22 @@
 | **M10** 可见性·LOD·实例·流式 | **加深**：LodSelect；StreamingBudget；**GPU DrawLitInstanced** |
 | **M11** 阴影·AA·AO·透明 | **产品可用（D3D12）**：CSM；点光 cubemap；SSAO/**TAA+MV**；透明 |
 | **M12** 物理 | **可用加深**：builtin + Jolt；learn `25_physics` |
-| **M13** P1 后处理与反射 | **加深**：后处理栈；**GPU CaptureReflectionProbeGpu**（CPU 近似 fallback） |
-| **M14** P1 提交与显示 | **加深**：Morph；SubmitConfig；**ExecuteIndirectIndexed** |
+| **M13** P1 后处理与反射 | **100%（产品主路径）**：后处理栈；**GPU CaptureReflectionProbeGpu**（CPU 近似 fallback） |
+| **M14** P1 提交与显示 | **100%（加深）**：Morph；SubmitConfig；**ExecuteIndirectIndexed** |
 | **M15** UI 完整 | **可用加深**：ImGui + Retained；learn `29_ui`；真 RmlUi 外置 |
 | **M16** 2D·像素·混合 | **可用加深**：Sprite；**AtlasJson**；learn `30_pixel_hybrid` |
-| **M17** Vulkan（Windows） | **对标加深**：lit+CSM；**IBL cubemap 上传采样**；post exposure；点光 Feature skip |
+| **M17** Vulkan（Windows） | **100%（Win 矩阵）**：lit+CSM；IBL；**SPIR-V post 子集**；**局部影 atlas**；实例化/Indirect Feature+CPU 回退 |
 | **M18** Linux + Vulkan | **完成（文档占位）**：外置 |
 | **M19** 网络层 | **可用加深**：HTTP 明文；HTTPS/QUIC 外置 |
 | **M20** 混合打磨 | **完成（加深）**：Pick + 高亮；learn 选修 |
 | **M21** 2D 深度 | **完成（加深）**：TilemapStreamer、Skeleton2D |
 | **M22** 动态 GI | **可用加深**：ProbeVolume **UpdateFromLights** |
 | **M23** 场景专题 | **可用加深**：Heightmap；**BuildWaterPatchMesh**；植被散射 |
-| **M24** GPU Driven | **加深**：**ExecuteIndirect** + 路径选择 |
+| **M24** GPU Driven | **100%（无 Bindless）**：HiZ + Cull→IndirectArgs + Sandbox 实例化热路径 |
 | **M25** 光追对齐 | **完成（加深）**：RT Resolve + **CanRunDxrDemo** |
+
+> 四轨 100% 口径见迭代看板；测试门禁：`ci_headless.ps1 -Golden` + matrix smoke。**Harness 冻结；MCP 不进门禁。** 测试加深下一档：**§3.1**（确定性截帧 → VK 真读回 → Validation CI）。
+
 
 ## 7. 建议实施顺序（M1 内）
 
@@ -386,6 +443,7 @@
 - [learn/adr/0023-engine-gap-fill-m20-m25.md](learn/adr/0023-engine-gap-fill-m20-m25.md)  
 - [DEBUG_TUNE_TROUBLESHOOT.md](DEBUG_TUNE_TROUBLESHOOT.md) — 调试/调优/排错  
 - [THIRD_PARTY.md](THIRD_PARTY.md) — **可引入的第三方库清单**  
-- [TESTING.md](TESTING.md) — **单测 / 集成 / 自动化测试**  
+- [TESTING.md](TESTING.md) — **单测 / 集成 / 自动化测试**（§8 分工与覆盖）  
+- [SANDBOX_MCP.md](SANDBOX_MCP.md) — **Harness 保留 / MCP 冻结**  
 - [learn/README.md](learn/README.md)  
 - [learn/PATH.md](learn/PATH.md)  

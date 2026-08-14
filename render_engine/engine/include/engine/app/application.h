@@ -89,7 +89,7 @@ class Application {
 
  private:
   Application(std::unique_ptr<Window> window, std::unique_ptr<rhi::IDevice> device,
-              ColorRgba clear_color, bool headless, int headless_frames);
+              ColorRgba clear_color, bool headless, int headless_frames, bool fixed_dt);
 
   void SyncInputFromWindow();
 
@@ -98,6 +98,7 @@ class Application {
   ColorRgba clear_color_;
   float dt_ = 0.f;
   bool headless_ = false;
+  bool fixed_dt_ = false;
   int headless_frames_ = 0;
   int frame_index_ = 0;
 

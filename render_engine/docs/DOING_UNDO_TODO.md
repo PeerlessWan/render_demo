@@ -6,7 +6,7 @@
 
 | ID | 项 | 目标 | 验收 |
 |---|---|---|---|
-| — | （空）本档 deepen/test/MCP 已收口 |  |  |
+| — | （空）四轨 100% 已收口 |  |  |
 
 ---
 
@@ -19,8 +19,9 @@
 | P3 | T-linux-m18 | Linux + Vulkan | 外置（见 LINUX_VULKAN.md） |
 | P3 | T-ground-slab | 悬浮浅色层切物体 | **搁置** |
 | P3 | T-m14-bindless-full | 全 Bindless 迁移 | 非本口径必须 |
-| P3 | T-hiz-full | HiZ 真遮挡 | 未做 |
-| P3 | T-vk-post-spirv-full | Vulkan 全 SPIR-V post 栈 | exposure 已接；全栈可扩 |
+| P3 | T-hiz-gpu-cs | HiZ/Cull 真 GPU CS | CPU 合同已落地；可换 GPU CS |
+| P3 | T-vk-post-full | Vulkan 全 SPIR-V post 栈 | 子集 tonemap 已有；中间 RT 可扩 |
+| P3 | T-test-deepen | 自动化测试加深 | [PLAN §3.1](PLAN.md)：Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI |
 
 ---
 
@@ -28,10 +29,10 @@
 
 | 标签 | 值 |
 |---|---|
-| 安全基线 | `0354878`（产品波次） |
-| 本档回退 | 还原实例化/GPU 探针/Indirect/VK IBL/golden/harness/MCP |
+| 安全基线 | `4f68e14`（deepen）或产品波次 `0354878` |
+| 本档回退 | 还原 HiZ/Cull、VK post/local shadow、MCP spawn、golden/matrix |
 
-验证：`scripts/ci_headless.ps1`；unit 76+；Sandbox `--gpu-headless`；`--harness-stdio`；`sandbox_mcp`
+验证：`scripts/ci_headless.ps1 -Golden`；unit；Sandbox `--gpu-headless`；`--harness-stdio`；`sandbox_mcp` + `ENGINE_SANDBOX_EXE`
 
 ---
 
@@ -39,12 +40,14 @@
 
 | 项 | 说明 |
 |---|---|
-| W-a-test | TESTING/看板/缺口对齐；`--backend=d3d12`；黄金图脚本；`ENGINE_GOLDEN_DUMP` |
+| Track A | D3D12 产品主路径：IBL/CSM/点光影/TAA/探针 GPU/post；gpu-headless |
+| Track B | HiZ + Cull→IndirectArgs + Sandbox 1k 实例化热路径（无 Bindless） |
+| Track C | VK SPIR-V post 子集、局部影 atlas、实例化/Indirect Feature；矩阵更新 |
+| Track D | Harness 真接线；MCP 控真机；golden + matrix smoke；**此后 Harness 冻结 / MCP 不扩**（PLAN §3.21） |
+| W-a-test | TESTING/看板；黄金图脚本；`ENGINE_GOLDEN_DUMP` |
 | W-b1-inst | D3D12 `DrawLitInstanced` + learn22 |
 | W-b2-probe | `CaptureReflectionProbeGpu` + CPU fallback |
 | W-b3-indirect | `UploadIndirectIndexedArgs` / `ExecuteIndirectIndexed` |
-| W-c-vk | Vulkan IBL cubemap 上传采样；local shadow Feature skip；post exposure |
-| W-d-mcp | Harness JSON + `sandbox_mcp` + [SANDBOX_MCP.md](SANDBOX_MCP.md) |
 | T-ibl-real | ibl_baker → `ibl_pack.ibl1` |
 | T-gpu-headless | D3D12 offscreen + 读回 |
 | T-learn-core/electives | learn 阶梯 |

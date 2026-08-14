@@ -11,7 +11,10 @@
 #include "engine/gi/probe_volume.h"
 #include "engine/gi/reflection_probe.h"
 #include "engine/gi/scene_capture.h"
+#include "engine/gpu_driven/indirect_draw.h"
 #include "engine/render/ibl_pack.h"
+#include "engine/render/instance_draw.h"
+#include "engine/render/occlusion.h"
 #include "engine/media/media.h"
 #include "engine/mixed/pick.h"
 #include "engine/net/net_system.h"
@@ -100,6 +103,7 @@ int main(int argc, char** argv) {
       desc.window.headless = true;
       gpu_headless_assert = false;
       desc.headless_frames = 100000;
+      engine::set_log_info_to_stderr(true);
     } else if (arg.rfind("--frames=", 0) == 0) {
       desc.headless_frames = std::atoi(arg.c_str() + 9);
     }
@@ -181,7 +185,8 @@ int main(int argc, char** argv) {
     rdesc.lit_vs = shader_dir / "lit_cube_vk.vs.spv";
     rdesc.lit_ps = shader_dir / "lit_cube_vk.ps.spv";
     rdesc.shadow_vs = shader_dir / "shadow_vk.vs.spv";
-    // Post/UI/debug SPIR-V not wired yet on Vulkan.
+    rdesc.post_vs = shader_dir / "post_tonemap_vk.vs.spv";
+    rdesc.post_ps = shader_dir / "post_tonemap_vk.ps.spv";
     rdesc.enable_shadows = true;
     rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
     rdesc.quality.enable_ssao = false;
@@ -405,8 +410,22 @@ int main(int argc, char** argv) {
   fx.bloom_threshold = 1.1f;
   fx.bloom_intensity = 0.2f;
   fx.enable_auto_exposure = false;
-  // One cascade over the ±12 playground: multi-cascade splits were camera-tracking tint bands.
-  fx.shadow_cascades = 1;
+  // gpu-headless: single cascade + disable temporal FX for stable golden/readback.
+  if (desc.gpu_headless || harness_stdio) {
+    fx.shadow_cascades = 1;
+    fx.enable_taa = false;
+    fx.enable_ssao = false;
+    fx.enable_motion_blur = false;
+    auto q = engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
+    q.enable_ssao = false;
+    q.enable_taa = false;
+    q.shadow_cascades = 1;
+    render.set_quality(q);
+  } else {
+    fx.shadow_cascades = (std::max)(1, rdesc.quality.shadow_cascades);
+  }
+  fx.enable_ibl = false;  // enabled after IBL pack load
+  fx.enable_reflection_probe = true;
   render.set_effect_tuning(fx);
 
   engine::ui::ImmediateUi imgui;
@@ -556,6 +575,23 @@ int main(int argc, char** argv) {
   }
   reflection_probe.ClearDirty();
 
+  constexpr int kScaleInstances = 1024;
+  std::vector<engine::Mat4> scale_worlds(kScaleInstances);
+  for (int i = 0; i < kScaleInstances; ++i) {
+    const int x = i % 32;
+    const int z = i / 32;
+    scale_worlds[static_cast<std::size_t>(i)] = engine::Mat4::TRS(
+        {static_cast<float>(x) * 0.85f - 13.f, 0.35f, static_cast<float>(z) * 0.85f - 13.f}, {},
+        {0.25f, 0.7f, 0.25f});
+  }
+  engine::render::OcclusionBuffer scale_occ;
+  scale_occ.Configure(64, 64);
+  // Soft HiZ: far-plane default (no occluders) so frustum cull still runs.
+  {
+    std::vector<float> depth(64 * 64, 1.f);
+    scale_occ.UploadDepthFinest(depth);
+  }
+
   // Optional IBL pack next to content or shaders.
   {
     namespace fs = std::filesystem;
@@ -610,6 +646,7 @@ int main(int argc, char** argv) {
   engine::LogInfo(std::string("Audio backend: ") + audio->backend_name());
   engine::LogInfo("Sandbox: LMB/RMB look | Wheel zoom | MMB pan | F1 FX | F3 grid | F4 axes");
 
+  bool headless_assert_failed = false;
   const auto status = a.Run([&](engine::Application& app_ref) {
     profiler.Begin("Frame");
     physics->Step(app_ref.delta_time());
@@ -688,6 +725,8 @@ int main(int argc, char** argv) {
           imgui.Checkbox("Shadows", &fx.enable_shadows);
           imgui.Checkbox("SSAO", &fx.enable_ssao);
           imgui.Checkbox("TAA", &fx.enable_taa);
+          imgui.Checkbox("IBL", &fx.enable_ibl);
+          imgui.Checkbox("Reflection probe", &fx.enable_reflection_probe);
           imgui.Checkbox("SSR", &fx.enable_ssr);
           imgui.Checkbox("DoF", &fx.enable_dof);
           imgui.Checkbox("MotionBlur", &fx.enable_motion_blur);
@@ -711,6 +750,8 @@ int main(int argc, char** argv) {
           imgui.SliderFloat("Shadow bias", &fx.shadow_bias, 0.0001f, 0.02f);
           imgui.SliderFloat("Specular power", &fx.specular_power, 1.f, 128.f);
           imgui.SliderFloat("Local light scale", &fx.local_intensity_scale, 0.f, 4.f);
+          imgui.SliderFloat("IBL intensity", &fx.ibl_intensity, 0.f, 2.f);
+          imgui.SliderFloat("Reflection intensity", &fx.reflection_intensity, 0.f, 1.5f);
           imgui.SliderInt("Shadow cascades", &fx.shadow_cascades, 1, 4);
           imgui.Separator();
           if (imgui.Button("Low", 90.f, 0.f)) {
@@ -721,6 +762,7 @@ int main(int argc, char** argv) {
             fx.enable_bloom = q.enable_bloom;
             fx.enable_ssr = q.enable_ssr;
             fx.shadow_cascades = q.shadow_cascades;
+            render.set_quality(q);
           }
           if (imgui.Button("Med", 90.f, 0.f)) {
             const auto q =
@@ -730,6 +772,7 @@ int main(int argc, char** argv) {
             fx.enable_bloom = q.enable_bloom;
             fx.enable_ssr = q.enable_ssr;
             fx.shadow_cascades = q.shadow_cascades;
+            render.set_quality(q);
           }
           if (imgui.Button("High", 90.f, 0.f)) {
             const auto q =
@@ -739,6 +782,7 @@ int main(int argc, char** argv) {
             fx.enable_bloom = q.enable_bloom;
             fx.enable_ssr = q.enable_ssr;
             fx.shadow_cascades = q.shadow_cascades;
+            render.set_quality(q);
           }
           imgui.Separator();
           if (imgui.Button("Quit", 80.f, 0.f)) {
@@ -958,7 +1002,7 @@ int main(int argc, char** argv) {
     }
 
     profiler.Begin("DrawFrame");
-    if ((app_ref.frame_index() % 8) == 1 && !use_vulkan) {
+    if ((app_ref.frame_index() % 8) == 1 && !use_vulkan && !gpu_headless_assert) {
       std::vector<engine::rhi::LitDrawItem> probe_items;
       probe_items.reserve(8);
       for (const auto& inst : scene.instances) {
@@ -982,7 +1026,10 @@ int main(int argc, char** argv) {
                                                    reflection_probe.position(), orbs,
                                                    env.sun_direction, env.sun_color, fx.sun_intensity,
                                                    env.ambient);
-          (void)faces;
+          if (!faces.empty()) {
+            (void)app_ref.device().UploadReflectionCubemap(faces.data(),
+                                                           reflection_probe.face_size());
+          }
         }
       }
       reflection_probe.ClearDirty();
@@ -993,12 +1040,42 @@ int main(int argc, char** argv) {
         !st) {
       engine::LogError(st.message());
     }
+    // Scale path: cull 1k instances → DrawLitInstanced + UploadIndirectIndexedArgs.
+    // Skip under gpu-headless assert so golden/readback stays on the lit+post main path.
+    if (!use_vulkan && !gpu_headless_assert) {
+      std::vector<engine::Mat4> visible;
+      engine::gpu_driven::IndirectDrawArgs iargs{};
+      const auto scale_vp = scene.camera.view_proj_matrix(aspect);
+      const std::uint32_t kept = engine::gpu_driven::CullInstancesToIndirect(
+          scale_worlds, {}, scale_vp, &scale_occ, visible, iargs, 36);
+      if (kept > 0) {
+        (void)app_ref.device().UploadInstanceTransforms(visible);
+        engine::rhi::LitDrawItem proto{};
+        proto.color = {0.35f, 0.55f, 0.32f, 1.f};
+        proto.metallic = 0.05f;
+        proto.roughness = 0.7f;
+        proto.use_albedo = false;
+        if (auto st = app_ref.device().DrawLitInstanced(proto, kept); !st) {
+          engine::LogError(st.message());
+        }
+        const auto packed = engine::gpu_driven::PackIndirectArgsU32(iargs);
+        (void)app_ref.device().UploadIndirectIndexedArgs(packed);
+      }
+      if ((app_ref.frame_index() % 60) == 0) {
+        engine::LogInfo("scale instances visible=" + std::to_string(kept) + "/" +
+                        std::to_string(kScaleInstances) +
+                        " hiz=" + (engine::QueryFeature("hiz") ? "1" : "0"));
+      }
+    }
     if (gpu_headless_assert) {
+      const int frames = desc.headless_frames > 0 ? desc.headless_frames : 1;
+      if (app_ref.frame_index() + 1 >= static_cast<std::uint64_t>(frames)) {
       std::vector<std::uint8_t> rgba;
       int rw = 0;
       int rh = 0;
       if (auto st = app_ref.device().ReadbackTextureStub(rgba, rw, rh); !st) {
         engine::LogError(st.message());
+        headless_assert_failed = true;
         app_ref.window().RequestClose();
       } else {
         bool all_black = true;
@@ -1013,6 +1090,7 @@ int main(int argc, char** argv) {
         }
         if (rw <= 0 || rh <= 0 || all_black || all_white) {
           engine::LogError("gpu-headless readback assertion failed (blank/white frame)");
+          headless_assert_failed = true;
           app_ref.window().RequestClose();
         }
         if (const char* dump = std::getenv("ENGINE_GOLDEN_DUMP")) {
@@ -1027,6 +1105,7 @@ int main(int argc, char** argv) {
                       static_cast<std::streamsize>(w32 * h32 * 4));
           }
         }
+      }
       }
     }
     if (harness_stdio) {
@@ -1068,9 +1147,72 @@ int main(int argc, char** argv) {
           } else {
             std::cout << engine::debug::HarnessErr("capture failed") << std::endl;
           }
-        } else if (hcmd.cmd == "frame" || hcmd.cmd == "toggle" || hcmd.cmd == "set_quality" ||
-                   hcmd.cmd == "profiler_snapshot") {
-          std::cout << engine::debug::HarnessOk("\"note\":\"accepted\"") << std::endl;
+        } else if (hcmd.cmd == "toggle") {
+          bool* flag = nullptr;
+          if (hcmd.key == "taa") {
+            flag = &fx.enable_taa;
+          } else if (hcmd.key == "ssao") {
+            flag = &fx.enable_ssao;
+          } else if (hcmd.key == "ibl") {
+            flag = &fx.enable_ibl;
+          } else if (hcmd.key == "shadows") {
+            flag = &fx.enable_shadows;
+          } else if (hcmd.key == "ssr") {
+            flag = &fx.enable_ssr;
+          } else if (hcmd.key == "bloom") {
+            flag = &fx.enable_bloom;
+          } else if (hcmd.key == "fog") {
+            flag = &fx.enable_fog;
+          } else if (hcmd.key == "reflection" || hcmd.key == "probe") {
+            flag = &fx.enable_reflection_probe;
+          }
+          if (!flag) {
+            std::cout << engine::debug::HarnessErr("unknown toggle key") << std::endl;
+          } else {
+            *flag = !*flag;
+            render.set_effect_tuning(fx);
+            std::cout << engine::debug::HarnessOk(std::string("\"key\":\"") + hcmd.key +
+                                                 "\",\"value\":" + (*flag ? "true" : "false"))
+                      << std::endl;
+          }
+        } else if (hcmd.cmd == "set_quality") {
+          engine::render::QualityTier tier = engine::render::QualityTier::Medium;
+          if (hcmd.key == "low") {
+            tier = engine::render::QualityTier::Low;
+          } else if (hcmd.key == "high") {
+            tier = engine::render::QualityTier::High;
+          } else if (hcmd.key == "medium" || hcmd.key == "med") {
+            tier = engine::render::QualityTier::Medium;
+          }
+          const auto q = engine::render::QualitySettings::FromTier(tier);
+          fx.enable_ssao = q.enable_ssao;
+          fx.enable_taa = q.enable_taa;
+          fx.enable_bloom = q.enable_bloom;
+          fx.enable_ssr = q.enable_ssr;
+          if (!(desc.gpu_headless || harness_stdio)) {
+            fx.shadow_cascades = q.shadow_cascades;
+          }
+          render.set_quality(q);
+          render.set_effect_tuning(fx);
+          std::cout << engine::debug::HarnessOk(std::string("\"tier\":\"") + hcmd.key + "\"")
+                    << std::endl;
+        } else if (hcmd.cmd == "frame") {
+          // Frame already advanced by Application::Run; acknowledge step count.
+          std::cout << engine::debug::HarnessOk(
+                           std::string("\"frame\":") + std::to_string(app_ref.frame_index()))
+                    << std::endl;
+        } else if (hcmd.cmd == "profiler_snapshot") {
+          std::string samples = "\"cpu\":[";
+          bool first = true;
+          for (const auto& [name, ms] : profiler.samples_ms()) {
+            if (!first) {
+              samples += ",";
+            }
+            first = false;
+            samples += "{\"name\":\"" + name + "\",\"ms\":" + std::to_string(ms) + "}";
+          }
+          samples += "]";
+          std::cout << engine::debug::HarnessOk(samples) << std::endl;
         } else {
           std::cout << engine::debug::HarnessErr("unknown cmd") << std::endl;
         }
@@ -1087,5 +1229,8 @@ int main(int argc, char** argv) {
     app_ref.set_ui_want_capture(app_ref.ui_want_capture() || retained->want_capture());
     profiler.End("Frame");
   });
-  return status ? 0 : 1;
+  if (!status || headless_assert_failed) {
+    return 1;
+  }
+  return 0;
 }

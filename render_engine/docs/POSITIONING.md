@@ -79,6 +79,7 @@
 9. 测试：unit + D3D12/Vulkan 冒烟；网络 loopback。  
 10. 凡三方经抽象层；遵守 STANDARDS；缺口补齐见 ADR 0023；双后端分级与 SoA 见 ADR 0024。  
 11. 工具链按 [TOOLING.md](TOOLING.md) 最小可行集落地（ADR 0025）；**引擎内不做**完整可视化内容编辑器；独立 `editor/` / C20 见 ADR 0027、HOSTING。  
+12. **Harness 保留冻结、MCP 不扩**（[PLAN.md](PLAN.md) §3.21）；CI 不依赖 MCP。测试加深 **准优先于广**（PLAN §3.1）。  
 
 ## 4. 相关文档
 

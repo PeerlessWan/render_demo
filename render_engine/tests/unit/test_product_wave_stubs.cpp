@@ -24,6 +24,41 @@ TEST_CASE("Occlusion IsVisible uses frustum placeholder", "[wave][occlusion]") {
   REQUIRE_FALSE(occ.IsVisible(hidden, vp));
 }
 
+TEST_CASE("Occlusion HiZ pyramid rejects occluded box", "[wave][occlusion][hiz]") {
+  engine::render::OcclusionBuffer occ;
+  occ.Configure(8, 8);
+  std::vector<float> depth(64, 1.f);
+  // Near depth in the center 2x2 → farther boxes project there should fail HiZ.
+  for (int y = 3; y <= 4; ++y) {
+    for (int x = 3; x <= 4; ++x) {
+      depth[static_cast<std::size_t>(y * 8 + x)] = 0.1f;
+    }
+  }
+  occ.UploadDepthFinest(depth);
+  REQUIRE(occ.has_hiz());
+  REQUIRE(engine::QueryFeature("hiz"));
+  engine::ClearFeatureOverrides();
+}
+
+TEST_CASE("CullInstancesToIndirect packs visible args", "[wave][gpu_driven]") {
+  std::vector<engine::Mat4> worlds;
+  worlds.push_back(engine::Mat4::TRS({0, 0, 0}, engine::Quat{}, {1, 1, 1}));
+  worlds.push_back(engine::Mat4::TRS({0, 0, 40}, engine::Quat{}, {1, 1, 1}));
+  engine::render::Camera cam;
+  cam.position = {0, 0, 5};
+  const auto vp = cam.view_proj_matrix(1.f);
+  std::vector<engine::Mat4> visible;
+  engine::gpu_driven::IndirectDrawArgs args{};
+  const std::uint32_t kept =
+      engine::gpu_driven::CullInstancesToIndirect(worlds, {}, vp, nullptr, visible, args, 36);
+  REQUIRE(kept >= 1);
+  REQUIRE(args.index_count_per_instance == 36);
+  REQUIRE(args.instance_count == kept);
+  const auto packed = engine::gpu_driven::PackIndirectArgsU32(args);
+  REQUIRE(packed.size() == 5);
+  REQUIRE(packed[0] == 36);
+}
+
 TEST_CASE("IndirectDrawArgs FillIndirectArgs", "[wave][gpu_driven]") {
   engine::gpu_driven::IndirectDrawArgs args{};
   engine::gpu_driven::FillIndirectArgs(args, 36, 4);

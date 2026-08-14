@@ -1448,7 +1448,10 @@ class D3D12Device final : public IDevice {
     if (probe_face_size_ == face_size && probe_face_color_ && probe_face_depth_) {
       return Status::Ok();
     }
-    WaitGpu();
+    const bool resizing = probe_face_color_ != nullptr;
+    if (resizing) {
+      WaitGpu();
+    }
     probe_face_color_.Reset();
     probe_face_depth_.Reset();
     probe_rtv_heap_.Reset();
@@ -1691,6 +1694,7 @@ class D3D12Device final : public IDevice {
     if (auto st = SetFrameLighting(saved); !st) {
       return st;
     }
+    BindSceneColorTargets();
     return Status::Ok();
   }
 

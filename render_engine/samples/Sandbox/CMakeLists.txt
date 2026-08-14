@@ -57,7 +57,7 @@ add_executable(sample_sandbox main.cpp)
 add_dependencies(sample_sandbox sample_sandbox_shaders)
 target_link_libraries(sample_sandbox PRIVATE
   engine_app engine_assets engine_physics engine_media engine_ui engine_mixed engine_render2d
-  engine_net engine_gi engine_terrain engine_vfx engine_animation engine_debug
+  engine_net engine_gi engine_terrain engine_vfx engine_animation engine_debug engine_gpu_driven
 )
 target_compile_features(sample_sandbox PRIVATE cxx_std_20)
 target_compile_definitions(sample_sandbox PRIVATE
@@ -81,6 +81,14 @@ if(ENGINE_WITH_VULKAN)
     VS_ENTRY VSMain VS_OUT lit_cube_vk.vs.spv
     PS_ENTRY PSMain PS_OUT lit_cube_vk.ps.spv
   )
+  set(_vk_post_src "${CMAKE_SOURCE_DIR}/shaders/hlsl/post_tonemap_vk.hlsl")
+  engine_compile_hlsl_spirv(
+    TARGET sample_sandbox_vk_post
+    SOURCE "${_vk_post_src}"
+    OUTPUT_DIR "${_shader_out}"
+    VS_ENTRY VSMain VS_OUT post_tonemap_vk.vs.spv
+    PS_ENTRY PSMain PS_OUT post_tonemap_vk.ps.spv
+  )
   add_custom_command(
     OUTPUT "${_vk_sh_vs}"
     COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E ShadowVS -spirv -fspv-target-env=vulkan1.1
@@ -90,5 +98,5 @@ if(ENGINE_WITH_VULKAN)
     VERBATIM
   )
   add_custom_target(sample_sandbox_vk_shadow DEPENDS "${_vk_sh_vs}")
-  add_dependencies(sample_sandbox sample_sandbox_vk_lit sample_sandbox_vk_shadow)
+  add_dependencies(sample_sandbox sample_sandbox_vk_lit sample_sandbox_vk_post sample_sandbox_vk_shadow)
 endif()

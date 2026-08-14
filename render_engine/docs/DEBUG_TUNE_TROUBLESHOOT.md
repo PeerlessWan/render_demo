@@ -193,6 +193,7 @@ ImGui Profiler 面板与控制台 `stat` 类命令同步（实现阶段命名锁
 
 ## 6. 相关文档
 
+- [TESTING.md](TESTING.md) §8 — **自动化 / 人工 / 工具**分工、覆盖水位、像素级与帧级测法  
 - [learn/DEBUG_WORKFLOW.md](learn/DEBUG_WORKFLOW.md) — PIX / RenderDoc 学习向抓帧  
 - [ARCHITECTURE.md](ARCHITECTURE.md) — Debug / UI / Profiler 在架构中的位置  
 - [PLAN.md](PLAN.md) — 里程碑与必做项  

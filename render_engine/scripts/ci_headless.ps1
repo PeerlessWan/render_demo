@@ -49,6 +49,11 @@ if ($Golden) {
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }
+  Write-Host "== run_matrix_smoke.py =="
+  & python (Join-Path $root "tests\scripts\run_matrix_smoke.py") --config $Config --build-dir $BuildDir --backend d3d12
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
 }
 
 exit 0

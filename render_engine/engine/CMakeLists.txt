@@ -250,7 +250,7 @@ add_library(engine_gpu_driven STATIC
   gpu_driven/indirect_draw.cpp
 )
 target_include_directories(engine_gpu_driven PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(engine_gpu_driven PUBLIC engine_core)
+target_link_libraries(engine_gpu_driven PUBLIC engine_core engine_rhi)
 
 add_library(engine_rt STATIC
   rt/raytracing.cpp

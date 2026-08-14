@@ -18,7 +18,7 @@
 | 模块怎么切、目录长什么样 | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | 编码/依赖/双后端约定 | [STANDARDS.md](STANDARDS.md) → [THIRD_PARTY.md](THIRD_PARTY.md) |
 | 离线烘焙与工具 | [TOOLING.md](TOOLING.md) |
-| 怎么测 | [TESTING.md](TESTING.md) |
+| 怎么测 | [TESTING.md](TESTING.md)（分层 + **§8 自动化/人工/工具与覆盖水位**） |
 | 怎么调试调优 | [DEBUG_TUNE_TROUBLESHOOT.md](DEBUG_TUNE_TROUBLESHOOT.md) |
 | 怎么学 | [learn/README.md](learn/README.md) → [learn/PATH.md](learn/PATH.md) |
 | 为何这样设计 | [learn/ADR_INDEX.md](learn/ADR_INDEX.md) |
@@ -27,7 +27,7 @@
 
 | 文档 | 说明 |
 |---|---|
-| [PLAN.md](PLAN.md) | 总验收、范围、风险锁死、里程碑、进度 |
+| [PLAN.md](PLAN.md) | 总验收、范围、风险锁死、里程碑、进度；**§3.1 测试加深** |
 | [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md) | **当前迭代** Doing / Undo / Todo 工作板 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 分层、目录树、子系统、后端能力 |
 | [POSITIONING.md](POSITIONING.md) | 是/不是、缺陷、风险锁死 |
@@ -39,7 +39,8 @@
 | [TOOLING.md](TOOLING.md) | 必要/可后置/不做工具 |
 | [STANDARDS.md](STANDARDS.md) | 编码、架构、通讯、L0/L1/L2、SoA |
 | [THIRD_PARTY.md](THIRD_PARTY.md) | 可引入三方与抽象边界 |
-| [TESTING.md](TESTING.md) | unit / integration / golden / CI |
+| [TESTING.md](TESTING.md) | unit / integration / golden / CI；**§8 分工·水位·测法** |
+| [SANDBOX_MCP.md](SANDBOX_MCP.md) | Harness 矩阵抽样（**保留冻结**）；MCP Cursor 适配（**不扩**） |
 | [DEBUG_TUNE_TROUBLESHOOT.md](DEBUG_TUNE_TROUBLESHOOT.md) | 调试·调优·排错 |
 | [GETTING_STARTED_M1.md](GETTING_STARTED_M1.md) | **M1 落地清单（可执行）** |
 

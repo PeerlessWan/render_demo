@@ -17,6 +17,7 @@ struct FeatureSet {
   bool hdr_output = false;
   bool gpu_instancing = false;
   bool execute_indirect = false;
+  bool hiz = false;
   FeatureLevel level = FeatureLevel::L0;
 };
 

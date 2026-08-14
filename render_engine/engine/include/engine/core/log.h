@@ -12,6 +12,8 @@ enum class LogLevel {
 };
 
 void set_log_level(LogLevel level);
+// When true, Info/Trace go to stderr so stdout can be reserved for harness JSON.
+void set_log_info_to_stderr(bool enabled);
 void Log(LogLevel level, std::string_view message);
 
 inline void LogInfo(std::string_view message) { Log(LogLevel::Info, message); }

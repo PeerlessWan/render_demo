@@ -1,7 +1,8 @@
 # 测试方案：单测 · 集成测试 · 自动化
 
-> 与 [PLAN.md](PLAN.md)、[DEBUG_TUNE_TROUBLESHOOT.md](DEBUG_TUNE_TROUBLESHOOT.md)、[THIRD_PARTY.md](THIRD_PARTY.md) 配套。  
-> 目标：在 **无显示器人工盯帧** 的前提下，尽可能拦截回归；渲染正确性用 **黄金图 + 阈值阈值** 兜底。
+> 与 [PLAN.md](PLAN.md)、[DEBUG_TUNE_TROUBLESHOOT.md](DEBUG_TUNE_TROUBLESHOOT.md)、[THIRD_PARTY.md](THIRD_PARTY.md)、[SANDBOX_MCP.md](SANDBOX_MCP.md) 配套。  
+> 目标：在 **无显示器人工盯帧** 的前提下，尽可能拦截回归；渲染正确性用 **黄金图 + 容差** 兜底。  
+> **不做全覆盖**：像素级 + 帧级自动化锁主路径外观与「这一帧没崩」；组合爆炸与 GPU 差异决定了只能 **抽样**。分工、水位、测法见 **§8**。加深策略（准优先于广）见 [PLAN.md](PLAN.md) **§3.1**。
 
 ## 1. 测试分层
 
@@ -26,7 +27,8 @@
 | **自动化 / 冒烟+黄金图** | 固定 GPU 机或自托管 runner    | **是** | 数分钟～十余分钟 | 渲染/驱动相关回归 |
 
 
-原则：能单测的不集成；能集成的不人工点 Sandbox。
+原则：能单测的不集成；能集成的不人工点 Sandbox。  
+谁自动化 / 谁人工 / 谁上 PIX、能覆盖多少、像素级与帧级怎么断言：见 **§8**。
 
 ---
 
@@ -276,11 +278,190 @@ scripts\ci_headless.ps1 -Golden
 
 
 
-## 8. 相关文档
+## 8. 分工、覆盖水位与测法
 
-- [PLAN.md](PLAN.md)  
+> 决策摘要见 [ADR 0018](learn/adr/0018-testing-strategy.md)。抓帧排错见 [DEBUG_TUNE_TROUBLESHOOT.md](DEBUG_TUNE_TROUBLESHOOT.md) 与 [learn/DEBUG_WORKFLOW.md](learn/DEBUG_WORKFLOW.md)。Harness 协议见 [SANDBOX_MCP.md](SANDBOX_MCP.md)。
+
+### 8.1 结论
+
+**像素级 + 帧级自动化做不到全覆盖，也不该去追。** 三路分工：
+
+| 谁 | 锁什么 | 不锁什么 |
+|---|---|---|
+| **自动化** | 逻辑回归、主路径没崩/非全黑、默认场景外观（容差内） | 观感好坏、屏障对不对、驱动独有 bug |
+| **人工** | 黄金图基线批准、画质/手感、新特性「看起来对」 | 每 PR 的穷尽点点 |
+| **工具** | Pass 顺序、屏障/布局、PSO、Device Removed | 替代 CI；不进引擎自研 PIX |
+
+判定规则（与 §1 同一原则，补一条）：**能脚本断言的不盯帧；必须看 GPU 状态才上 PIX / RenderDoc。**
+
+### 8.2 自动化测
+
+可重复、无显示器、失败含义明确。缺 GPU / 缺能力 / 缺基线 → **SKIP**，禁止假绿。
+
+| 项 | 测法 | 命令 / 入口 | 现状 |
+|---|---|---|---|
+| 纯逻辑 | 单测：epsilon / 元素相等 | `engine_unit_tests`；`ctest -L headless` | **已落地** |
+| CPU headless 集成 | 无窗口泵帧、物理射线、序列化 | 同二进制 `[headless]` | **已落地**（尚未拆 `tests/integration/`） |
+| 帧级冒烟 | `--gpu-headless` 固定 N 帧；读回拒绝全黑/全白 | `sample_sandbox --gpu-headless --backend=d3d12`；`scripts/ci_headless.ps1` | **D3D12 已落地**；VK 读回仍 stub |
+| 像素级黄金图 | 离屏 Readback → `.rgba`；RMSE + 最大通道差 | `python tests/scripts/run_golden.py`；`-Golden` | **落地**（≥1 条 Sandbox 基线；无基线 SKIP） |
+| 特性矩阵抽样 | 固定 `dt`；切质量档/TAA/阴影后再 capture | `run_matrix_smoke.py` + Harness | **落地**（d3d12 质量×toggle；VK 抽样） |
+| Harness | **保留冻结**：矩阵抽样接口；不再加命令 | `--harness-stdio`；`run_matrix_smoke.py` | **落地** |
+| MCP | **冻结**：Cursor 薄适配；不扩；CI 不依赖 | `sandbox_mcp`；本机不用可删 | **落地** |
+| Feature / 视频 | 无能力 SKIP；有能力失败 FAIL | `QueryFeature`；集成用例 | 部分落地 |
+| 网络 loopback | HTTP/WS/QUIC 回显 | 集成标签 | 按 M19 |
+| 性能冒烟 | 固定场景 N 帧，相对基线 +20% 警告 | 不与黄金图混阈值 | **可选 / 未作为门禁** |
+
+Harness：**CI 直连** `--harness-stdio` 或 `run_golden.py` / `run_matrix_smoke.py`。MCP 只给 Cursor Agent 扫开关，**不充当准确度来源、不进门禁、不再加工具**（[PLAN.md](PLAN.md) §3.21）。
+
+### 8.3 人工测
+
+自动化给不出「好不好看」或「这条基线该不该改」时才上。
+
+| 项 | 何时 | 怎么做 |
+|---|---|---|
+| **批准黄金图** | 换 GPU 族、改默认光照/相机/曝光、着色意图变化 | 确认同机 RMSE 是意图而非噪声后 `run_golden.py --approve` |
+| **画质走查** | 发版前；P0/P1 后处理/阴影/IBL 合入 | Sandbox：Low/Med/High 可感知差异；F1 关特性二分 |
+| **手感 / 相机 / 输入** | 控制方案或 WantCapture 变化 | 真窗口：键鼠手柄、UI 吃输入、DPI |
+| **新 Sample / 新 Pass「看起来对」** | 教学章或新渲染路径首次合入 | 对照 learn 章 + Debug 视图；不把观感写进 CI |
+| **黄金图失败归因** | CI 红但本地同 GPU 不过 | 先环境（驱动/分辨率）再改代码；禁止未审就覆盖基线 |
+| **多 GPU / 笔记本核显** | 发版抽样 | 人工看主路径；不为每张卡维护黄金图（按 GPU 族或放宽容差） |
+
+不做：用人工点 Sandbox 替代 unit；用「我觉得差不多」静默改基线。
+
+### 8.4 工具测
+
+引擎内排错走完再抓帧。**不自研** PIX 级帧调试器（[TOOLING.md](TOOLING.md)）。
+
+| 工具 | 测 / 查什么 | 何时用 |
+|---|---|---|
+| **D3D12 / Vulkan Validation** | API 误用、资源状态、描述符、布局 | Debug 默认开；CI 可选 Validation 冒烟（报错即 FAIL） |
+| **PIX**（D3D12） | Pass 顺序 vs FrameGraph、屏障、PSO 抖动、Pass 耗时 | 花屏/闪一帧/同步怀疑；Device Removed |
+| **RenderDoc** | VS/PS 输入、RT/纹理内容、两后端同一 Draw 对比 | 材质绑错、GBuffer 通道、VK 布局 |
+| **GPU 崩溃转储** | HRESULT / VkResult / Reason / 面包屑 | TDR、Present 失败 |
+| **DXC 编译日志** | 变体/宏导致的 PSO 失败 | 粉红材质、Keyword 缺失 |
+| **引擎内 Debug 视图 / DebugDraw / Profiler** | Albedo/Normal/Cascade/Overdraw；AABB/光锥；CPU/GPU Pass 时间 | 人工走查与调优第一轮；**先于**外部抓帧 |
+
+工具测的产出是诊断，不是 CI 绿。把抓帧结论写进 PR / 章节「建议看什么」，不要把 PIX 截图当黄金图。
+
+### 8.5 能覆盖多少（水位，非行覆盖率）
+
+下表是 **风险覆盖的主观水位**，不是 `gcov` 百分比。组合（backend × 档位 × 特性 × GPU × 驱动）不可穷尽。
+
+| 面 | 目标水位 | 靠什么 | 明确不覆盖 |
+|---|---|---|---|
+| 纯逻辑（math/config/视锥/LOD 键/序列化） | **高**：关键函数有断言 | unit | 未调用的死代码 |
+| 主演示路径存活（D3D12 Sandbox 能画、非黑） | **高** | 帧级 `gpu-headless` | VK 像素（读回 stub）；Linux 待 M18 |
+| 主演示路径外观（默认相机/档位） | **中**：1 条黄金图 + 容差 | 像素级 RMSE≤8、max_abs≤48 | bit-exact；每张 GPU 一张图 |
+| P0/P1 特性组合 | **低～中**：抽样 | 夜跑/发版矩阵；Harness 扫 | 笛卡尔积（TAA×SSAO×SSR×阴影×IBL×RT×超分×档位×后端） |
+| 资源寿命 / 屏障 / in-flight | **中**（集成 + Validation） | 单测寿命约定 + 校验层 | 所有 Pass 排列 |
+| 物理 / 音频 / 网络 | **中**：契约路径 | 集成 loopback / 解码缓冲 | 真设备声学、公网抖动 |
+| 画质与手感 | **人工发版** | 走查清单 | CI |
+| 驱动/硬件独有 | **低**：SKIP 或人工 | Feature 门控 | 全驱动矩阵 |
+
+流水线与水位对齐（落实 §4.1）：
+
+```text
+PR          → unit（逻辑高覆盖）
+merge / 每日 → GPU 帧级冒烟（主路径存活）
+每日 / 发版  → 黄金图（主路径外观）
+每周 / 发版  → 特性矩阵抽样（不是全组合）
+发版        → 人工画质走查 + 必要抓帧
+```
+
+**合计口径：** 自动化负责「主路径没崩 + 默认画面没漂 + 逻辑没回退」；人工 + 工具补上观感与 GPU 状态。宣称「像素/帧级全覆盖」视为文档跑偏。
+
+### 8.6 测法（怎么断言）
+
+#### 逻辑断言（unit / 部分 integration）
+
+- 浮点：epsilon；矩阵比元素。  
+- 场景：Transform 脏更新、视锥 vs 合成 AABB。  
+- 失败语义：`Result` / Feature 缺失可诊断，禁止吞错。
+
+#### 帧级验证（冒烟）
+
+问的是：**这一帧有没有画完、输出是否荒唐**，不是「像不像基线」。
+
+1. 固定 `headless_frames`（建议 3～8）、固定后端。  
+2. `ReadbackTextureStub` → RGBA8。  
+3. 断言：分辨率 > 0；非全黑；非全白（Sandbox `--gpu-headless`）。  
+4. 可选：平均亮度落在区间；Profiler 有上一帧 GPU 计数（无则 n/a，不红）。  
+5. 时间相关：固定 `dt`，截图前抽干异步加载。
+
+失败含义：Present/绘制/读回路径回归。TAA 开关导致的细微差 **不应** 用帧级全黑断言去抓。
+
+#### 像素级验证（黄金图）
+
+问的是：**固定场景还长得像批准过的基线吗**。
+
+1. 锁死：场景、相机、分辨率、DPI=1、档位、特性开关、`dt`、帧序号。  
+2. 离屏读回写成 `.rgba`（`u32 w` + `u32 h` + `w*h*4` RGBA8）。环境变量 `ENGINE_GOLDEN_DUMP`。  
+3. `compare_golden.py`：分辨率必须一致；**RMSE ≤ 8**（字节 0–255）；**单通道 max abs ≤ 48**（可调）。  
+4. 深度/法线比对若做，用更严阈值，且与 LDR 颜色分文件。  
+5. 基线按 **backend / OS / GPU 族** 分目录（目标）；现状仅 D3D12 一条 `sandbox_gpu_headless.rgba`。  
+6. 更新基线 **仅** `--approve`；CI 不得覆盖。
+
+不要：逐像素要求相等；为过 CI 把阈值放到无限大；无 GPU 时 FAIL（应 SKIP）。
+
+#### 特性矩阵抽样（Harness，扩覆盖面）
+
+准确度仍靠黄金图；Harness 只负责 **换配置再截**。
+
+建议抽样格（发版，非每 PR）：
+
+| 格 | 目的 |
+|---|---|
+| D3D12 × 默认 High | 主路径黄金图 |
+| D3D12 × Med × TAA off | 无历史帧时仍可画 |
+| D3D12 × 阴影 off | 直射光路径 |
+| Vulkan × 默认（Feature 允许的子集） | 对标冒烟；像素待真读回 |
+
+每格一份基线。Agent 经 MCP 扫 Feature 可以，但 **合并门禁仍跑脚本**。
+
+#### 工具测法（抓帧，不进 CTest）
+
+1. 引擎内：日志 → Debug 视图 → 关特性二分 → Profiler。  
+2. PIX：命令列表是否与 FrameGraph 一致；RT↔SRV 屏障；异常频繁的 PSO 切换。  
+3. RenderDoc：贴图绑定、RT 附件、VK 布局。  
+4. 结论用于修 bug 或补 **一条** 自动化（能变成断言的才下沉到 unit/golden）。
+
+### 8.7 按子系统速查
+
+| 子系统 | 自动化 | 人工 | 工具 |
+|---|---|---|---|
+| math / config / ActionMap / 序列化 | unit | — | — |
+| 场景抽取 / LOD 选择 / 视锥 | unit + 抽出不写回权威树 | 远景 pop 观感 | — |
+| RHI 清屏/三角/上传 | gpu 集成 + 帧级读回 | — | Validation |
+| 着色 / IBL / 阴影 / 后处理 | 黄金图抽样；开关冒烟 | 发版画质；F1 二分 | Debug 视图；PIX/RenderDoc |
+| TAA / 运动矢量 | 数学单测 + 开/关两格黄金图 | 鬼影/拖影 | 抓帧看历史 RT |
+| FrameGraph / 屏障 | 依赖编译失败用例；Validation | — | PIX 屏障 |
+| 实例化 / Indirect | Feature + 条数/回退单测；gpu 冒烟 | 大规模闪烁 | PIX Draw 次数 |
+| 物理 | Jolt 射线/堆叠集成 | 角色手感 | DebugDraw 碰撞体 |
+| 音频 | 解码到 PCM | 听感/欠载 | — |
+| 视频 | Feature SKIP/FAIL；硬解一帧 | 音画同步 | 厂商工具可选 |
+| UI | WantCapture 逻辑单测 | 真窗口点击/DPI | — |
+| 网络 | loopback 集成 | — | — |
+| DXR / DLSS / Mesh Shader | Feature 门控；无则 SKIP | 有硬件时目视 | PIX/NGX 日志 |
+| Vulkan 对标 | 能跑 + Feature 可诊断 | IBL/post 可感知 | RenderDoc + 校验层 |
+
+### 8.8 加深策略（下一档）
+
+要更高准确度 / 覆盖面：先 **确定性截帧** 与 **Vulkan 真 Readback**，再 Validation CI、learn 小场景与中间缓冲黄金图。矩阵格用现有 harness `capture` 升级为比图。可选 WARP / SSIM·FLIP / 双后端一致性。
+
+权威顺序、验收与不做项：[PLAN.md](PLAN.md) **§3.1**。不扩 Harness 命令、不扩 MCP。
+
+---
+
+
+
+## 9. 相关文档
+
+- [PLAN.md](PLAN.md)（**§3.1 测试加深策略**；§3.21 Harness/MCP 冻结）  
 - [TOOLING.md](TOOLING.md)（黄金图脚本、cook 与测试工具链边界）  
 - [THIRD_PARTY.md](THIRD_PARTY.md)（Catch2、测试数据许可）  
 - [DEBUG_TUNE_TROUBLESHOOT.md](DEBUG_TUNE_TROUBLESHOOT.md)  
+- [learn/DEBUG_WORKFLOW.md](learn/DEBUG_WORKFLOW.md)  
+- [SANDBOX_MCP.md](SANDBOX_MCP.md)  
+- [VULKAN_PARITY.md](VULKAN_PARITY.md)  
 - [ARCHITECTURE.md](ARCHITECTURE.md)
 
