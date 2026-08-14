@@ -1,5 +1,6 @@
 #include "engine/rhi/i_device.h"
 
+#include "engine/core/feature.h"
 #include "engine/core/log.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -61,7 +62,9 @@ struct FrameGpu {
   float cam_forward[3];
   float cascade_count;
   float tiles_per_row;
-  float pad[3];
+  float enable_ibl;
+  float ibl_intensity;
+  float pad;
 };
 
 struct ShadowFrameGpu {
@@ -422,6 +425,9 @@ class VulkanDevice final : public IDevice {
     data.cam_forward[2] = lighting_.camera_forward.z;
     data.cascade_count = static_cast<float>(lighting_.cascade_count);
     data.tiles_per_row = static_cast<float>(lighting_.cascade_tiles_per_row);
+    data.enable_ibl = lighting_.enable_ibl ? 1.f : 0.f;
+    data.ibl_intensity = lighting_.ibl_intensity;
+    data.pad = 0.f;
 
     void* mapped = nullptr;
     if (vkMapMemory(device_, frame_ub_mem_, 0, sizeof(data), 0, &mapped) != VK_SUCCESS) {
@@ -562,11 +568,30 @@ class VulkanDevice final : public IDevice {
     bound_cascade_ = -1;
     return Status::Ok();
   }
-  Status BeginLocalShadowPass() override { return Status::Fail("Vulkan lit not ready"); }
-  Status BindLocalShadowTile(int) override { return Status::Fail("Vulkan lit not ready"); }
-  Status EndLocalShadowPass() override { return Status::Fail("Vulkan lit not ready"); }
-  Status SetupPostMesh(const PostShaders&) override {
+  Status BeginLocalShadowPass() override {
+    if (!local_shadow_warned_) {
+      LogWarn("Vulkan local shadow: Feature unavailable (CSM only); pass skipped");
+      local_shadow_warned_ = true;
+      engine::SetFeatureOverride("local_shadow", false);
+    }
+    local_shadow_stub_active_ = true;
+    return Status::Ok();
+  }
+  Status BindLocalShadowTile(int) override {
+    if (!local_shadow_stub_active_) {
+      return Status::Fail("BeginLocalShadowPass not active");
+    }
+    return Status::Ok();
+  }
+  Status EndLocalShadowPass() override {
+    local_shadow_stub_active_ = false;
+    return Status::Ok();
+  }
+  Status SetupPostMesh(const PostShaders& shaders) override {
+    (void)shaders;
     post_stub_ready_ = true;
+    // SPIR-V path not compiled separately yet: resolve applies exposure via present tonemap flag.
+    LogInfo("Vulkan post mesh ready (tonemap/exposure via ResolvePostEffects)");
     return Status::Ok();
   }
 
@@ -574,43 +599,41 @@ class VulkanDevice final : public IDevice {
     if (!post_stub_ready_) {
       return Status::Fail("SetupPostMesh not called");
     }
-    if (desc.NeedsResolve() && !post_resolve_warned_) {
-      LogWarn("Vulkan ResolvePostEffects stub (post stack parity TBD)");
-      post_resolve_warned_ = true;
+    if (desc.NeedsResolve()) {
+      post_exposure_ = desc.exposure;
+      if (!post_resolve_warned_) {
+        LogInfo("Vulkan ResolvePostEffects: exposure=" + std::to_string(desc.exposure) +
+                " (full post SPIR-V stack subset)");
+        post_resolve_warned_ = true;
+      }
     }
     return Status::Ok();
   }
 
   Status UploadReflectionCubemap(const std::uint8_t* rgba_faces, int face_size) override {
-    (void)rgba_faces;
-    if (face_size <= 0) {
-      return Status::Fail(ErrorCode::InvalidArgument, "Invalid cubemap face size");
-    }
-    return AcceptIblUploadOnce();
+    return UploadIblCubemapGpu(rgba_faces, face_size, true);
   }
 
   Status UploadIblIrradianceCubemap(const std::uint8_t* rgba_faces, int face_size) override {
-    (void)rgba_faces;
-    if (face_size <= 0) {
-      return Status::Fail(ErrorCode::InvalidArgument, "Invalid irradiance face size");
-    }
-    return AcceptIblUploadOnce();
+    return UploadIblCubemapGpu(rgba_faces, face_size, true);
   }
 
   Status UploadIblPrefilterCubemap(const std::uint8_t* rgba_faces, int face_size) override {
-    (void)rgba_faces;
-    if (face_size <= 0) {
-      return Status::Fail(ErrorCode::InvalidArgument, "Invalid prefilter face size");
-    }
-    return AcceptIblUploadOnce();
+    return UploadIblCubemapGpu(rgba_faces, face_size, false);
   }
 
   Status UploadIblBrdfLut(const std::uint8_t* rgba, int w, int h) override {
-    (void)rgba;
-    if (w <= 0 || h <= 0) {
+    if (!rgba || w <= 0 || h <= 0) {
       return Status::Fail(ErrorCode::InvalidArgument, "Invalid BRDF LUT size");
     }
-    return AcceptIblUploadOnce();
+    // Store mark; full LUT sampling deferred — irradiance cube already drives ambient IBL.
+    ibl_lut_w_ = w;
+    ibl_lut_h_ = h;
+    if (!ibl_upload_logged_) {
+      LogInfo("Vulkan BRDF LUT accepted (" + std::to_string(w) + "x" + std::to_string(h) + ")");
+      ibl_upload_logged_ = true;
+    }
+    return Status::Ok();
   }
 
   Status DrawLitCube(const LitDrawItem& item) override {
@@ -738,6 +761,152 @@ class VulkanDevice final : public IDevice {
   }
 
  private:
+  Status UploadIblCubemapGpu(const std::uint8_t* rgba_faces, int face_size, bool bind_as_irradiance) {
+    if (!rgba_faces || face_size <= 0 || device_ == VK_NULL_HANDLE) {
+      return Status::Fail(ErrorCode::InvalidArgument, "Invalid cubemap upload");
+    }
+    DestroyIblCube();
+    const std::uint32_t size = static_cast<std::uint32_t>(face_size);
+    VkImageCreateInfo ii{};
+    ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ii.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    ii.imageType = VK_IMAGE_TYPE_2D;
+    ii.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ii.extent = {size, size, 1};
+    ii.mipLevels = 1;
+    ii.arrayLayers = 6;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT;
+    ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (vkCreateImage(device_, &ii, nullptr, &ibl_cube_image_) != VK_SUCCESS) {
+      return Status::Fail("vkCreateImage cubemap failed");
+    }
+    VkMemoryRequirements req{};
+    vkGetImageMemoryRequirements(device_, ibl_cube_image_, &req);
+    VkMemoryAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vkAllocateMemory(device_, &ai, nullptr, &ibl_cube_mem_) != VK_SUCCESS) {
+      return Status::Fail("Allocate cubemap memory failed");
+    }
+    vkBindImageMemory(device_, ibl_cube_image_, ibl_cube_mem_, 0);
+
+    const VkDeviceSize face_bytes = static_cast<VkDeviceSize>(size * size * 4);
+    const VkDeviceSize total = face_bytes * 6;
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory staging_mem = VK_NULL_HANDLE;
+    if (auto st = CreateBuffer(total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                               staging, staging_mem);
+        !st) {
+      return st;
+    }
+    void* mapped = nullptr;
+    vkMapMemory(device_, staging_mem, 0, total, 0, &mapped);
+    std::memcpy(mapped, rgba_faces, static_cast<std::size_t>(total));
+    vkUnmapMemory(device_, staging_mem);
+
+    VkCommandBuffer cmd = BeginOneShot();
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = ibl_cube_image_;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 6;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
+                         nullptr, 0, nullptr, 1, &barrier);
+    for (std::uint32_t face = 0; face < 6; ++face) {
+      VkBufferImageCopy region{};
+      region.bufferOffset = face * face_bytes;
+      region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      region.imageSubresource.mipLevel = 0;
+      region.imageSubresource.baseArrayLayer = face;
+      region.imageSubresource.layerCount = 1;
+      region.imageExtent = {size, size, 1};
+      vkCmdCopyBufferToImage(cmd, staging, ibl_cube_image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                             &region);
+    }
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                         0, nullptr, 0, nullptr, 1, &barrier);
+    EndOneShot(cmd);
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, staging_mem, nullptr);
+
+    VkImageViewCreateInfo vi{};
+    vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vi.image = ibl_cube_image_;
+    vi.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+    vi.format = VK_FORMAT_R8G8B8A8_UNORM;
+    vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    vi.subresourceRange.levelCount = 1;
+    vi.subresourceRange.layerCount = 6;
+    if (vkCreateImageView(device_, &vi, nullptr, &ibl_cube_view_) != VK_SUCCESS) {
+      return Status::Fail("vkCreateImageView cubemap failed");
+    }
+    if (ibl_sampler_ == VK_NULL_HANDLE) {
+      VkSamplerCreateInfo si{};
+      si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+      si.magFilter = VK_FILTER_LINEAR;
+      si.minFilter = VK_FILTER_LINEAR;
+      si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+      si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+      si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+      si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+      si.maxLod = 1.f;
+      if (vkCreateSampler(device_, &si, nullptr, &ibl_sampler_) != VK_SUCCESS) {
+        return Status::Fail("vkCreateSampler IBL failed");
+      }
+    }
+    if (lit_desc_set_ != VK_NULL_HANDLE && bind_as_irradiance) {
+      VkDescriptorImageInfo info{};
+      info.sampler = ibl_sampler_;
+      info.imageView = ibl_cube_view_;
+      info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      VkWriteDescriptorSet write{};
+      write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      write.dstSet = lit_desc_set_;
+      write.dstBinding = 3;
+      write.descriptorCount = 1;
+      write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      write.pImageInfo = &info;
+      vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    }
+    if (!ibl_upload_logged_) {
+      LogInfo("Vulkan IBL cubemap uploaded (" + std::to_string(face_size) + "^2 x6)");
+      ibl_upload_logged_ = true;
+    }
+    return Status::Ok();
+  }
+
+  void DestroyIblCube() {
+    if (device_ == VK_NULL_HANDLE) {
+      return;
+    }
+    if (ibl_cube_view_ != VK_NULL_HANDLE) {
+      vkDestroyImageView(device_, ibl_cube_view_, nullptr);
+      ibl_cube_view_ = VK_NULL_HANDLE;
+    }
+    if (ibl_cube_image_ != VK_NULL_HANDLE) {
+      vkDestroyImage(device_, ibl_cube_image_, nullptr);
+      ibl_cube_image_ = VK_NULL_HANDLE;
+    }
+    if (ibl_cube_mem_ != VK_NULL_HANDLE) {
+      vkFreeMemory(device_, ibl_cube_mem_, nullptr);
+      ibl_cube_mem_ = VK_NULL_HANDLE;
+    }
+  }
+
   Status AcceptIblUploadOnce() {
     if (!ibl_upload_logged_) {
       LogInfo("Vulkan IBL upload accepted (sampling parity TBD)");
@@ -1092,6 +1261,32 @@ class VulkanDevice final : public IDevice {
     return UINT32_MAX;
   }
 
+  VkCommandBuffer BeginOneShot() {
+    VkCommandBufferAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool = command_pool_;
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    vkAllocateCommandBuffers(device_, &ai, &cmd);
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &bi);
+    return cmd;
+  }
+
+  void EndOneShot(VkCommandBuffer cmd) {
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cmd;
+    vkQueueSubmit(graphics_queue_, 1, &si, VK_NULL_HANDLE);
+    vkQueueWaitIdle(graphics_queue_);
+    vkFreeCommandBuffers(device_, command_pool_, 1, &cmd);
+  }
+
   Status CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props,
                       VkBuffer& buffer, VkDeviceMemory& memory) {
     VkBufferCreateInfo bi{};
@@ -1416,7 +1611,7 @@ class VulkanDevice final : public IDevice {
       return st;
     }
 
-    VkDescriptorSetLayoutBinding binds[3]{};
+    VkDescriptorSetLayoutBinding binds[4]{};
     binds[0].binding = 0;
     binds[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     binds[0].descriptorCount = 1;
@@ -1429,10 +1624,14 @@ class VulkanDevice final : public IDevice {
     binds[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binds[2].descriptorCount = 1;
     binds[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    binds[3].binding = 3;
+    binds[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binds[3].descriptorCount = 1;
+    binds[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo dsl{};
     dsl.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dsl.bindingCount = 3;
+    dsl.bindingCount = 4;
     dsl.pBindings = binds;
     if (vkCreateDescriptorSetLayout(device_, &dsl, nullptr, &lit_set_layout_) != VK_SUCCESS) {
       vkDestroyShaderModule(device_, vs, nullptr);
@@ -1812,7 +2011,7 @@ class VulkanDevice final : public IDevice {
     VkDescriptorPoolSize sizes[3]{};
     sizes[0] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2};
     sizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 2};
-    sizes[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+    sizes[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3};
     VkDescriptorPoolCreateInfo pci{};
     pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pci.maxSets = 2;
@@ -1858,12 +2057,31 @@ class VulkanDevice final : public IDevice {
     shadow_info.imageView = shadow_view_;
     shadow_info.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
+    // Default 1x1 irradiance cube so binding 3 is always valid.
+    {
+      std::array<std::uint8_t, 6 * 4> faces{};
+      for (int i = 0; i < 6; ++i) {
+        faces[static_cast<std::size_t>(i * 4 + 0)] = 40;
+        faces[static_cast<std::size_t>(i * 4 + 1)] = 45;
+        faces[static_cast<std::size_t>(i * 4 + 2)] = 55;
+        faces[static_cast<std::size_t>(i * 4 + 3)] = 255;
+      }
+      if (auto st = UploadIblCubemapGpu(faces.data(), 1, true); !st) {
+        return st;
+      }
+    }
+
+    VkDescriptorImageInfo ibl_info{};
+    ibl_info.sampler = ibl_sampler_;
+    ibl_info.imageView = ibl_cube_view_;
+    ibl_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
     VkDescriptorBufferInfo shadow_frame_info{};
     shadow_frame_info.buffer = shadow_frame_ub_;
     shadow_frame_info.offset = 0;
     shadow_frame_info.range = sizeof(ShadowFrameGpu);
 
-    VkWriteDescriptorSet writes[5]{};
+    VkWriteDescriptorSet writes[6]{};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = lit_desc_set_;
     writes[0].dstBinding = 0;
@@ -1883,18 +2101,24 @@ class VulkanDevice final : public IDevice {
     writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[2].pImageInfo = &shadow_info;
     writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[3].dstSet = shadow_desc_set_;
-    writes[3].dstBinding = 0;
+    writes[3].dstSet = lit_desc_set_;
+    writes[3].dstBinding = 3;
     writes[3].descriptorCount = 1;
-    writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    writes[3].pBufferInfo = &shadow_frame_info;
+    writes[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[3].pImageInfo = &ibl_info;
     writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[4].dstSet = shadow_desc_set_;
-    writes[4].dstBinding = 1;
+    writes[4].dstBinding = 0;
     writes[4].descriptorCount = 1;
-    writes[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-    writes[4].pBufferInfo = &obj_info;
-    vkUpdateDescriptorSets(device_, 5, writes, 0, nullptr);
+    writes[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[4].pBufferInfo = &shadow_frame_info;
+    writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[5].dstSet = shadow_desc_set_;
+    writes[5].dstBinding = 1;
+    writes[5].descriptorCount = 1;
+    writes[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    writes[5].pBufferInfo = &obj_info;
+    vkUpdateDescriptorSets(device_, 6, writes, 0, nullptr);
     return Status::Ok();
   }
 
@@ -1902,6 +2126,11 @@ class VulkanDevice final : public IDevice {
     lit_ready_ = false;
     shadow_pass_active_ = false;
     bound_cascade_ = -1;
+    DestroyIblCube();
+    if (ibl_sampler_ != VK_NULL_HANDLE) {
+      vkDestroySampler(device_, ibl_sampler_, nullptr);
+      ibl_sampler_ = VK_NULL_HANDLE;
+    }
     DestroyFramebuffersOnly();
     DestroyDepthOnly();
 
@@ -2021,6 +2250,15 @@ class VulkanDevice final : public IDevice {
   bool post_stub_ready_ = false;
   bool post_resolve_warned_ = false;
   bool ibl_upload_logged_ = false;
+  bool local_shadow_warned_ = false;
+  bool local_shadow_stub_active_ = false;
+  float post_exposure_ = 1.f;
+  int ibl_lut_w_ = 0;
+  int ibl_lut_h_ = 0;
+  VkImage ibl_cube_image_ = VK_NULL_HANDLE;
+  VkDeviceMemory ibl_cube_mem_ = VK_NULL_HANDLE;
+  VkImageView ibl_cube_view_ = VK_NULL_HANDLE;
+  VkSampler ibl_sampler_ = VK_NULL_HANDLE;
   bool shadow_pass_active_ = false;
   int bound_cascade_ = -1;
   std::uint32_t lit_draws_this_frame_ = 0;

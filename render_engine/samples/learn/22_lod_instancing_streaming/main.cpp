@@ -1,11 +1,14 @@
 #include "engine/app/application.h"
 #include "engine/assets/asset_handle.h"
 #include "engine/assets/streaming_budget.h"
+#include "engine/core/feature.h"
 #include "engine/core/log.h"
+#include "engine/core/math.h"
 #include "engine/render/environment.h"
 #include "engine/render/instance_draw.h"
 #include "engine/render/quality.h"
 #include "engine/render/render_system.h"
+#include "engine/rhi/i_device.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -73,12 +76,16 @@ int main(int argc, char** argv) {
   engine::LogInfo("Streaming used=" + std::to_string(budget.used()) +
                   " budget=" + std::to_string(budget.budget()));
 
-  std::vector<engine::render::InstanceData> instances(4);
-  for (int i = 0; i < 4; ++i) {
+  constexpr int kInstances = 256;
+  std::vector<engine::render::InstanceData> instances(kInstances);
+  std::vector<engine::Mat4> worlds(kInstances);
+  for (int i = 0; i < kInstances; ++i) {
+    const int x = i % 16;
+    const int z = i / 16;
     engine::scene::Transform t;
-    t.position = {static_cast<float>(i) * 1.5f, 0.5f, 0.f};
-    instances[static_cast<std::size_t>(i)].world =
-        engine::Mat4::TRS(t.position, t.rotation, t.scale);
+    t.position = {static_cast<float>(x) * 1.1f - 8.f, 0.5f, static_cast<float>(z) * 1.1f - 8.f};
+    worlds[static_cast<std::size_t>(i)] = engine::Mat4::TRS(t.position, t.rotation, t.scale);
+    instances[static_cast<std::size_t>(i)].world = worlds[static_cast<std::size_t>(i)];
   }
   const auto inst_buf = engine::render::BuildInstanceBuffer(instances);
   engine::LogInfo("Instance buffer bytes=" + std::to_string(inst_buf.size()));
@@ -90,15 +97,8 @@ int main(int argc, char** argv) {
   }
 
   auto& a = *app.value();
-  for (int i = 0; i < 4; ++i) {
-    auto node = a.world().CreateNode("cube_" + std::to_string(i));
-    engine::scene::Transform t;
-    t.position = {static_cast<float>(i) * 1.2f, 0.5f, 0.f};
-    a.world().set_local_transform(node, t);
-    engine::scene::MeshRenderer mesh;
-    mesh.mesh_id = "cube";
-    a.world().set_mesh(node, mesh);
-  }
+  a.camera().position = {0.f, 12.f, 22.f};
+  a.camera().pitch = -0.55f;
 
   engine::render::Environment env;
   engine::render::RenderSystem render;
@@ -110,9 +110,35 @@ int main(int argc, char** argv) {
   const auto status = a.Run([&](engine::Application& app_ref) {
     const float dh = static_cast<float>(app_ref.window().height());
     const float aspect = dh > 0.f ? static_cast<float>(app_ref.window().width()) / dh : 1.f;
-    if (auto st = render.DrawFrame(app_ref.device(), app_ref.render_scene(), env, aspect); !st) {
+    auto& device = app_ref.device();
+    engine::rhi::FrameLighting lighting{};
+    lighting.view_proj = app_ref.camera().view_proj_matrix(aspect);
+    lighting.eye = app_ref.camera().position;
+    lighting.enable_shadows = false;
+    lighting.sun_intensity = 2.2f;
+    if (auto st = device.SetFrameLighting(lighting); !st) {
+      engine::LogError(st.message());
+      return;
+    }
+    if (auto st = device.Clear({0.12f, 0.14f, 0.18f, 1.f}); !st) {
+      engine::LogError(st.message());
+      return;
+    }
+    if (auto st = device.UploadInstanceTransforms(worlds); !st) {
+      engine::LogError(st.message());
+      return;
+    }
+    engine::rhi::LitDrawItem proto{};
+    proto.color = {0.7f, 0.75f, 0.85f, 1.f};
+    proto.metallic = 0.1f;
+    proto.roughness = 0.4f;
+    if (auto st = device.DrawLitInstanced(proto, static_cast<std::uint32_t>(kInstances)); !st) {
       engine::LogError(st.message());
     }
+    engine::LogInfo(std::string("gpu_instancing=") +
+                    (engine::QueryFeature("gpu_instancing") ? "1" : "0"));
+    (void)aspect;
+    (void)render;
   });
   return status ? 0 : 1;
 }

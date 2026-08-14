@@ -1,7 +1,10 @@
 #include "mini_test.h"
 
 #include "engine/gi/probe_volume.h"
+#include "engine/gi/scene_capture.h"
 #include "engine/gpu_driven/indirect_draw.h"
+#include "engine/core/feature.h"
+#include "engine/debug/sandbox_harness.h"
 #include "engine/media/upscaler.h"
 #include "engine/render/camera.h"
 #include "engine/render/occlusion.h"
@@ -62,4 +65,28 @@ TEST_CASE("Upscaler create and pass-through", "[wave][media]") {
   REQUIRE(upscaler->Upscale(src, 1, 1, dst, 1, 1));
   REQUIRE(dst.size() == 4);
   REQUIRE(dst[0] == 255);
+}
+
+TEST_CASE("ProbeFaceViewProj produces finite matrix", "[wave][gi]") {
+  const auto vp = engine::gi::ProbeFaceViewProj({0.f, 1.f, 0.f}, 0);
+  REQUIRE(std::isfinite(vp.m[0]));
+  REQUIRE(std::isfinite(vp.m[15]));
+}
+
+TEST_CASE("Feature overrides for gpu_instancing / execute_indirect", "[wave][feature]") {
+  engine::ClearFeatureOverrides();
+  REQUIRE_FALSE(engine::QueryFeature("gpu_instancing"));
+  engine::SetFeatureOverride("gpu_instancing", true);
+  REQUIRE(engine::QueryFeature("gpu_instancing"));
+  engine::SetFeatureOverride("execute_indirect", true);
+  REQUIRE(engine::QueryFeature("execute_indirect"));
+  engine::ClearFeatureOverrides();
+}
+
+TEST_CASE("Sandbox harness parse ping", "[wave][harness]") {
+  engine::debug::HarnessCommand cmd;
+  std::string err;
+  REQUIRE(engine::debug::ParseHarnessLine(R"({"cmd":"ping"})", cmd, err));
+  REQUIRE(cmd.cmd == "ping");
+  REQUIRE(engine::debug::HarnessOk().find("\"ok\":true") != std::string::npos);
 }

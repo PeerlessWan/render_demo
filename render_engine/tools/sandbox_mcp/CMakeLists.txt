@@ -1,0 +1,3 @@
+add_executable(sandbox_mcp main.cpp)
+target_link_libraries(sandbox_mcp PRIVATE engine_core engine_debug)
+target_compile_features(sandbox_mcp PRIVATE cxx_std_20)

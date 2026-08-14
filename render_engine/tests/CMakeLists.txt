@@ -65,3 +65,18 @@ set_tests_properties(headless.engine_unit_tests PROPERTIES LABELS "headless")
 add_test(NAME gpu_headless.sandbox
   COMMAND sample_sandbox --gpu-headless --headless_frames=4 --backend=d3d12)
 set_tests_properties(gpu_headless.sandbox PROPERTIES LABELS "gpu_headless;headless")
+
+if(ENGINE_GOLDEN_TESTS)
+  find_package(Python3 COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME golden.sandbox_gpu_headless
+      COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_SOURCE_DIR}/tests/scripts/run_golden.py"
+        --build-dir "${CMAKE_BINARY_DIR}"
+        --config "$<CONFIG>")
+    set_tests_properties(golden.sandbox_gpu_headless PROPERTIES
+      LABELS "golden;gpu_headless;headless")
+  else()
+    message(STATUS "ENGINE_GOLDEN_TESTS=ON but Python3 not found — golden CTest skipped")
+  endif()
+endif()

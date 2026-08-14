@@ -29,6 +29,8 @@ FeatureSet QueryFeatures() {
   f.multithread_submit = true;
   f.bindless = false;
   f.hdr_output = false;
+  f.gpu_instancing = false;
+  f.execute_indirect = false;
 
   std::lock_guard lock(g_feature_mu);
   auto apply = [&](const char* name, bool& dst) {
@@ -42,6 +44,8 @@ FeatureSet QueryFeatures() {
   apply("raytracing", f.raytracing);
   apply("video_decode", f.video_decode);
   apply("quic", f.quic);
+  apply("gpu_instancing", f.gpu_instancing);
+  apply("execute_indirect", f.execute_indirect);
   return f;
 }
 
@@ -61,6 +65,8 @@ bool QueryFeature(std::string_view name) {
   if (name == "multithread_submit") return f.multithread_submit;
   if (name == "bindless") return f.bindless;
   if (name == "hdr_output") return f.hdr_output;
+  if (name == "gpu_instancing") return f.gpu_instancing;
+  if (name == "execute_indirect") return f.execute_indirect;
   return false;
 }
 

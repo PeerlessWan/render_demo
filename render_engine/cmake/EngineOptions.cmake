@@ -1,4 +1,5 @@
-option(ENGINE_BUILD_TESTS "Build Catch2 unit tests" ON)
+option(ENGINE_BUILD_TESTS "Build unit tests (mini_test harness → engine_unit_tests)" ON)
+option(ENGINE_GOLDEN_TESTS "Register golden image CTest (SKIP if no baseline/GPU)" OFF)
 option(ENGINE_BUILD_SAMPLES "Build samples (01_clear, …)" ON)
 option(ENGINE_BUILD_LEARN_SAMPLES "Build learn ladder samples 03-11" ON)
 

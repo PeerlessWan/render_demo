@@ -71,4 +71,38 @@ void CaptureApproximateSceneFaces(std::vector<std::uint8_t>& rgba_faces, int fac
   }
 }
 
+Mat4 ProbeFaceViewProj(const Vec3& probe_pos, int face, float near_z, float far_z) {
+  Vec3 forward{};
+  Vec3 up{0.f, 1.f, 0.f};
+  switch (face) {
+    case 0:
+      forward = {1.f, 0.f, 0.f};
+      up = {0.f, -1.f, 0.f};
+      break;
+    case 1:
+      forward = {-1.f, 0.f, 0.f};
+      up = {0.f, -1.f, 0.f};
+      break;
+    case 2:
+      forward = {0.f, 1.f, 0.f};
+      up = {0.f, 0.f, 1.f};
+      break;
+    case 3:
+      forward = {0.f, -1.f, 0.f};
+      up = {0.f, 0.f, -1.f};
+      break;
+    case 4:
+      forward = {0.f, 0.f, 1.f};
+      up = {0.f, -1.f, 0.f};
+      break;
+    default:
+      forward = {0.f, 0.f, -1.f};
+      up = {0.f, -1.f, 0.f};
+      break;
+  }
+  const Mat4 view = Mat4::LookAt(probe_pos, probe_pos + forward, up);
+  const Mat4 proj = Mat4::Perspective(1.57079632679f, 1.f, near_z, far_z);
+  return proj * view;
+}
+
 }  // namespace engine::gi

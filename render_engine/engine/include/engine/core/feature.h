@@ -15,6 +15,8 @@ struct FeatureSet {
   bool multithread_submit = true;
   bool bindless = false;
   bool hdr_output = false;
+  bool gpu_instancing = false;
+  bool execute_indirect = false;
   FeatureLevel level = FeatureLevel::L0;
 };
 

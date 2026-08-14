@@ -20,4 +20,7 @@ void CaptureApproximateSceneFaces(std::vector<std::uint8_t>& rgba_faces, int fac
                                   const Vec3& sun_dir, const ColorRgba& sun_color, float sun_intensity,
                                   const ColorRgba& ambient);
 
+// Cube face view-projection for GPU probe capture (+X,-X,+Y,-Y,+Z,-Z).
+Mat4 ProbeFaceViewProj(const Vec3& probe_pos, int face, float near_z = 0.05f, float far_z = 80.f);
+
 }  // namespace engine::gi

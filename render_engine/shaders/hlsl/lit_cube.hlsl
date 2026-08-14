@@ -43,8 +43,11 @@ cbuffer ObjectCB : register(b1) {
   float g_use_orm;
   float g_tex_slot;
   float g_uv_scale;
-  float2 g_pad;
+  float g_use_instances;
+  float g_pad;
 };
+
+StructuredBuffer<float4x4> g_instances : register(t9);
 
 Texture2D g_shadow_map : register(t0);
 Texture2D g_albedo_map : register(t1);
@@ -75,11 +78,15 @@ struct VSOutput {
   float clip_near : SV_ClipDistance0;
 };
 
-VSOutput VSMain(VSInput input) {
+VSOutput VSMain(VSInput input, uint iid : SV_InstanceID) {
   VSOutput o;
-  float4 wp = mul(g_world, float4(input.position, 1.0f));
+  float4x4 world = g_world;
+  if (g_use_instances > 0.5f) {
+    world = g_instances[iid];
+  }
+  float4 wp = mul(world, float4(input.position, 1.0f));
   o.world_pos = wp.xyz;
-  o.world_normal = normalize(mul((float3x3)g_world, input.normal));
+  o.world_normal = normalize(mul((float3x3)world, input.normal));
   float4 curr = mul(g_view_proj, wp);
   float4 prev = mul(g_prev_view_proj, wp);
   // Sub-pixel jitter in clip space (NDC xy * w).

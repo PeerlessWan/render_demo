@@ -62,18 +62,18 @@
 
 
 
-### 2.3 技术选型
+### 2.3 技术选型（现状）
 
 
 | 项   | 选择                         |
 | --- | -------------------------- |
-| 框架  | **Catch2**（推荐）或 GoogleTest |
+| 框架  | **mini_test**（`tests/unit/mini_test.h`；Catch2 仍为可选目标，未接） |
 | 目录  | `tests/unit/**`            |
-| 目标  | `engine_tests_unit`        |
+| 目标  | **`engine_unit_tests`**    |
 | 断言  | 浮点用 epsilon；矩阵比元素          |
 
 
-CMake：`ENGINE_BUILD_TESTS=ON` 时启用。
+CMake：`ENGINE_BUILD_TESTS=ON` 时启用。集成用例目前与 unit **同二进制**（标签 `[headless]` / `[gpu_headless]`），尚无独立 `tests/integration/` 目标。
 
 ---
 
@@ -230,35 +230,45 @@ python tests/scripts/compare_golden.py
 
 
 
-## 7. 目录与目标命名（建议）
+## 7. 目录与目标命名（现状 + 最小黄金图）
 
 ```text
 tests/
   CMakeLists.txt
-  unit/...
-  integration/...
-  data/...
-  golden/baselines/...
+  unit/...                 # 已落地 → engine_unit_tests
+  golden/baselines/...     # 最小黄金图（缺基线则 SKIP）
   scripts/run_golden.py
   scripts/compare_golden.py
+  # integration/ data/     # 仍为目标方案，未建独立 suite
 ```
 
 
 | CMake 选项               | 含义            |
 | ---------------------- | ------------- |
-| `ENGINE_BUILD_TESTS`   | 构建测试          |
-| `ENGINE_RUN_GPU_TESTS` | 启用 `[gpu]` 标签 |
-| `ENGINE_GOLDEN_TESTS`  | 启用黄金图脚本目标     |
+| `ENGINE_BUILD_TESTS`   | 构建 `engine_unit_tests` |
+| `ENGINE_GOLDEN_TESTS`  | 注册黄金图 CTest（无基线/无 exe → SKIP） |
+
+本地黄金图：
+
+```bat
+python tests/scripts/run_golden.py --approve   # 生成基线
+python tests/scripts/run_golden.py            # 比对
+```
+
+Sandbox 在 `--gpu-headless` 且设置 `ENGINE_GOLDEN_DUMP=<path.rgba>` 时写出读回帧。
 
 ### Headless CI（已落地）
 
 ```bat
 ctest --test-dir build -C Debug -L headless --output-on-failure
+scripts\ci_headless.ps1
+scripts\ci_headless.ps1 -Golden
 ```
 
 - `CreateHeadlessDevice`：无 HWND，支持 Clear / DispatchCompute / ReadbackTextureStub / Present  
-- `ApplicationDesc.headless` + `headless_frames`：固定跑 N 帧后退出  
-- 标签：`headless.engine_unit_tests`（LABELS=headless）；与 `unit.engine_unit_tests` 共用同一二进制  
+- `ApplicationDesc.headless` / `gpu_headless` + `headless_frames`  
+- 标签：`headless.engine_unit_tests`、`gpu_headless.sandbox`（`--backend=d3d12`）  
+- Vulkan `gpu_headless` 仍走 CPU stub（见 [VULKAN_PARITY.md](VULKAN_PARITY.md)）
 
 
 

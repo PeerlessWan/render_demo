@@ -603,7 +603,7 @@ class D3D12Device final : public IDevice {
       return shadow_ps.status();
     }
 
-    // Lit root: CBV b0, CBV b1, table t0..t8 (shadow..brdf lut), static samplers.
+    // Lit root: CBV b0, CBV b1, table t0..t8 (pixel), root SRV t9 (instances VS).
     D3D12_DESCRIPTOR_RANGE srv_range{};
     srv_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     srv_range.NumDescriptors = 9;
@@ -611,7 +611,7 @@ class D3D12Device final : public IDevice {
     srv_range.RegisterSpace = 0;
     srv_range.OffsetInDescriptorsFromTableStart = 0;
 
-    D3D12_ROOT_PARAMETER lit_params[3]{};
+    D3D12_ROOT_PARAMETER lit_params[4]{};
     lit_params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     lit_params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     lit_params[0].Descriptor.ShaderRegister = 0;
@@ -622,6 +622,9 @@ class D3D12Device final : public IDevice {
     lit_params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     lit_params[2].DescriptorTable.NumDescriptorRanges = 1;
     lit_params[2].DescriptorTable.pDescriptorRanges = &srv_range;
+    lit_params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    lit_params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    lit_params[3].Descriptor.ShaderRegister = 9;
 
     D3D12_STATIC_SAMPLER_DESC lit_samplers[2]{};
     lit_samplers[0].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
@@ -648,7 +651,7 @@ class D3D12Device final : public IDevice {
     lit_samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
     D3D12_ROOT_SIGNATURE_DESC lit_rs{};
-    lit_rs.NumParameters = 3;
+    lit_rs.NumParameters = 4;
     lit_rs.pParameters = lit_params;
     lit_rs.NumStaticSamplers = 2;
     lit_rs.pStaticSamplers = lit_samplers;
@@ -1276,8 +1279,13 @@ class D3D12Device final : public IDevice {
       float use_orm;
       float tex_slot;
       float uv_scale;
-      float pad[2];
+      float use_instances;
+      float pad;
     };
+
+    if (instance_buf_) {
+      command_list_->SetGraphicsRootShaderResourceView(3, instance_buf_->GetGPUVirtualAddress());
+    }
 
     for (std::size_t i = 0; i < items.size(); ++i) {
       const int slot = items[i].mesh_slot;
@@ -1299,6 +1307,8 @@ class D3D12Device final : public IDevice {
       od.use_orm = items[i].use_orm ? 1.f : 0.f;
       od.tex_slot = static_cast<float>(items[i].tex_slot);
       od.uv_scale = items[i].uv_scale > 0.f ? items[i].uv_scale : 1.f;
+      od.use_instances = 0.f;
+      od.pad = 0.f;
 
       const auto offset = ObjectCbOffset(i);
       void* ptr = nullptr;
@@ -1313,6 +1323,458 @@ class D3D12Device final : public IDevice {
       command_list_->DrawIndexedInstanced(mesh_slots_[slot].index_count, 1, 0, 0, 0);
     }
     lit_draws_ += static_cast<std::uint32_t>(items.size());
+    return Status::Ok();
+  }
+
+  Status UploadInstanceTransforms(std::span<const Mat4> worlds) override {
+    instance_worlds_.assign(worlds.begin(), worlds.end());
+    if (worlds.empty() || !device_) {
+      return Status::Ok();
+    }
+    const UINT64 bytes = static_cast<UINT64>(worlds.size() * sizeof(Mat4));
+    if (!instance_buf_ || instance_buf_bytes_ < bytes) {
+      instance_buf_.Reset();
+      D3D12_HEAP_PROPERTIES upload{};
+      upload.Type = D3D12_HEAP_TYPE_UPLOAD;
+      D3D12_RESOURCE_DESC buf{};
+      buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+      buf.Width = (std::max)(bytes, static_cast<UINT64>(256 * sizeof(Mat4)));
+      buf.Height = 1;
+      buf.DepthOrArraySize = 1;
+      buf.MipLevels = 1;
+      buf.SampleDesc.Count = 1;
+      buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+      const HRESULT hr =
+          device_->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buf,
+                                           D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                           IID_PPV_ARGS(&instance_buf_));
+      if (FAILED(hr)) {
+        return Status::Fail("Create instance buffer failed: " + HrToString(hr));
+      }
+      instance_buf_bytes_ = buf.Width;
+    }
+    void* ptr = nullptr;
+    if (FAILED(instance_buf_->Map(0, nullptr, &ptr))) {
+      return Status::Fail("Map instance buffer failed");
+    }
+    std::memcpy(ptr, worlds.data(), static_cast<std::size_t>(bytes));
+    instance_buf_->Unmap(0, nullptr);
+    engine::SetFeatureOverride("gpu_instancing", true);
+    return Status::Ok();
+  }
+
+  Status DrawLitInstanced(const LitDrawItem& prototype, std::uint32_t instance_count) override {
+    if (!lit_ready_) {
+      return Status::Fail("SetupLitMesh not called");
+    }
+    if (instance_count == 0) {
+      return Status::Ok();
+    }
+    if (!instance_buf_ || instance_worlds_.size() < instance_count) {
+      return IDevice::DrawLitInstanced(prototype, instance_count);
+    }
+    BindSceneColorTargets();
+    if (shadow_map_ && shadow_map_state_ != D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) {
+      Transition(shadow_map_.Get(), shadow_map_state_,
+                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+      shadow_map_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    }
+    if (local_shadow_map_ &&
+        local_shadow_map_state_ != D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) {
+      Transition(local_shadow_map_.Get(), local_shadow_map_state_,
+                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+      local_shadow_map_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    }
+
+    command_list_->SetPipelineState(lit_pso_.Get());
+    command_list_->SetGraphicsRootSignature(lit_root_.Get());
+    command_list_->SetGraphicsRootConstantBufferView(
+        0, frame_cb_->GetGPUVirtualAddress() + FrameCbOffset());
+    ID3D12DescriptorHeap* heaps[] = {shadow_srv_heap_.Get()};
+    command_list_->SetDescriptorHeaps(1, heaps);
+    command_list_->SetGraphicsRootDescriptorTable(
+        2, shadow_srv_heap_->GetGPUDescriptorHandleForHeapStart());
+    command_list_->SetGraphicsRootShaderResourceView(3, instance_buf_->GetGPUVirtualAddress());
+    command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    const int slot = prototype.mesh_slot;
+    if (slot < 0 || slot >= kMaxMeshSlots || mesh_slots_[slot].index_count == 0) {
+      return Status::Fail("Invalid mesh for instancing");
+    }
+    command_list_->IASetVertexBuffers(0, 1, &mesh_slots_[slot].vbv);
+    command_list_->IASetIndexBuffer(&mesh_slots_[slot].ibv);
+
+    struct ObjectData {
+      float world[16];
+      float color[4];
+      float metallic;
+      float roughness;
+      float use_albedo;
+      float use_orm;
+      float tex_slot;
+      float uv_scale;
+      float use_instances;
+      float pad;
+    } od{};
+    std::memcpy(od.world, Mat4::Identity().m.data(), sizeof(od.world));
+    od.color[0] = prototype.color.r;
+    od.color[1] = prototype.color.g;
+    od.color[2] = prototype.color.b;
+    od.color[3] = prototype.color.a;
+    od.metallic = prototype.metallic;
+    od.roughness = prototype.roughness;
+    od.use_albedo = prototype.use_albedo ? 1.f : 0.f;
+    od.use_orm = prototype.use_orm ? 1.f : 0.f;
+    od.tex_slot = static_cast<float>(prototype.tex_slot);
+    od.uv_scale = prototype.uv_scale > 0.f ? prototype.uv_scale : 1.f;
+    od.use_instances = 1.f;
+
+    const auto offset = ObjectCbOffset(0);
+    void* ptr = nullptr;
+    if (FAILED(object_cb_->Map(0, nullptr, &ptr))) {
+      return Status::Fail("Map object CB failed");
+    }
+    std::memcpy(static_cast<char*>(ptr) + offset, &od, sizeof(od));
+    object_cb_->Unmap(0, nullptr);
+    command_list_->SetGraphicsRootConstantBufferView(
+        1, object_cb_->GetGPUVirtualAddress() + offset);
+    command_list_->DrawIndexedInstanced(mesh_slots_[slot].index_count, instance_count, 0, 0, 0);
+    lit_draws_ += instance_count;
+    return Status::Ok();
+  }
+
+  Status EnsureProbeFaceTargets(int face_size) {
+    face_size = (std::max)(8, face_size);
+    if (probe_face_size_ == face_size && probe_face_color_ && probe_face_depth_) {
+      return Status::Ok();
+    }
+    WaitGpu();
+    probe_face_color_.Reset();
+    probe_face_depth_.Reset();
+    probe_rtv_heap_.Reset();
+    probe_dsv_heap_.Reset();
+    probe_face_size_ = face_size;
+
+    D3D12_DESCRIPTOR_HEAP_DESC rtv_heap{};
+    rtv_heap.NumDescriptors = 1;
+    rtv_heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    HRESULT hr = device_->CreateDescriptorHeap(&rtv_heap, IID_PPV_ARGS(&probe_rtv_heap_));
+    if (FAILED(hr)) {
+      return Status::Fail("probe RTV heap failed");
+    }
+    D3D12_DESCRIPTOR_HEAP_DESC dsv_heap{};
+    dsv_heap.NumDescriptors = 1;
+    dsv_heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+    hr = device_->CreateDescriptorHeap(&dsv_heap, IID_PPV_ARGS(&probe_dsv_heap_));
+    if (FAILED(hr)) {
+      return Status::Fail("probe DSV heap failed");
+    }
+
+    D3D12_HEAP_PROPERTIES heap{};
+    heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC color{};
+    color.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    color.Width = static_cast<UINT64>(face_size);
+    color.Height = static_cast<UINT>(face_size);
+    color.DepthOrArraySize = 1;
+    color.MipLevels = 1;
+    color.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    color.SampleDesc.Count = 1;
+    color.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    D3D12_CLEAR_VALUE clear{};
+    clear.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    clear.Color[0] = 0.05f;
+    clear.Color[1] = 0.06f;
+    clear.Color[2] = 0.08f;
+    clear.Color[3] = 1.f;
+    hr = device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &color,
+                                          D3D12_RESOURCE_STATE_RENDER_TARGET, &clear,
+                                          IID_PPV_ARGS(&probe_face_color_));
+    if (FAILED(hr)) {
+      return Status::Fail("probe color RT failed");
+    }
+    device_->CreateRenderTargetView(probe_face_color_.Get(), nullptr,
+                                    probe_rtv_heap_->GetCPUDescriptorHandleForHeapStart());
+
+    D3D12_RESOURCE_DESC depth = color;
+    depth.Format = DXGI_FORMAT_D32_FLOAT;
+    depth.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    D3D12_CLEAR_VALUE dclear{};
+    dclear.Format = DXGI_FORMAT_D32_FLOAT;
+    dclear.DepthStencil.Depth = 1.f;
+    hr = device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &depth,
+                                          D3D12_RESOURCE_STATE_DEPTH_WRITE, &dclear,
+                                          IID_PPV_ARGS(&probe_face_depth_));
+    if (FAILED(hr)) {
+      return Status::Fail("probe depth RT failed");
+    }
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsv{};
+    dsv.Format = DXGI_FORMAT_D32_FLOAT;
+    dsv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    device_->CreateDepthStencilView(probe_face_depth_.Get(), &dsv,
+                                    probe_dsv_heap_->GetCPUDescriptorHandleForHeapStart());
+    return Status::Ok();
+  }
+
+  static Mat4 MakeProbeFaceVp(const Vec3& probe_pos, int face) {
+    Vec3 forward{};
+    Vec3 up{0.f, -1.f, 0.f};
+    switch (face) {
+      case 0:
+        forward = {1.f, 0.f, 0.f};
+        break;
+      case 1:
+        forward = {-1.f, 0.f, 0.f};
+        break;
+      case 2:
+        forward = {0.f, 1.f, 0.f};
+        up = {0.f, 0.f, 1.f};
+        break;
+      case 3:
+        forward = {0.f, -1.f, 0.f};
+        up = {0.f, 0.f, -1.f};
+        break;
+      case 4:
+        forward = {0.f, 0.f, 1.f};
+        break;
+      default:
+        forward = {0.f, 0.f, -1.f};
+        break;
+    }
+    return Mat4::Perspective(1.57079632679f, 1.f, 0.05f, 80.f) *
+           Mat4::LookAt(probe_pos, probe_pos + forward, up);
+  }
+
+  Status CaptureReflectionProbeGpu(const Vec3& probe_pos, int face_size,
+                                   std::span<const LitDrawItem> items) override {
+    if (!lit_ready_) {
+      return Status::Fail("SetupLitMesh not called");
+    }
+    if (auto st = EnsureProbeFaceTargets(face_size); !st) {
+      return st;
+    }
+    if (!reflection_cube_ || probe_cube_size_ != probe_face_size_) {
+      // Create/replace cubemap without WaitGpu mid-frame (safe if first use this frame).
+      reflection_cube_.Reset();
+      D3D12_RESOURCE_DESC desc{};
+      desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+      desc.Width = static_cast<UINT64>(probe_face_size_);
+      desc.Height = static_cast<UINT>(probe_face_size_);
+      desc.DepthOrArraySize = 6;
+      desc.MipLevels = 1;
+      desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+      desc.SampleDesc.Count = 1;
+      D3D12_HEAP_PROPERTIES heap{};
+      heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+      const HRESULT hr = device_->CreateCommittedResource(
+          &heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+          IID_PPV_ARGS(&reflection_cube_));
+      if (FAILED(hr)) {
+        return Status::Fail("Create probe cubemap failed");
+      }
+      probe_cube_size_ = probe_face_size_;
+      reflection_cube_state_ = D3D12_RESOURCE_STATE_COPY_DEST;
+    }
+
+    FrameLighting saved = lighting_;
+    for (int face = 0; face < 6; ++face) {
+      FrameLighting face_lighting = saved;
+      face_lighting.view_proj = MakeProbeFaceVp(probe_pos, face);
+      face_lighting.prev_view_proj = face_lighting.view_proj;
+      face_lighting.eye = probe_pos;
+      face_lighting.enable_reflection_probe = false;
+      face_lighting.enable_ibl = false;
+      face_lighting.enable_taa = false;
+      face_lighting.enable_ssao = false;
+      if (auto st = SetFrameLighting(face_lighting); !st) {
+        return st;
+      }
+
+      D3D12_CPU_DESCRIPTOR_HANDLE rtv = probe_rtv_heap_->GetCPUDescriptorHandleForHeapStart();
+      D3D12_CPU_DESCRIPTOR_HANDLE dsv = probe_dsv_heap_->GetCPUDescriptorHandleForHeapStart();
+      const float clear_color[] = {0.05f, 0.06f, 0.08f, 1.f};
+      command_list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+      command_list_->ClearRenderTargetView(rtv, clear_color, 0, nullptr);
+      command_list_->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.f, 0, 0, nullptr);
+      D3D12_VIEWPORT vp{};
+      vp.Width = static_cast<float>(probe_face_size_);
+      vp.Height = static_cast<float>(probe_face_size_);
+      vp.MaxDepth = 1.f;
+      D3D12_RECT sc{0, 0, probe_face_size_, probe_face_size_};
+      command_list_->RSSetViewports(1, &vp);
+      command_list_->RSSetScissorRects(1, &sc);
+
+      // Draw into probe face without rebinding scene color.
+      command_list_->SetPipelineState(lit_pso_.Get());
+      command_list_->SetGraphicsRootSignature(lit_root_.Get());
+      command_list_->SetGraphicsRootConstantBufferView(
+          0, frame_cb_->GetGPUVirtualAddress() + FrameCbOffset());
+      ID3D12DescriptorHeap* heaps[] = {shadow_srv_heap_.Get()};
+      command_list_->SetDescriptorHeaps(1, heaps);
+      command_list_->SetGraphicsRootDescriptorTable(
+          2, shadow_srv_heap_->GetGPUDescriptorHandleForHeapStart());
+      if (instance_buf_) {
+        command_list_->SetGraphicsRootShaderResourceView(3, instance_buf_->GetGPUVirtualAddress());
+      }
+      command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+      struct ObjectData {
+        float world[16];
+        float color[4];
+        float metallic;
+        float roughness;
+        float use_albedo;
+        float use_orm;
+        float tex_slot;
+        float uv_scale;
+        float use_instances;
+        float pad;
+      };
+      for (std::size_t i = 0; i < items.size(); ++i) {
+        const int slot = items[i].mesh_slot;
+        if (slot < 0 || slot >= kMaxMeshSlots || mesh_slots_[slot].index_count == 0) {
+          continue;
+        }
+        command_list_->IASetVertexBuffers(0, 1, &mesh_slots_[slot].vbv);
+        command_list_->IASetIndexBuffer(&mesh_slots_[slot].ibv);
+        ObjectData od{};
+        std::memcpy(od.world, items[i].world.m.data(), sizeof(od.world));
+        od.color[0] = items[i].color.r;
+        od.color[1] = items[i].color.g;
+        od.color[2] = items[i].color.b;
+        od.color[3] = items[i].color.a;
+        od.metallic = items[i].metallic;
+        od.roughness = items[i].roughness;
+        od.use_albedo = items[i].use_albedo ? 1.f : 0.f;
+        od.use_orm = items[i].use_orm ? 1.f : 0.f;
+        od.tex_slot = static_cast<float>(items[i].tex_slot);
+        od.uv_scale = items[i].uv_scale > 0.f ? items[i].uv_scale : 1.f;
+        const auto offset = ObjectCbOffset(i);
+        void* ptr = nullptr;
+        if (FAILED(object_cb_->Map(0, nullptr, &ptr))) {
+          return Status::Fail("Map object CB failed");
+        }
+        std::memcpy(static_cast<char*>(ptr) + offset, &od, sizeof(od));
+        object_cb_->Unmap(0, nullptr);
+        command_list_->SetGraphicsRootConstantBufferView(
+            1, object_cb_->GetGPUVirtualAddress() + offset);
+        command_list_->DrawIndexedInstanced(mesh_slots_[slot].index_count, 1, 0, 0, 0);
+      }
+
+      Transition(probe_face_color_.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET,
+                 D3D12_RESOURCE_STATE_COPY_SOURCE);
+      if (reflection_cube_state_ != D3D12_RESOURCE_STATE_COPY_DEST) {
+        Transition(reflection_cube_.Get(), reflection_cube_state_,
+                   D3D12_RESOURCE_STATE_COPY_DEST);
+        reflection_cube_state_ = D3D12_RESOURCE_STATE_COPY_DEST;
+      }
+      D3D12_TEXTURE_COPY_LOCATION src{};
+      src.pResource = probe_face_color_.Get();
+      src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+      src.SubresourceIndex = 0;
+      D3D12_TEXTURE_COPY_LOCATION dst{};
+      dst.pResource = reflection_cube_.Get();
+      dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+      dst.SubresourceIndex = static_cast<UINT>(face);
+      command_list_->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+      Transition(probe_face_color_.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE,
+                 D3D12_RESOURCE_STATE_RENDER_TARGET);
+    }
+    if (reflection_cube_state_ != D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) {
+      Transition(reflection_cube_.Get(), reflection_cube_state_,
+                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+      reflection_cube_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    }
+    if (auto st = BindCubeSrv(6, reflection_cube_.Get()); !st) {
+      return st;
+    }
+    if (auto st = SetFrameLighting(saved); !st) {
+      return st;
+    }
+    return Status::Ok();
+  }
+
+  Status UploadIndirectIndexedArgs(std::span<const std::uint32_t> raw_u32) override {
+    if (raw_u32.empty() || (raw_u32.size() % 5) != 0 || !device_) {
+      return Status::Fail("Invalid indirect args");
+    }
+    const UINT64 bytes = static_cast<UINT64>(raw_u32.size() * sizeof(std::uint32_t));
+    if (!indirect_args_buf_ || indirect_args_bytes_ < bytes) {
+      indirect_args_buf_.Reset();
+      D3D12_HEAP_PROPERTIES upload{};
+      upload.Type = D3D12_HEAP_TYPE_UPLOAD;
+      D3D12_RESOURCE_DESC buf{};
+      buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+      buf.Width = bytes;
+      buf.Height = 1;
+      buf.DepthOrArraySize = 1;
+      buf.MipLevels = 1;
+      buf.SampleDesc.Count = 1;
+      buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+      const HRESULT hr =
+          device_->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buf,
+                                           D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                           IID_PPV_ARGS(&indirect_args_buf_));
+      if (FAILED(hr)) {
+        return Status::Fail("Create indirect args failed");
+      }
+      indirect_args_bytes_ = bytes;
+    }
+    void* ptr = nullptr;
+    if (FAILED(indirect_args_buf_->Map(0, nullptr, &ptr))) {
+      return Status::Fail("Map indirect args failed");
+    }
+    std::memcpy(ptr, raw_u32.data(), static_cast<std::size_t>(bytes));
+    indirect_args_buf_->Unmap(0, nullptr);
+
+    if (!draw_indexed_cmd_sig_) {
+      D3D12_INDIRECT_ARGUMENT_DESC arg{};
+      arg.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
+      D3D12_COMMAND_SIGNATURE_DESC sig{};
+      sig.ByteStride = sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
+      sig.NumArgumentDescs = 1;
+      sig.pArgumentDescs = &arg;
+      const HRESULT hr =
+          device_->CreateCommandSignature(&sig, nullptr, IID_PPV_ARGS(&draw_indexed_cmd_sig_));
+      if (FAILED(hr)) {
+        return Status::Fail("CreateCommandSignature failed");
+      }
+    }
+    engine::SetFeatureOverride("execute_indirect", true);
+    return Status::Ok();
+  }
+
+  Status ExecuteIndirectIndexed(std::uint32_t draw_count) override {
+    if (!draw_indexed_cmd_sig_ || !indirect_args_buf_ || draw_count == 0) {
+      return Status::Fail("ExecuteIndirect not ready");
+    }
+    if (!lit_ready_) {
+      return Status::Fail("SetupLitMesh not called");
+    }
+    BindSceneColorTargets();
+    command_list_->SetPipelineState(lit_pso_.Get());
+    command_list_->SetGraphicsRootSignature(lit_root_.Get());
+    command_list_->SetGraphicsRootConstantBufferView(
+        0, frame_cb_->GetGPUVirtualAddress() + FrameCbOffset());
+    ID3D12DescriptorHeap* heaps[] = {shadow_srv_heap_.Get()};
+    command_list_->SetDescriptorHeaps(1, heaps);
+    command_list_->SetGraphicsRootDescriptorTable(
+        2, shadow_srv_heap_->GetGPUDescriptorHandleForHeapStart());
+    if (instance_buf_) {
+      command_list_->SetGraphicsRootShaderResourceView(3, instance_buf_->GetGPUVirtualAddress());
+    }
+    command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    // Use mesh slot 0 + object CB slot 0 (caller should have set them via prior draw setup).
+    if (mesh_slots_[0].index_count == 0) {
+      return Status::Fail("mesh slot 0 empty for ExecuteIndirect");
+    }
+    command_list_->IASetVertexBuffers(0, 1, &mesh_slots_[0].vbv);
+    command_list_->IASetIndexBuffer(&mesh_slots_[0].ibv);
+    command_list_->SetGraphicsRootConstantBufferView(
+        1, object_cb_->GetGPUVirtualAddress() + ObjectCbOffset(0));
+    command_list_->ExecuteIndirect(draw_indexed_cmd_sig_.Get(), draw_count,
+                                   indirect_args_buf_.Get(), 0, nullptr, 0);
+    lit_draws_ += draw_count;
     return Status::Ok();
   }
 
@@ -3592,6 +4054,18 @@ class D3D12Device final : public IDevice {
   ComPtr<ID3D12Resource> frame_cb_;
   ComPtr<ID3D12Resource> shadow_frame_cb_;
   ComPtr<ID3D12Resource> object_cb_;
+  ComPtr<ID3D12Resource> instance_buf_;
+  UINT64 instance_buf_bytes_ = 0;
+  ComPtr<ID3D12Resource> indirect_args_buf_;
+  UINT64 indirect_args_bytes_ = 0;
+  ComPtr<ID3D12CommandSignature> draw_indexed_cmd_sig_;
+  ComPtr<ID3D12Resource> probe_face_color_;
+  ComPtr<ID3D12Resource> probe_face_depth_;
+  ComPtr<ID3D12DescriptorHeap> probe_rtv_heap_;
+  ComPtr<ID3D12DescriptorHeap> probe_dsv_heap_;
+  int probe_face_size_ = 0;
+  int probe_cube_size_ = 0;
+  D3D12_RESOURCE_STATES reflection_cube_state_ = D3D12_RESOURCE_STATE_COMMON;
   ComPtr<ID3D12Resource> post_cb_;
   ComPtr<ID3D12Resource> quad_vb_;
   ComPtr<ID3D12RootSignature> ui_root_;

@@ -16,7 +16,9 @@ cbuffer FrameCB : register(b0) {
   float3 g_cam_forward;
   float g_cascade_count;
   float g_tiles_per_row;
-  float3 _pad_frame;
+  float g_enable_ibl;
+  float g_ibl_intensity;
+  float _pad_frame;
 };
 
 cbuffer ObjectCB : register(b1) {
@@ -29,6 +31,8 @@ cbuffer ObjectCB : register(b1) {
 
 Texture2D g_shadow_map : register(t0);
 SamplerComparisonState g_shadow_samp : register(s0);
+TextureCube g_ibl_irradiance : register(t1);
+SamplerState g_ibl_samp : register(s1);
 
 struct VSInput {
   float3 position : POSITION;
@@ -111,7 +115,12 @@ float4 PSMain(VSOutput input) : SV_Target {
                (1.0 - roughness) * lerp(0.04, 1.0, metallic);
   float sh = ShadowFactor(input.world_pos);
   float3 diffuse = base * (1.0 - metallic);
-  float3 lit = g_ambient * base + (diffuse * ndotl + g_sun_color * spec) * g_sun_intensity * sh;
+  float3 ambient = g_ambient * base;
+  if (g_enable_ibl > 0.5) {
+    float3 irr = g_ibl_irradiance.Sample(g_ibl_samp, n).rgb;
+    ambient = lerp(ambient, irr * base * g_ibl_intensity, 0.85);
+  }
+  float3 lit = ambient + (diffuse * ndotl + g_sun_color * spec) * g_sun_intensity * sh;
   return float4(lit, g_base_color.a);
 }
 

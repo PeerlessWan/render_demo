@@ -18,14 +18,14 @@
 
 | ID | 缺口 | 状态 | 里程碑 |
 |---|---|---|---|
-| G01 | 跨后端（VK） | 已排期（未开始） | M17 |
-| G19 | Linux | 已排期（未开始） | M18 |
-| G02–G04、G11 | 混合打磨 / 拣选 / 多 DPI | 已排期（未开始） | M20 |
-| G05–G10、G12 | 2D 深度 | 已排期（未开始） | M21 |
-| G14 | 动态 GI | 已排期（未开始） | M22 |
-| G15 | 地形/水体/植被（基础） | 已排期（未开始） | M23 |
-| G18 | Mesh Shader / GPU Driven | 已排期（未开始） | M24 |
-| G16 | 光追 API 对齐 | 已排期（未开始） | M25（内容管线仍非 UE 级） |
+| G01 | 跨后端（VK） | **对标加深中**（Win lit/CSM；IBL/post 本档） | M17 |
+| G19 | Linux | **文档占位 / 外置** | M18 |
+| G02–G04、G11 | 混合打磨 / 拣选 / 多 DPI | **可用加深** | M20 |
+| G05–G10、G12 | 2D 深度 | **可用加深** | M21 |
+| G14 | 动态 GI | **可用加深**（ProbeVolume） | M22 |
+| G15 | 地形/水体/植被（基础） | **可用加深** | M23 |
+| G18 | Mesh Shader / GPU Driven | **加深中**（Indirect 本档） | M24 |
+| G16 | 光追 API 对齐 | **完成（加深）** Feature 门控 | M25（内容管线仍非 UE 级） |
 | T01 | 最小工具链（shader/IBL/纹理/cook/黄金图） | 已排期 | M2–M9；见 [TOOLING.md](TOOLING.md) |
 | T02 | 图集约定 + Tiled 导入 | 已排期 | M16 |
 | R01 | Cook 依赖图 / 异步回调 / Handle 寿命 / **数据依赖与生命周期** / 逻辑渲染分离 / GPU Profiling | 已排期 | M1–M14；见 [RUNTIME_FOUNDATIONS.md](RUNTIME_FOUNDATIONS.md) |

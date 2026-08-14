@@ -264,6 +264,41 @@ class IDevice {
   virtual Status UploadIblBrdfLut(const std::uint8_t* /*rgba*/, int /*w*/, int /*h*/) {
     return Status::Ok();
   }
+
+  // GPU instancing: upload Mat4 worlds, then one DrawIndexedInstanced(instance_count).
+  // Default falls back to expanding DrawLitCubes when worlds were uploaded.
+  virtual Status UploadInstanceTransforms(std::span<const Mat4> worlds) {
+    instance_worlds_.assign(worlds.begin(), worlds.end());
+    return Status::Ok();
+  }
+  virtual Status DrawLitInstanced(const LitDrawItem& prototype, std::uint32_t instance_count) {
+    if (instance_count == 0) {
+      return Status::Ok();
+    }
+    std::vector<LitDrawItem> items(instance_count, prototype);
+    const std::size_t n = (std::min)(static_cast<std::size_t>(instance_count), instance_worlds_.size());
+    for (std::size_t i = 0; i < n; ++i) {
+      items[i].world = instance_worlds_[i];
+    }
+    return DrawLitCubes(items);
+  }
+
+  // GPU cubemap probe capture (6 faces). Default: unsupported.
+  virtual Status CaptureReflectionProbeGpu(const Vec3& /*probe_pos*/, int /*face_size*/,
+                                           std::span<const LitDrawItem> /*items*/) {
+    return Status::Fail("CaptureReflectionProbeGpu not supported on this device");
+  }
+
+  // ExecuteIndirect: 5×u32 indexed args per draw. Default: unsupported.
+  virtual Status UploadIndirectIndexedArgs(std::span<const std::uint32_t> /*raw_u32*/) {
+    return Status::Fail("UploadIndirectIndexedArgs not supported");
+  }
+  virtual Status ExecuteIndirectIndexed(std::uint32_t /*draw_count*/) {
+    return Status::Fail("ExecuteIndirectIndexed not supported");
+  }
+
+ protected:
+  std::vector<Mat4> instance_worlds_{};
 };
 
 Result<std::unique_ptr<IDevice>> CreateD3D12Device(const DeviceDesc& desc);

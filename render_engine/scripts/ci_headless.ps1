@@ -1,7 +1,8 @@
-# CI helper: CPU headless unit tests + optional GPU offscreen Sandbox.
+# CI helper: CPU headless unit tests + optional GPU offscreen Sandbox + golden.
 param(
   [string]$Config = "Debug",
-  [string]$BuildDir = ""
+  [string]$BuildDir = "",
+  [switch]$Golden
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,12 +29,26 @@ if (-not (Test-Path $sandbox)) {
   exit 0
 }
 
-Write-Host "== sample_sandbox --gpu-headless =="
-& $sandbox --gpu-headless --headless_frames=4
+Write-Host "== sample_sandbox --gpu-headless --backend=d3d12 =="
+& $sandbox --gpu-headless --headless_frames=4 --backend=d3d12
 $code = $LASTEXITCODE
 if ($code -ne 0) {
   Write-Host "[FAIL] gpu-headless exit $code"
   exit $code
 }
 Write-Host "[PASS] gpu-headless"
+
+if ($Golden) {
+  $py = Get-Command python -ErrorAction SilentlyContinue
+  if (-not $py) {
+    Write-Host "[SKIP] python missing — skip golden"
+    exit 0
+  }
+  Write-Host "== run_golden.py =="
+  & python (Join-Path $root "tests\scripts\run_golden.py") --config $Config --build-dir $BuildDir
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
+}
+
 exit 0

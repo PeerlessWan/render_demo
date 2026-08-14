@@ -6,11 +6,11 @@
 
 | ID | 项 | 目标 | 验收 |
 |---|---|---|---|
-| — | （空）D3D12 产品波次 + Learn + Vulkan 对标骨架已收口 |  |  |
+| — | （空）本档 deepen/test/MCP 已收口 |  |  |
 
 ---
 
-## Todo（下一档）
+## Todo（下一档 / 阻塞）
 
 | 优先级 | ID | 项 | 备注 |
 |---|---|---|---|
@@ -18,8 +18,9 @@
 | P2 | T-http-tls | OpenSSL HTTPS | **阻塞**：缺 SDK |
 | P3 | T-linux-m18 | Linux + Vulkan | 外置（见 LINUX_VULKAN.md） |
 | P3 | T-ground-slab | 悬浮浅色层切物体 | **搁置** |
-| P3 | T-vk-post-full | Vulkan 完整 post/点光影采样 | 矩阵见 [VULKAN_PARITY.md](VULKAN_PARITY.md) |
 | P3 | T-m14-bindless-full | 全 Bindless 迁移 | 非本口径必须 |
+| P3 | T-hiz-full | HiZ 真遮挡 | 未做 |
+| P3 | T-vk-post-spirv-full | Vulkan 全 SPIR-V post 栈 | exposure 已接；全栈可扩 |
 
 ---
 
@@ -27,10 +28,10 @@
 
 | 标签 | 值 |
 |---|---|
-| 安全基线 | `fb5c53a`（GPU headless / TAA / 探针门控） |
-| 本档回退 | 还原 IBL pack / scene_capture / learn samples / wave stubs |
+| 安全基线 | `0354878`（产品波次） |
+| 本档回退 | 还原实例化/GPU 探针/Indirect/VK IBL/golden/harness/MCP |
 
-验证：`scripts/ci_headless.ps1`；`content/ibl/ibl_pack.ibl1`；Sandbox `--gpu-headless`；`--backend=vulkan` 冒烟
+验证：`scripts/ci_headless.ps1`；unit 76+；Sandbox `--gpu-headless`；`--harness-stdio`；`sandbox_mcp`
 
 ---
 
@@ -38,14 +39,12 @@
 
 | 项 | 说明 |
 |---|---|
-| T-ibl-real | ibl_baker → `ibl_pack.ibl1` + lit 分裂和采样 |
-| T-probe-capture | `CaptureApproximateSceneFaces` 动态反射近似 |
-| T-lightmap-baker | `tools/lightmap_baker` |
-| T-learn-core | learn 必修 03–11 |
-| T-learn-electives | 12/15/16/18/19/22/24/25/26/27/29/30/32 |
-| T-wave2-4-stubs | 实例化/遮挡/indirect/upscaler/ProbeVolume/水面/图集 |
-| T-vk-parity-win | Windows Vulkan 对标骨架 + [VULKAN_PARITY.md](VULKAN_PARITY.md) |
-| T-gpu-headless | D3D12 offscreen + 读回断言 |
-| T-taa-mv | TAA + 深度重投影 |
-| T-m13-dynref | ReflectionProbe Cubemap |
-| T-m14-gates | Feature / SubmitConfig / HDR10 尝试 |
+| W-a-test | TESTING/看板/缺口对齐；`--backend=d3d12`；黄金图脚本；`ENGINE_GOLDEN_DUMP` |
+| W-b1-inst | D3D12 `DrawLitInstanced` + learn22 |
+| W-b2-probe | `CaptureReflectionProbeGpu` + CPU fallback |
+| W-b3-indirect | `UploadIndirectIndexedArgs` / `ExecuteIndirectIndexed` |
+| W-c-vk | Vulkan IBL cubemap 上传采样；local shadow Feature skip；post exposure |
+| W-d-mcp | Harness JSON + `sandbox_mcp` + [SANDBOX_MCP.md](SANDBOX_MCP.md) |
+| T-ibl-real | ibl_baker → `ibl_pack.ibl1` |
+| T-gpu-headless | D3D12 offscreen + 读回 |
+| T-learn-core/electives | learn 阶梯 |

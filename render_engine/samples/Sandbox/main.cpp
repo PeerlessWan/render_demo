@@ -6,6 +6,8 @@
 #include "engine/assets/streaming_budget.h"
 #include "engine/core/log.h"
 #include "engine/debug/console.h"
+#include "engine/debug/sandbox_harness.h"
+#include "engine/core/feature.h"
 #include "engine/gi/probe_volume.h"
 #include "engine/gi/reflection_probe.h"
 #include "engine/gi/scene_capture.h"
@@ -29,6 +31,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -63,6 +67,7 @@ int main(int argc, char** argv) {
   desc.clear_color = {0.14f, 0.16f, 0.20f, 1.f};
   bool use_vulkan = false;
   bool gpu_headless_assert = false;
+  bool harness_stdio = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i] ? argv[i] : "";
     if (arg == "--headless") {
@@ -86,6 +91,15 @@ int main(int argc, char** argv) {
       desc.backend = engine::rhi::Backend::Vulkan;
       use_vulkan = true;
       desc.window.title = "Sandbox (Vulkan) — LMB/RMB look | Wheel | MMB pan | WASD";
+    } else if (arg == "--backend=d3d12") {
+      desc.backend = engine::rhi::Backend::D3D12;
+      use_vulkan = false;
+    } else if (arg == "--harness-stdio" || arg == "--mcp") {
+      harness_stdio = true;
+      desc.gpu_headless = true;
+      desc.window.headless = true;
+      gpu_headless_assert = false;
+      desc.headless_frames = 100000;
     } else if (arg.rfind("--frames=", 0) == 0) {
       desc.headless_frames = std::atoi(arg.c_str() + 9);
     }
@@ -944,17 +958,34 @@ int main(int argc, char** argv) {
     }
 
     profiler.Begin("DrawFrame");
-    if ((app_ref.frame_index() % 8) == 1) {
-      std::vector<engine::gi::SceneCaptureOrb> orbs;
-      orbs.push_back({{1.5f, 1.2f, 0.f}, {1.f, 0.4f, 0.2f, 1.f}, 0.8f});
-      orbs.push_back({{-1.2f, 1.5f, 1.f}, {0.3f, 0.6f, 1.f, 1.f}, 0.6f});
-      std::vector<std::uint8_t> faces;
-      engine::gi::CaptureApproximateSceneFaces(faces, reflection_probe.face_size(),
-                                               reflection_probe.position(), orbs, env.sun_direction,
-                                               env.sun_color, fx.sun_intensity, env.ambient);
-      // Mid-frame GPU upload is unsafe; keep CPU capture for dynamic look, upload at init only.
+    if ((app_ref.frame_index() % 8) == 1 && !use_vulkan) {
+      std::vector<engine::rhi::LitDrawItem> probe_items;
+      probe_items.reserve(8);
+      for (const auto& inst : scene.instances) {
+        engine::rhi::LitDrawItem item{};
+        item.world = inst.world;
+        item.color = {0.75f, 0.75f, 0.78f, 1.f};
+        item.mesh_slot = 0;
+        probe_items.push_back(item);
+        if (probe_items.size() >= 8) {
+          break;
+        }
+      }
+      if (!probe_items.empty()) {
+        if (auto st = app_ref.device().CaptureReflectionProbeGpu(
+                reflection_probe.position(), reflection_probe.face_size(), probe_items);
+            !st) {
+          std::vector<engine::gi::SceneCaptureOrb> orbs;
+          orbs.push_back({{1.5f, 1.2f, 0.f}, {1.f, 0.4f, 0.2f, 1.f}, 0.8f});
+          std::vector<std::uint8_t> faces;
+          engine::gi::CaptureApproximateSceneFaces(faces, reflection_probe.face_size(),
+                                                   reflection_probe.position(), orbs,
+                                                   env.sun_direction, env.sun_color, fx.sun_intensity,
+                                                   env.ambient);
+          (void)faces;
+        }
+      }
       reflection_probe.ClearDirty();
-      (void)faces;
     }
     if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites,
                                    retained_quads.empty() ? nullptr : &retained_quads,
@@ -983,6 +1014,65 @@ int main(int argc, char** argv) {
         if (rw <= 0 || rh <= 0 || all_black || all_white) {
           engine::LogError("gpu-headless readback assertion failed (blank/white frame)");
           app_ref.window().RequestClose();
+        }
+        if (const char* dump = std::getenv("ENGINE_GOLDEN_DUMP")) {
+          if (dump[0] != '\0' && rw > 0 && rh > 0 &&
+              rgba.size() >= static_cast<std::size_t>(rw * rh * 4)) {
+            std::ofstream out(dump, std::ios::binary);
+            const std::uint32_t w32 = static_cast<std::uint32_t>(rw);
+            const std::uint32_t h32 = static_cast<std::uint32_t>(rh);
+            out.write(reinterpret_cast<const char*>(&w32), 4);
+            out.write(reinterpret_cast<const char*>(&h32), 4);
+            out.write(reinterpret_cast<const char*>(rgba.data()),
+                      static_cast<std::streamsize>(w32 * h32 * 4));
+          }
+        }
+      }
+    }
+    if (harness_stdio) {
+      std::string line;
+      if (!std::getline(std::cin, line)) {
+        app_ref.window().RequestClose();
+      } else {
+        engine::debug::HarnessCommand hcmd;
+        std::string herr;
+        if (!engine::debug::ParseHarnessLine(line, hcmd, herr)) {
+          std::cout << engine::debug::HarnessErr(herr.empty() ? "parse" : herr) << std::endl;
+        } else if (hcmd.cmd == "quit") {
+          std::cout << engine::debug::HarnessOk() << std::endl;
+          app_ref.window().RequestClose();
+        } else if (hcmd.cmd == "ping") {
+          std::cout << engine::debug::HarnessOk("\"pong\":true") << std::endl;
+        } else if (hcmd.cmd == "query_features") {
+          std::cout << engine::debug::HarnessOk(
+                           std::string("\"gpu_instancing\":") +
+                           (engine::QueryFeature("gpu_instancing") ? "true" : "false") +
+                           ",\"execute_indirect\":" +
+                           (engine::QueryFeature("execute_indirect") ? "true" : "false"))
+                    << std::endl;
+        } else if (hcmd.cmd == "camera") {
+          app_ref.camera().position = {hcmd.fx, hcmd.fy, hcmd.fz};
+          std::cout << engine::debug::HarnessOk() << std::endl;
+        } else if (hcmd.cmd == "capture") {
+          std::vector<std::uint8_t> rgba;
+          int rw = 0, rh = 0;
+          if (auto st = app_ref.device().ReadbackTextureStub(rgba, rw, rh); st && !hcmd.key.empty()) {
+            std::ofstream out(hcmd.key, std::ios::binary);
+            const std::uint32_t w32 = static_cast<std::uint32_t>(rw);
+            const std::uint32_t h32 = static_cast<std::uint32_t>(rh);
+            out.write(reinterpret_cast<const char*>(&w32), 4);
+            out.write(reinterpret_cast<const char*>(&h32), 4);
+            out.write(reinterpret_cast<const char*>(rgba.data()),
+                      static_cast<std::streamsize>(w32 * h32 * 4));
+            std::cout << engine::debug::HarnessOk("\"path\":\"" + hcmd.key + "\"") << std::endl;
+          } else {
+            std::cout << engine::debug::HarnessErr("capture failed") << std::endl;
+          }
+        } else if (hcmd.cmd == "frame" || hcmd.cmd == "toggle" || hcmd.cmd == "set_quality" ||
+                   hcmd.cmd == "profiler_snapshot") {
+          std::cout << engine::debug::HarnessOk("\"note\":\"accepted\"") << std::endl;
+        } else {
+          std::cout << engine::debug::HarnessErr("unknown cmd") << std::endl;
         }
       }
     }

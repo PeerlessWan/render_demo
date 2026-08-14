@@ -83,6 +83,7 @@ target_link_libraries(engine_scene PUBLIC engine_core)
 add_library(engine_debug STATIC
   debug/debug_draw.cpp
   debug/console.cpp
+  debug/sandbox_harness.cpp
 )
 target_include_directories(engine_debug PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_debug PUBLIC engine_core)
