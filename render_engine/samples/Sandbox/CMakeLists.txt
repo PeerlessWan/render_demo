@@ -64,6 +64,9 @@ target_link_libraries(sample_sandbox PRIVATE
   engine_app engine_assets engine_physics engine_media engine_ui engine_mixed engine_render2d
   engine_net engine_gi engine_terrain engine_vfx engine_animation engine_debug engine_gpu_driven
 )
+if(WIN32)
+  target_link_libraries(sample_sandbox PRIVATE psapi)
+endif()
 target_compile_features(sample_sandbox PRIVATE cxx_std_20)
 target_compile_definitions(sample_sandbox PRIVATE
   ENGINE_SHADER_DIR_A="${_shader_out_def}"

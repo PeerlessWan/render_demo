@@ -38,12 +38,14 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
+#include <psapi.h>
 
 #ifndef ENGINE_SHADER_DIR_A
 #error "ENGINE_SHADER_DIR_A must be set by CMake"
@@ -59,6 +61,104 @@ engine::assets::ImageRgba8 ArmToOrm(const engine::assets::ImageRgba8& arm) {
   }
   return orm;
 }
+
+struct ProcessPerfSnapshot {
+  float fps = 0.f;
+  float frame_ms = 0.f;
+  float cpu_percent = 0.f;
+  float working_set_mb = 0.f;
+  float private_mb = 0.f;
+  float peak_working_set_mb = 0.f;
+  std::uint32_t page_fault_count = 0;
+};
+
+class ProcessPerfSampler {
+ public:
+  void Tick(float dt_seconds) {
+    // Accumulate every frame; publish UI snapshot at 1 Hz.
+    const float dt = (std::max)(dt_seconds, 1e-6f);
+    acc_frame_ms_ += dt * 1000.f;
+    ++acc_frames_;
+    publish_timer_ += dt;
+    published_this_tick_ = false;
+
+    FILETIME now_ft{}, create{}, exit_ft{}, kernel{}, user{};
+    GetSystemTimeAsFileTime(&now_ft);
+    if (GetProcessTimes(GetCurrentProcess(), &create, &exit_ft, &kernel, &user)) {
+      ULARGE_INTEGER now{}, k{}, u{};
+      now.LowPart = now_ft.dwLowDateTime;
+      now.HighPart = now_ft.dwHighDateTime;
+      k.LowPart = kernel.dwLowDateTime;
+      k.HighPart = kernel.dwHighDateTime;
+      u.LowPart = user.dwLowDateTime;
+      u.HighPart = user.dwHighDateTime;
+
+      if (have_prev_) {
+        const ULONGLONG wall = now.QuadPart - prev_wall_.QuadPart;
+        const ULONGLONG cpu =
+            (k.QuadPart - prev_kernel_.QuadPart) + (u.QuadPart - prev_user_.QuadPart);
+        if (wall > 0) {
+          SYSTEM_INFO si{};
+          GetSystemInfo(&si);
+          const DWORD cores = si.dwNumberOfProcessors > 0 ? si.dwNumberOfProcessors : 1u;
+          const float pct = 100.f * static_cast<float>(cpu) /
+                            static_cast<float>(wall * static_cast<ULONGLONG>(cores));
+          acc_cpu_sum_ += pct;
+          ++acc_cpu_n_;
+        }
+      }
+      prev_wall_ = now;
+      prev_kernel_ = k;
+      prev_user_ = u;
+      have_prev_ = true;
+    }
+
+    if (publish_timer_ < 1.f) {
+      return;
+    }
+
+    ProcessPerfSnapshot s;
+    if (acc_frames_ > 0) {
+      s.frame_ms = acc_frame_ms_ / static_cast<float>(acc_frames_);
+      s.fps = 1000.f / (std::max)(s.frame_ms, 0.001f);
+    }
+    if (acc_cpu_n_ > 0) {
+      s.cpu_percent = acc_cpu_sum_ / static_cast<float>(acc_cpu_n_);
+    }
+    PROCESS_MEMORY_COUNTERS_EX pmc{};
+    pmc.cb = sizeof(pmc);
+    if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc),
+                             sizeof(pmc))) {
+      s.working_set_mb = static_cast<float>(pmc.WorkingSetSize) / (1024.f * 1024.f);
+      s.private_mb = static_cast<float>(pmc.PrivateUsage) / (1024.f * 1024.f);
+      s.peak_working_set_mb = static_cast<float>(pmc.PeakWorkingSetSize) / (1024.f * 1024.f);
+      s.page_fault_count = pmc.PageFaultCount;
+    }
+    published_ = s;
+    publish_timer_ = 0.f;
+    acc_frame_ms_ = 0.f;
+    acc_frames_ = 0;
+    acc_cpu_sum_ = 0.f;
+    acc_cpu_n_ = 0;
+    published_this_tick_ = true;
+  }
+
+  [[nodiscard]] bool JustPublished() const { return published_this_tick_; }
+  [[nodiscard]] ProcessPerfSnapshot Snapshot() const { return published_; }
+
+ private:
+  ProcessPerfSnapshot published_{};
+  float publish_timer_ = 1.f;  // first UI update ASAP
+  float acc_frame_ms_ = 0.f;
+  int acc_frames_ = 0;
+  float acc_cpu_sum_ = 0.f;
+  int acc_cpu_n_ = 0;
+  bool have_prev_ = false;
+  bool published_this_tick_ = false;
+  ULARGE_INTEGER prev_wall_{};
+  ULARGE_INTEGER prev_kernel_{};
+  ULARGE_INTEGER prev_user_{};
+};
 
 }  // namespace
 
@@ -645,7 +745,7 @@ int main(int argc, char** argv) {
   engine::scene::NodeId picked_node = engine::scene::kInvalidNode;
 
   bool panel_open = true;
-  bool profiler_open = false;
+  bool profiler_open = true;
   bool show_grid = true;
   bool show_axes = true;
   bool f1_was_down = false;
@@ -653,6 +753,10 @@ int main(int argc, char** argv) {
   bool f3_was_down = false;
   bool f4_was_down = false;
   engine::debug::Profiler profiler;
+  ProcessPerfSampler process_perf;
+  ProcessPerfSnapshot displayed_perf{};
+  std::vector<std::pair<std::string, double>> displayed_cpu_scopes;
+  std::vector<engine::rhi::GpuPassTiming> displayed_gpu_passes;
 
   std::vector<engine::render2d::Sprite> sprites;
 
@@ -727,11 +831,52 @@ int main(int argc, char** argv) {
     const float dh = static_cast<float>(app_ref.window().height());
     if (imgui_ready) {
       imgui.BeginFrame(snap, dw, dh, app_ref.delta_time());
+      process_perf.Tick(app_ref.delta_time());
+      if (process_perf.JustPublished()) {
+        displayed_perf = process_perf.Snapshot();
+        displayed_cpu_scopes.clear();
+        displayed_cpu_scopes.reserve(profiler.samples_ms().size());
+        for (const auto& [name, ms] : profiler.samples_ms()) {
+          displayed_cpu_scopes.emplace_back(name, ms);
+        }
+        displayed_gpu_passes = app_ref.device().LastGpuPassTimings();
+      }
+      const auto& perf = displayed_perf;
+
+      // Always-on performance HUD (top-right).
+      {
+        const float pw = 260.f;
+        const float ph = 148.f;
+        if (imgui.BeginWindow("Perf", dw - pw - 16.f, 16.f, pw, ph)) {
+          char line[160];
+          std::snprintf(line, sizeof(line), "FPS  %.1f", perf.fps);
+          imgui.Text(line);
+          std::snprintf(line, sizeof(line), "Frame  %.2f ms", perf.frame_ms);
+          imgui.Text(line);
+          std::snprintf(line, sizeof(line), "CPU  %.1f %%", perf.cpu_percent);
+          imgui.Text(line);
+          imgui.Separator();
+          std::snprintf(line, sizeof(line), "WS  %.1f MB", perf.working_set_mb);
+          imgui.Text(line);
+          std::snprintf(line, sizeof(line), "Private  %.1f MB", perf.private_mb);
+          imgui.Text(line);
+          std::snprintf(line, sizeof(line), "Peak WS  %.1f MB", perf.peak_working_set_mb);
+          imgui.Text(line);
+          std::snprintf(line, sizeof(line), "PageFaults  %u", perf.page_fault_count);
+          imgui.Text(line);
+        }
+        imgui.EndWindow();
+      }
 
       if (panel_open) {
         if (imgui.BeginWindow("Effects", 16.f, 48.f, 360.f, 760.f)) {
           imgui.Text("LMB/RMB drag look | Wheel zoom | MMB pan");
-          imgui.Text("WASD/QE | Shift | F1 FX | F3 grid | F4 axes");
+          imgui.Text("WASD/QE | Shift | F1 FX | F2 Profiler | F3 grid");
+          imgui.Separator();
+          char perf_line[96];
+          std::snprintf(perf_line, sizeof(perf_line), "1s avg: %.0f FPS | %.1f ms | CPU %.0f%%",
+                        perf.fps, perf.frame_ms, perf.cpu_percent);
+          imgui.Text(perf_line);
           imgui.Separator();
           imgui.Checkbox("Show grid (F3)", &show_grid);
           imgui.Checkbox("Show axes (F4)", &show_axes);
@@ -808,30 +953,37 @@ int main(int argc, char** argv) {
         }
         imgui.EndWindow();
       } else {
-        if (imgui.BeginWindow("Hint", 16.f, 16.f, 280.f, 72.f)) {
+        if (imgui.BeginWindow("Hint", 16.f, 16.f, 320.f, 88.f)) {
+          char line[128];
+          std::snprintf(line, sizeof(line), "%.0f FPS | %.1f ms | CPU %.0f%% | WS %.0f MB",
+                        perf.fps, perf.frame_ms, perf.cpu_percent, perf.working_set_mb);
+          imgui.Text(line);
           imgui.Text("F1 FX | F2 Profiler | F3 Grid | F4 Axes");
         }
         imgui.EndWindow();
       }
 
       if (profiler_open) {
-        if (imgui.BeginWindow("Profiler", 370.f, 48.f, 300.f, 280.f)) {
-          char line[128];
-          std::snprintf(line, sizeof(line), "dt=%.2f ms", app_ref.delta_time() * 1000.f);
+        if (imgui.BeginWindow("Profiler", 370.f, 48.f, 320.f, 320.f)) {
+          char line[160];
+          std::snprintf(line, sizeof(line), "1s avg  FPS %.1f | dt %.2f ms | CPU %.1f%%", perf.fps,
+                        perf.frame_ms, perf.cpu_percent);
+          imgui.Text(line);
+          std::snprintf(line, sizeof(line), "Mem WS %.1f / Priv %.1f / Peak %.1f MB",
+                        perf.working_set_mb, perf.private_mb, perf.peak_working_set_mb);
           imgui.Text(line);
           imgui.Separator();
-          imgui.Text("CPU");
-          for (const auto& [name, ms] : profiler.samples_ms()) {
+          imgui.Text("CPU scopes (1s)");
+          for (const auto& [name, ms] : displayed_cpu_scopes) {
             std::snprintf(line, sizeof(line), "  %s: %.3f ms", name.c_str(), ms);
             imgui.Text(line);
           }
           imgui.Separator();
-          imgui.Text("GPU (prev frame)");
-          const auto gpu = app_ref.device().LastGpuPassTimings();
-          if (gpu.empty()) {
+          imgui.Text("GPU (1s snapshot)");
+          if (displayed_gpu_passes.empty()) {
             imgui.Text("  (n/a on this backend)");
           } else {
-            for (const auto& t : gpu) {
+            for (const auto& t : displayed_gpu_passes) {
               std::snprintf(line, sizeof(line), "  %s: %.3f ms", t.name.c_str(), t.ms);
               imgui.Text(line);
             }
