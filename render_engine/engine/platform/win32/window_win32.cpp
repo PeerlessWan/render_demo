@@ -6,6 +6,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
+#include <imm.h>
 
 #include <memory>
 #include <string>
@@ -186,6 +187,14 @@ WindowWin32* WindowFromHwnd(HWND hwnd) {
   return reinterpret_cast<WindowWin32*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 }
 
+void DisableWindowIme(HWND hwnd) {
+  if (!hwnd) {
+    return;
+  }
+  // Detach IME context so game keys (WASD etc.) are not swallowed by composition.
+  ImmAssociateContext(hwnd, nullptr);
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
   if (msg == WM_NCCREATE) {
     auto* cs = reinterpret_cast<CREATESTRUCTW*>(lparam);
@@ -195,6 +204,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 
   if (auto* self = WindowFromHwnd(hwnd)) {
     switch (msg) {
+      case WM_SETFOCUS:
+        DisableWindowIme(hwnd);
+        break;
+      case WM_IME_SETCONTEXT:
+        // Hide IME UI; keep default processing otherwise.
+        lparam &= ~ISC_SHOWUIALL;
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+      case WM_IME_STARTCOMPOSITION:
+        return 0;
+      case WM_INPUTLANGCHANGE:
+        DisableWindowIme(hwnd);
+        break;
       case WM_SIZE: {
         const auto width = static_cast<std::uint32_t>(LOWORD(lparam));
         const auto height = static_cast<std::uint32_t>(HIWORD(lparam));
@@ -315,6 +336,7 @@ Result<std::unique_ptr<Window>> Window::Create(const WindowDesc& desc) {
   }
 
   window->AttachHwnd(hwnd);
+  DisableWindowIme(hwnd);
   ShowWindow(hwnd, desc.hidden ? SW_HIDE : SW_SHOW);
   UpdateWindow(hwnd);
   LogInfo(desc.hidden ? "Win32 window created (hidden)" : "Win32 window created");

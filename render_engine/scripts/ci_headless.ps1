@@ -55,14 +55,26 @@ if ($code -ne 0) {
 }
 Write-Host "[PASS] windowed scale-path smoke"
 
+# Shared shader dir: Debug rebuild of lit_cube.ps.cso (SM6.6 bindless) breaks a stale Release exe.
+$relSandbox = Join-Path $BuildDir "samples\Sandbox\Release\sample_sandbox.exe"
+if ($Config -ne "Release" -and (Test-Path $relSandbox)) {
+  Write-Host "== Release sample_sandbox smoke (shared shaders must match binary) =="
+  & $relSandbox --backend=d3d12 --headless_frames=12
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "[FAIL] Release sandbox exit $LASTEXITCODE — rebuild Release after shader/root-sig changes"
+    exit $LASTEXITCODE
+  }
+  Write-Host "[PASS] Release sandbox smoke"
+}
+
 if ($Golden) {
   $py = Get-Command python -ErrorAction SilentlyContinue
   if (-not $py) {
     Write-Host "[SKIP] python missing — skip golden"
     exit 0
   }
-  Write-Host "== run_golden.py (Q1 deterministic: fixed dt, TAA off, freeze phys/particles) =="
-  & python (Join-Path $root "tests\scripts\run_golden.py") --config $Config --build-dir $BuildDir
+  Write-Host "== run_golden.py (Q1+Q3+C2: sandbox/depth/learn06/learn09) =="
+  & python (Join-Path $root "tests\scripts\run_golden.py") --config $Config --build-dir $BuildDir --targets sandbox,sandbox_depth,learn06,learn09
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }

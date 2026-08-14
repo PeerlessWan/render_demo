@@ -2,9 +2,25 @@
 
 namespace engine::ui {
 
+namespace {
+
+#if defined(ENGINE_WITH_RMLUI) && ENGINE_WITH_RMLUI
+// Thin adapter: delegates to RetainedUi draw path; marks backend as RmlUi.
+// Full RML document parse / skin editor is intentionally out of this wave.
+class RmlUiThinAdapter final : public RetainedUi {
+ public:
+  using RetainedUi::RetainedUi;
+};
+#endif
+
+}  // namespace
+
 std::unique_ptr<RetainedUi> CreateRetainedUiBackend() {
-  // ENGINE_WITH_RMLUI would construct RmlUi adapter here.
+#if defined(ENGINE_WITH_RMLUI) && ENGINE_WITH_RMLUI
+  return std::make_unique<RmlUiThinAdapter>();
+#else
   return std::make_unique<RetainedUi>();
+#endif
 }
 
 RetainedUiBackendInfo QueryRetainedUiBackend() {

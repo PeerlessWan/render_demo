@@ -735,7 +735,20 @@ class VulkanDevice final : public IDevice {
     }
     post_exposure_ = desc.exposure > 0.01f ? desc.exposure : 1.f;
     post_tonemap_mode_ = desc.tonemap_mode;
+
+    VkCommandBuffer cmd = command_buffers_[frame_index_];
+    // 1) Snapshot lit color → scene_color, then sample it for tonemap.
+    if (auto st = CaptureSceneColorIntermediate(cmd); !st) {
+      LogWarn(std::string("VK scene_color intermediate: ") + st.message());
+      return st;
+    }
+    if (auto st = EnsurePostDescriptors(); !st) {
+      return st;
+    }
+    UpdatePostSceneColorDescriptor();
+
     if (!pass_active_) {
+      // Load not required — we overwrite with sampled tonemap.
       if (auto st = BeginLitRenderPass(clear_color_); !st) {
         return st;
       }
@@ -752,8 +765,9 @@ class VulkanDevice final : public IDevice {
     pc.enable_ssao = desc.enable_ssao ? 1.f : 0.f;
     pc.enable_taa = desc.enable_taa ? 1.f : 0.f;
 
-    VkCommandBuffer cmd = command_buffers_[frame_index_];
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, post_pipeline_);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, post_pipeline_layout_, 0, 1,
+                            &post_desc_set_, 0, nullptr);
     vkCmdPushConstants(cmd, post_pipeline_layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc),
                        &pc);
     VkViewport vp{};
@@ -767,17 +781,12 @@ class VulkanDevice final : public IDevice {
     vkCmdSetScissor(cmd, 0, 1, &scissor);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     used_graphics_ = true;
-
-    // Intermediate scene RT: snapshot current color into scene_color_ (transfer).
-    if (auto st = CaptureSceneColorIntermediate(cmd); !st) {
-      LogWarn(std::string("VK scene_color intermediate: ") + st.message());
-    } else {
-      post_resolved_this_frame_ = true;
-    }
+    post_resolved_this_frame_ = true;
 
     if (!post_resolve_warned_) {
-      LogInfo("Vulkan ResolvePostEffects fullscreen exposure=" + std::to_string(post_exposure_) +
-              " tonemap_mode=" + std::to_string(post_tonemap_mode_) + " (+ scene_color RT)");
+      LogInfo("Vulkan ResolvePostEffects sample scene_color exposure=" +
+              std::to_string(post_exposure_) + " tonemap_mode=" +
+              std::to_string(post_tonemap_mode_));
       post_resolve_warned_ = true;
     }
     return Status::Ok();
@@ -2066,6 +2075,25 @@ class VulkanDevice final : public IDevice {
       return st;
     }
 
+    VkDescriptorSetLayoutBinding binds[2]{};
+    binds[0].binding = 0;
+    binds[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    binds[0].descriptorCount = 1;
+    binds[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    binds[1].binding = 1;
+    binds[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    binds[1].descriptorCount = 1;
+    binds[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo dsl{};
+    dsl.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dsl.bindingCount = 2;
+    dsl.pBindings = binds;
+    if (vkCreateDescriptorSetLayout(device_, &dsl, nullptr, &post_set_layout_) != VK_SUCCESS) {
+      vkDestroyShaderModule(device_, vs, nullptr);
+      vkDestroyShaderModule(device_, ps, nullptr);
+      return Status::Fail("Create post set layout failed");
+    }
+
     VkPushConstantRange pc{};
     pc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pc.offset = 0;
@@ -2073,6 +2101,8 @@ class VulkanDevice final : public IDevice {
 
     VkPipelineLayoutCreateInfo plci{};
     plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount = 1;
+    plci.pSetLayouts = &post_set_layout_;
     plci.pushConstantRangeCount = 1;
     plci.pPushConstantRanges = &pc;
     if (vkCreatePipelineLayout(device_, &plci, nullptr, &post_pipeline_layout_) != VK_SUCCESS) {
@@ -2113,15 +2143,9 @@ class VulkanDevice final : public IDevice {
     ds.depthTestEnable = VK_FALSE;
     ds.depthWriteEnable = VK_FALSE;
 
-    // dstColor = srcColor * dstColor (exposure multiply over lit result).
+    // Replace blend: sampled tonemap writes final LDR color.
     VkPipelineColorBlendAttachmentState blend_att{};
-    blend_att.blendEnable = VK_TRUE;
-    blend_att.srcColorBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
-    blend_att.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
-    blend_att.colorBlendOp = VK_BLEND_OP_ADD;
-    blend_att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    blend_att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-    blend_att.alphaBlendOp = VK_BLEND_OP_ADD;
+    blend_att.blendEnable = VK_FALSE;
     blend_att.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     VkPipelineColorBlendStateCreateInfo blend{
@@ -2160,6 +2184,77 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
 
+  Status EnsurePostDescriptors() {
+    if (post_desc_set_ != VK_NULL_HANDLE && post_sampler_ != VK_NULL_HANDLE) {
+      return Status::Ok();
+    }
+    if (post_sampler_ == VK_NULL_HANDLE) {
+      VkSamplerCreateInfo si{};
+      si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+      si.magFilter = VK_FILTER_LINEAR;
+      si.minFilter = VK_FILTER_LINEAR;
+      si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+      si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+      si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+      si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+      if (vkCreateSampler(device_, &si, nullptr, &post_sampler_) != VK_SUCCESS) {
+        return Status::Fail("Create post sampler failed");
+      }
+    }
+    if (post_desc_pool_ == VK_NULL_HANDLE) {
+      VkDescriptorPoolSize sizes[2]{};
+      sizes[0].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+      sizes[0].descriptorCount = 1;
+      sizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+      sizes[1].descriptorCount = 1;
+      VkDescriptorPoolCreateInfo pci{};
+      pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+      pci.maxSets = 1;
+      pci.poolSizeCount = 2;
+      pci.pPoolSizes = sizes;
+      if (vkCreateDescriptorPool(device_, &pci, nullptr, &post_desc_pool_) != VK_SUCCESS) {
+        return Status::Fail("Create post desc pool failed");
+      }
+    }
+    if (post_desc_set_ == VK_NULL_HANDLE) {
+      VkDescriptorSetAllocateInfo ai{};
+      ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+      ai.descriptorPool = post_desc_pool_;
+      ai.descriptorSetCount = 1;
+      ai.pSetLayouts = &post_set_layout_;
+      if (vkAllocateDescriptorSets(device_, &ai, &post_desc_set_) != VK_SUCCESS) {
+        return Status::Fail("Allocate post desc set failed");
+      }
+    }
+    return Status::Ok();
+  }
+
+  void UpdatePostSceneColorDescriptor() {
+    if (post_desc_set_ == VK_NULL_HANDLE || scene_color_view_ == VK_NULL_HANDLE ||
+        post_sampler_ == VK_NULL_HANDLE) {
+      return;
+    }
+    VkDescriptorImageInfo img{};
+    img.imageView = scene_color_view_;
+    img.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkDescriptorImageInfo samp{};
+    samp.sampler = post_sampler_;
+    VkWriteDescriptorSet writes[2]{};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = post_desc_set_;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    writes[0].pImageInfo = &img;
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = post_desc_set_;
+    writes[1].dstBinding = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    writes[1].pImageInfo = &samp;
+    vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
+  }
+
   void DestroyPostResources() {
     post_stub_ready_ = false;
     if (post_pipeline_ != VK_NULL_HANDLE) {
@@ -2169,6 +2264,19 @@ class VulkanDevice final : public IDevice {
     if (post_pipeline_layout_ != VK_NULL_HANDLE) {
       vkDestroyPipelineLayout(device_, post_pipeline_layout_, nullptr);
       post_pipeline_layout_ = VK_NULL_HANDLE;
+    }
+    if (post_set_layout_ != VK_NULL_HANDLE) {
+      vkDestroyDescriptorSetLayout(device_, post_set_layout_, nullptr);
+      post_set_layout_ = VK_NULL_HANDLE;
+    }
+    post_desc_set_ = VK_NULL_HANDLE;
+    if (post_desc_pool_ != VK_NULL_HANDLE) {
+      vkDestroyDescriptorPool(device_, post_desc_pool_, nullptr);
+      post_desc_pool_ = VK_NULL_HANDLE;
+    }
+    if (post_sampler_ != VK_NULL_HANDLE) {
+      vkDestroySampler(device_, post_sampler_, nullptr);
+      post_sampler_ = VK_NULL_HANDLE;
     }
     if (scene_color_view_ != VK_NULL_HANDLE) {
       vkDestroyImageView(device_, scene_color_view_, nullptr);
@@ -2225,7 +2333,7 @@ class VulkanDevice final : public IDevice {
     b0.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     b0.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     b0.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    b0.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    b0.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     b0.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     b0.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     b0.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -2256,7 +2364,7 @@ class VulkanDevice final : public IDevice {
     b2.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     b2.dstAccessMask = 0;
     b2.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    b2.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    b2.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     b2.image = src;
     VkImageMemoryBarrier b3 = b1;
     b3.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -2800,6 +2908,10 @@ class VulkanDevice final : public IDevice {
   std::vector<std::uint32_t> indirect_args_cpu_;
   VkPipeline post_pipeline_ = VK_NULL_HANDLE;
   VkPipelineLayout post_pipeline_layout_ = VK_NULL_HANDLE;
+  VkDescriptorSetLayout post_set_layout_ = VK_NULL_HANDLE;
+  VkDescriptorPool post_desc_pool_ = VK_NULL_HANDLE;
+  VkDescriptorSet post_desc_set_ = VK_NULL_HANDLE;
+  VkSampler post_sampler_ = VK_NULL_HANDLE;
   VkImage scene_color_image_ = VK_NULL_HANDLE;
   VkDeviceMemory scene_color_mem_ = VK_NULL_HANDLE;
   VkImageView scene_color_view_ = VK_NULL_HANDLE;

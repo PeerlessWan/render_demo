@@ -18,6 +18,7 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <string>
 
 TEST_CASE("set_quality enables SSAO on PostStack", "[usable][ui]") {
   engine::render::RenderSystem render;
@@ -125,7 +126,12 @@ TEST_CASE("RetainedUi HitTest", "[usable]") {
 TEST_CASE("RetainedUi backend factory fallback", "[usable][ui]") {
   const auto info = engine::ui::QueryRetainedUiBackend();
   REQUIRE(info.name != nullptr);
+#if defined(ENGINE_WITH_RMLUI) && ENGINE_WITH_RMLUI
+  REQUIRE(info.is_rml);
+  REQUIRE(std::string(info.name) == "rmlui");
+#else
   REQUIRE_FALSE(info.is_rml);
+#endif
   auto backend = engine::ui::CreateRetainedUiBackend();
   REQUIRE(backend);
   backend->Button("ok", "OK", 0, 0, 40, 20);

@@ -502,7 +502,7 @@ Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
 | **M25** 光追对齐            | **完成（加深）**：RT Resolve + **CanRunDxrDemo**                                                 |
 
 
-> 无 vendor 100% 口径见看板；测试门禁：`ci_headless.ps1 -Golden`（Q1）+ matrix；可选 `-Validation`（C1）。**Harness 冻结；MCP 不进门禁。** §3.1：**Q1/Q2/C1 已落地**；Q3+ 仍后置。
+> 无 vendor 100% 口径见看板；测试门禁：`ci_headless.ps1 -Golden`（Q1+Q3+C2：sandbox/depth/learn）+ matrix；可选 `-Validation`（C1）。**Harness 冻结；MCP 不进门禁。** §3.1：**Q1–Q3 / C1–C2 已落地**；C3 矩阵比图仍后置。
 
 
 

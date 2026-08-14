@@ -94,11 +94,13 @@ Status DoRequest(std::string_view url, bool is_post, std::string_view body, Http
     return MapHttplibResult(res, out);
   } catch (const std::exception& ex) {
     out.error = std::string("httplib exception: ") + ex.what();
+#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
     // HTTPS without OpenSSL throws invalid_argument from Client ctor.
     if (parsed.is_https) {
       return Status::Fail(ErrorCode::Unavailable,
                           "HTTPS unavailable (OpenSSL not linked): " + std::string(ex.what()));
     }
+#endif
     return Status::Fail(ErrorCode::Failed, out.error);
   }
 }

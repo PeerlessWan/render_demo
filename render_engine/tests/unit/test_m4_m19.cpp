@@ -351,17 +351,42 @@ TEST_CASE("Net HTTPS without OpenSSL is Unavailable", "[net][httplib]") {
   net.Pump();
   REQUIRE(done);
 #if defined(ENGINE_WITH_HTTPLIB) && ENGINE_WITH_HTTPLIB
-#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
+#if !defined(ENGINE_WITH_OPENSSL) || !ENGINE_WITH_OPENSSL
   REQUIRE_FALSE(st);
   REQUIRE(st.code() == engine::ErrorCode::Unavailable);
   REQUIRE(err.find("HTTPS") != std::string::npos || err.find("OpenSSL") != std::string::npos ||
           err.find("https") != std::string::npos);
 #else
-  (void)err;
+  // OpenSSL linked: must not report "without OpenSSL" Unavailable (DNS/cert may Failed).
+  REQUIRE_FALSE(st);
+  REQUIRE(st.code() != engine::ErrorCode::Unavailable);
+  REQUIRE(err.find("without OpenSSL") == std::string::npos);
+  REQUIRE(err.find("OpenSSL not linked") == std::string::npos);
 #endif
 #else
   REQUIRE_FALSE(st);
   REQUIRE(st.code() == engine::ErrorCode::Unavailable);
+#endif
+}
+
+TEST_CASE("Net HTTPS with OpenSSL is not library-Unavailable", "[net][httplib][openssl]") {
+#if defined(ENGINE_WITH_HTTPLIB) && ENGINE_WITH_HTTPLIB && defined(ENGINE_WITH_OPENSSL) && ENGINE_WITH_OPENSSL
+  engine::net::NetSystem net;
+  bool done = false;
+  engine::Status st = engine::Status::Ok();
+  std::string err;
+  REQUIRE(net.http().Get("https://example.invalid/", [&](engine::Status s, engine::net::HttpResponse resp) {
+    done = true;
+    st = s;
+    err = resp.error.empty() ? s.message() : resp.error;
+  }));
+  net.Pump();
+  REQUIRE(done);
+  REQUIRE_FALSE(st);
+  REQUIRE(st.code() != engine::ErrorCode::Unavailable);
+  REQUIRE(err.find("without OpenSSL") == std::string::npos);
+#else
+  REQUIRE(true);  // SKIP: OpenSSL/cpp-httplib HTTPS not enabled
 #endif
 }
 

@@ -98,7 +98,7 @@ CMake：`ENGINE_BUILD_TESTS=ON` 时启用。集成用例目前与 unit **同二�
 | **视频**         | 当前后端 `Feature::VideoTexture*` 为真时：打开样片解码一帧；无能力 → **SKIP**；有能力但解码失败 → **FAIL** | 是       |
 | **输入**         | 合成事件注入 ActionMap（无真实设备）                                              | 否       |
 | **UI**         | Retained 布局加载；ImGui 可不测渲染，测捕获标志逻辑                                    | 可选 GPU  |
-| **网络**       | Loopback：HTTP 回显、WS 回显、QUIC 可靠流收发；TLS 可选分用例；无外网依赖               | 否        |
+| **网络**       | Loopback：HTTP 回显、WS 回显、QUIC 可靠流收发；TLS 可选分用例；无外网依赖；HTTPS 可用性随 `ENGINE_WITH_OPENSSL`（系统 SDK / `OPENSSL_ROOT_DIR`） | 否        |
 | **Resize**     | Swapchain/RT 重建后仍可 Present 或渲染到纹理                                    | 是       |
 
 

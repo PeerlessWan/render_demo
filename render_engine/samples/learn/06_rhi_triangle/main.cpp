@@ -6,8 +6,10 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
+#include <vector>
 
 #ifndef ENGINE_SHADER_DIR_A
 #error "ENGINE_SHADER_DIR_A must be set by CMake"
@@ -98,6 +100,26 @@ int main(int argc, char** argv) {
       return 1;
     }
     ++frame;
+    if (headless_frames > 0 && frame >= headless_frames) {
+      if (const char* dump = std::getenv("ENGINE_GOLDEN_DUMP")) {
+        if (dump[0] != '\0') {
+          std::vector<std::uint8_t> rgba;
+          int rw = 0;
+          int rh = 0;
+          if (auto st = device.value()->ReadbackTextureStub(rgba, rw, rh);
+              st && rw > 0 && rh > 0 &&
+              rgba.size() >= static_cast<std::size_t>(rw * rh * 4)) {
+            std::ofstream out(dump, std::ios::binary);
+            const std::uint32_t w32 = static_cast<std::uint32_t>(rw);
+            const std::uint32_t h32 = static_cast<std::uint32_t>(rh);
+            out.write(reinterpret_cast<const char*>(&w32), 4);
+            out.write(reinterpret_cast<const char*>(&h32), 4);
+            out.write(reinterpret_cast<const char*>(rgba.data()),
+                      static_cast<std::streamsize>(w32 * h32 * 4));
+          }
+        }
+      }
+    }
   }
 
   return 0;

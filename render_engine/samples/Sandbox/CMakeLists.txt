@@ -28,7 +28,7 @@ set(_dbg_ps "${_shader_out}/debug_line.ps.cso")
            "${_ui_vs}" "${_ui_ps}" "${_post_vs}" "${_post_ps}" "${_dbg_vs}" "${_dbg_ps}"
            "${_shader_out}/instance_cull_cs.cso"
   COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E VSMain -Fo "${_lit_vs}" "${_src}"
-  COMMAND "${DXC_EXECUTABLE}" -T ps_6_0 -E PSMain -Fo "${_lit_ps}" "${_src}"
+  COMMAND "${DXC_EXECUTABLE}" -T ps_6_6 -E PSMain -Fo "${_lit_ps}" "${_src}"
   COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E ShadowVS -Fo "${_sh_vs}" "${_src}"
   COMMAND "${DXC_EXECUTABLE}" -T ps_6_0 -E ShadowPS -Fo "${_sh_ps}" "${_src}"
   COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E QuadVS -Fo "${_qd_vs}" "${_src}"
@@ -87,13 +87,20 @@ if(ENGINE_WITH_VULKAN)
     PS_ENTRY PSMain PS_OUT lit_cube_vk.ps.spv
   )
   set(_vk_post_src "${CMAKE_SOURCE_DIR}/shaders/hlsl/post_tonemap_vk.hlsl")
-  engine_compile_hlsl_spirv(
-    TARGET sample_sandbox_vk_post
-    SOURCE "${_vk_post_src}"
-    OUTPUT_DIR "${_shader_out}"
-    VS_ENTRY VSMain VS_OUT post_tonemap_vk.vs.spv
-    PS_ENTRY PSMain PS_OUT post_tonemap_vk.ps.spv
+  set(_vk_post_vs "${_shader_out}/post_tonemap_vk.vs.spv")
+  set(_vk_post_ps "${_shader_out}/post_tonemap_vk.ps.spv")
+  # No t/s shift: post samples scene_color at (t0,s1).
+  add_custom_command(
+    OUTPUT "${_vk_post_vs}" "${_vk_post_ps}"
+    COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E VSMain -spirv -fspv-target-env=vulkan1.1
+            -fvk-use-dx-layout -Fo "${_vk_post_vs}" "${_vk_post_src}"
+    COMMAND "${DXC_EXECUTABLE}" -T ps_6_0 -E PSMain -spirv -fspv-target-env=vulkan1.1
+            -fvk-use-dx-layout -Fo "${_vk_post_ps}" "${_vk_post_src}"
+    DEPENDS "${_vk_post_src}"
+    COMMENT "DXC SPIR-V compile post_tonemap_vk (sample scene_color)"
+    VERBATIM
   )
+  add_custom_target(sample_sandbox_vk_post DEPENDS "${_vk_post_vs}" "${_vk_post_ps}")
   add_custom_command(
     OUTPUT "${_vk_sh_vs}"
     COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E ShadowVS -spirv -fspv-target-env=vulkan1.1

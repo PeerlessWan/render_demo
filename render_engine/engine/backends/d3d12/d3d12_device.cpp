@@ -343,15 +343,18 @@ class D3D12Device final : public IDevice {
       return Status::Fail("Cull CS empty");
     }
 
-    D3D12_ROOT_PARAMETER param{};
-    param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    param.Constants.Num32BitValues = 20;
-    param.Constants.ShaderRegister = 0;
-    param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    D3D12_ROOT_PARAMETER params[2]{};
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    params[0].Constants.Num32BitValues = 20;
+    params[0].Constants.ShaderRegister = 0;
+    params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+    params[1].Descriptor.ShaderRegister = 0;
+    params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_ROOT_SIGNATURE_DESC rs{};
-    rs.NumParameters = 1;
-    rs.pParameters = &param;
+    rs.NumParameters = 2;
+    rs.pParameters = params;
     ComPtr<ID3DBlob> sig;
     ComPtr<ID3DBlob> err;
     if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err))) {
@@ -369,17 +372,56 @@ class D3D12Device final : public IDevice {
       return Status::Fail("Create cull PSO failed");
     }
     cull_ready_ = true;
-    LogInfo("D3D12 instance cull CS ready (dispatch path)");
+    LogInfo("D3D12 instance cull CS ready (UAV IndirectArgs.instance_count)");
     return Status::Ok();
   }
 
   Status DispatchInstanceCull(const Mat4& view_proj, std::uint32_t instance_count,
                               std::uint32_t& out_visible) override {
-    // GPU CS records a real Dispatch; visibility still comes from CPU cull contract.
     out_visible = instance_count;
     if (!cull_ready_ || !command_list_ || instance_count == 0) {
       return Status::Ok();
     }
+    if (!indirect_args_buf_) {
+      return Status::Fail("DispatchInstanceCull: UploadIndirectIndexedArgs first");
+    }
+
+    // Zero InstanceCount (offset 4) then CS InterlockedAdd per visible thread.
+    if (indirect_args_state_ != D3D12_RESOURCE_STATE_COPY_DEST) {
+      Transition(indirect_args_buf_.Get(), indirect_args_state_, D3D12_RESOURCE_STATE_COPY_DEST);
+      indirect_args_state_ = D3D12_RESOURCE_STATE_COPY_DEST;
+    }
+    if (!indirect_zero_upload_) {
+      D3D12_HEAP_PROPERTIES upload{};
+      upload.Type = D3D12_HEAP_TYPE_UPLOAD;
+      D3D12_RESOURCE_DESC buf{};
+      buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+      buf.Width = sizeof(UINT);
+      buf.Height = 1;
+      buf.DepthOrArraySize = 1;
+      buf.MipLevels = 1;
+      buf.SampleDesc.Count = 1;
+      buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+      if (FAILED(device_->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buf,
+                                                  D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                  IID_PPV_ARGS(&indirect_zero_upload_)))) {
+        return Status::Fail("Create indirect zero upload failed");
+      }
+      void* mapped = nullptr;
+      if (FAILED(indirect_zero_upload_->Map(0, nullptr, &mapped)) || !mapped) {
+        return Status::Fail("Map indirect zero upload failed");
+      }
+      const UINT z = 0;
+      std::memcpy(mapped, &z, sizeof(z));
+      indirect_zero_upload_->Unmap(0, nullptr);
+    }
+    command_list_->CopyBufferRegion(indirect_args_buf_.Get(), sizeof(UINT),
+                                    indirect_zero_upload_.Get(), 0, sizeof(UINT));
+
+    Transition(indirect_args_buf_.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+               D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    indirect_args_state_ = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+
     struct CullCB {
       float vp[16];
       UINT count;
@@ -390,10 +432,21 @@ class D3D12Device final : public IDevice {
     command_list_->SetComputeRootSignature(cull_root_.Get());
     command_list_->SetPipelineState(cull_pso_.Get());
     command_list_->SetComputeRoot32BitConstants(0, 20, &cb, 0);
+    command_list_->SetComputeRootUnorderedAccessView(1, indirect_args_buf_->GetGPUVirtualAddress());
     const UINT groups = (instance_count + 63u) / 64u;
     command_list_->Dispatch(groups, 1, 1);
     ++compute_dispatches_;
+
+    D3D12_RESOURCE_BARRIER uav{};
+    uav.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    uav.UAV.pResource = indirect_args_buf_.Get();
+    command_list_->ResourceBarrier(1, &uav);
+    Transition(indirect_args_buf_.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+               D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    indirect_args_state_ = D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;
+
     engine::SetFeatureOverride("hiz", true);
+    engine::SetFeatureOverride("execute_indirect", true);
     return Status::Ok();
   }
 
@@ -502,6 +555,104 @@ class D3D12Device final : public IDevice {
     } else {
       command_list_->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
     }
+    D3D12_VIEWPORT vp{};
+    vp.Width = static_cast<float>(width_);
+    vp.Height = static_cast<float>(height_);
+    vp.MaxDepth = 1.f;
+    command_list_->RSSetViewports(1, &vp);
+    D3D12_RECT scissor{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
+    command_list_->RSSetScissorRects(1, &scissor);
+    return Status::Ok();
+  }
+
+  Status ReadbackDepthRgbaStub(std::vector<std::uint8_t>& out_rgba, int& w, int& h) override {
+    w = static_cast<int>(width_);
+    h = static_cast<int>(height_);
+    if (w <= 0 || h <= 0 || !command_list_ || !device_ || !dsv_) {
+      return Status::Fail("Depth readback: device/depth not ready");
+    }
+    if (auto st = EnsureDepthReadbackBuffer(); !st) {
+      return st;
+    }
+
+    const D3D12_RESOURCE_STATES prev = depth_state_;
+    if (prev != D3D12_RESOURCE_STATE_COPY_SOURCE) {
+      Transition(dsv_.Get(), prev, D3D12_RESOURCE_STATE_COPY_SOURCE);
+      depth_state_ = D3D12_RESOURCE_STATE_COPY_SOURCE;
+    }
+
+    D3D12_RESOURCE_DESC src_desc = dsv_->GetDesc();
+    src_desc.Format = DXGI_FORMAT_R32_FLOAT;  // typeless depth → float copy
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    UINT num_rows = 0;
+    UINT64 row_size = 0;
+    UINT64 total = 0;
+    device_->GetCopyableFootprints(&src_desc, 0, 1, 0, &footprint, &num_rows, &row_size, &total);
+    footprint.Footprint.Format = DXGI_FORMAT_R32_FLOAT;
+
+    D3D12_TEXTURE_COPY_LOCATION dst{};
+    dst.pResource = depth_readback_.Get();
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    dst.PlacedFootprint = footprint;
+    D3D12_TEXTURE_COPY_LOCATION src{};
+    src.pResource = dsv_.Get();
+    src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    src.SubresourceIndex = 0;
+    command_list_->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+
+    Transition(dsv_.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    depth_state_ = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+
+    if (FAILED(command_list_->Close())) {
+      return Status::Fail("Depth readback Close failed");
+    }
+    ID3D12CommandList* lists[] = {command_list_.Get()};
+    queue_->ExecuteCommandLists(1, lists);
+    WaitGpu();
+
+    const std::size_t pixels = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    out_rgba.assign(pixels * 4, 0);
+    void* mapped = nullptr;
+    D3D12_RANGE range{0, static_cast<SIZE_T>(total)};
+    if (FAILED(depth_readback_->Map(0, &range, &mapped)) || !mapped) {
+      return Status::Fail("Depth readback Map failed");
+    }
+    const auto* src_bytes = static_cast<const std::uint8_t*>(mapped);
+    const std::size_t pitch = footprint.Footprint.RowPitch;
+    for (int y = 0; y < h; ++y) {
+      const auto* row = src_bytes + static_cast<std::size_t>(y) * pitch;
+      for (int x = 0; x < w; ++x) {
+        float d = 0.f;
+        std::memcpy(&d, row + static_cast<std::size_t>(x) * 4, sizeof(float));
+        if (!(d == d)) {  // NaN
+          d = 1.f;
+        }
+        d = (std::min)(1.f, (std::max)(0.f, d));
+        // Visualize: near → bright (invert typical 0..1 depth).
+        const auto g = static_cast<std::uint8_t>((1.f - d) * 255.f + 0.5f);
+        const std::size_t di = (static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+                                static_cast<std::size_t>(x)) *
+                               4;
+        out_rgba[di + 0] = g;
+        out_rgba[di + 1] = g;
+        out_rgba[di + 2] = g;
+        out_rgba[di + 3] = 255;
+      }
+    }
+    depth_readback_->Unmap(0, nullptr);
+
+    const auto frame = frame_index_;
+    if (FAILED(allocators_[frame]->Reset())) {
+      return Status::Fail("Depth readback allocator Reset failed");
+    }
+    if (FAILED(command_list_->Reset(allocators_[frame].Get(), nullptr))) {
+      return Status::Fail("Depth readback command list Reset failed");
+    }
+    const auto bb_index = CurrentBbIndex();
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtv{rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
+                                          static_cast<SIZE_T>(bb_index) * rtv_descriptor_size_};
+    const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_heap_->GetCPUDescriptorHandleForHeapStart();
+    command_list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
     D3D12_VIEWPORT vp{};
     vp.Width = static_cast<float>(width_);
     vp.Height = static_cast<float>(height_);
@@ -722,20 +873,25 @@ class D3D12Device final : public IDevice {
     }
 
     // Lit root: CBV b0, CBV b1, table t0..t8 (pixel), root SRV t9 (instances VS).
-    D3D12_DESCRIPTOR_RANGE srv_range{};
+    // SM 6.6 ResourceDescriptorHeap needs Root Signature 1.1 + DIRECTLY_INDEXED.
+    // CBV/SRV data is rewritten every frame (UPLOAD + shadow maps) → must NOT use DATA_STATIC.
+    D3D12_DESCRIPTOR_RANGE1 srv_range{};
     srv_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     srv_range.NumDescriptors = 9;
     srv_range.BaseShaderRegister = 0;
     srv_range.RegisterSpace = 0;
+    srv_range.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
     srv_range.OffsetInDescriptorsFromTableStart = 0;
 
-    D3D12_ROOT_PARAMETER lit_params[4]{};
+    D3D12_ROOT_PARAMETER1 lit_params[4]{};
     lit_params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     lit_params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     lit_params[0].Descriptor.ShaderRegister = 0;
+    lit_params[0].Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
     lit_params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     lit_params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     lit_params[1].Descriptor.ShaderRegister = 1;
+    lit_params[1].Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
     lit_params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     lit_params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     lit_params[2].DescriptorTable.NumDescriptorRanges = 1;
@@ -743,6 +899,7 @@ class D3D12Device final : public IDevice {
     lit_params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     lit_params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
     lit_params[3].Descriptor.ShaderRegister = 9;
+    lit_params[3].Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
 
     D3D12_STATIC_SAMPLER_DESC lit_samplers[2]{};
     lit_samplers[0].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
@@ -768,16 +925,18 @@ class D3D12Device final : public IDevice {
     lit_samplers[1].RegisterSpace = 0;
     lit_samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-    D3D12_ROOT_SIGNATURE_DESC lit_rs{};
-    lit_rs.NumParameters = 4;
-    lit_rs.pParameters = lit_params;
-    lit_rs.NumStaticSamplers = 2;
-    lit_rs.pStaticSamplers = lit_samplers;
-    lit_rs.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    D3D12_VERSIONED_ROOT_SIGNATURE_DESC lit_vrs{};
+    lit_vrs.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
+    lit_vrs.Desc_1_1.NumParameters = 4;
+    lit_vrs.Desc_1_1.pParameters = lit_params;
+    lit_vrs.Desc_1_1.NumStaticSamplers = 2;
+    lit_vrs.Desc_1_1.pStaticSamplers = lit_samplers;
+    lit_vrs.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
+                             D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED;
 
     ComPtr<ID3DBlob> sig;
     ComPtr<ID3DBlob> err;
-    HRESULT hr = D3D12SerializeRootSignature(&lit_rs, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err);
+    HRESULT hr = D3D12SerializeVersionedRootSignature(&lit_vrs, &sig, &err);
     if (FAILED(hr)) {
       const char* msg = err ? static_cast<const char*>(err->GetBufferPointer()) : "";
       return Status::Fail(std::string("Lit root sig failed: ") + msg);
@@ -822,7 +981,9 @@ class D3D12Device final : public IDevice {
     lit_pso.SampleDesc.Count = 1;
     hr = device_->CreateGraphicsPipelineState(&lit_pso, IID_PPV_ARGS(&lit_pso_));
     if (FAILED(hr)) {
-      return Status::Fail("Create lit PSO failed: " + HrToString(hr));
+      return Status::Fail(
+          "Create lit PSO failed: " + HrToString(hr) +
+          " (often SM6.6 bindless PS vs stale binary/root-sig; rebuild Debug+Release)");
     }
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC lit_pso_tr = lit_pso;
@@ -1438,7 +1599,9 @@ class D3D12Device final : public IDevice {
       od.tex_slot = static_cast<float>(items[i].tex_slot);
       od.uv_scale = items[i].uv_scale > 0.f ? items[i].uv_scale : 1.f;
       od.use_instances = 0.f;
-      od.pad = 0.f;
+      // Default classic t1/t4. Opt-in bindless: set pad to heap slot (1/4) when stable.
+      // ResourceDescriptorHeap path remains in PS for Feature probe / future enable.
+      od.pad = -1.f;
 
       const auto offset = ObjectCbOffset(i);
       void* ptr = nullptr;
@@ -1566,6 +1729,7 @@ class D3D12Device final : public IDevice {
     od.tex_slot = static_cast<float>(prototype.tex_slot);
     od.uv_scale = prototype.uv_scale > 0.f ? prototype.uv_scale : 1.f;
     od.use_instances = 1.f;
+    od.pad = -1.f;
 
     const auto offset = ObjectCbOffset(kMaxLitDraws - 1);  // dedicated late/instanced slot
     void* ptr = nullptr;
@@ -1576,7 +1740,18 @@ class D3D12Device final : public IDevice {
     object_cb_->Unmap(0, nullptr);
     command_list_->SetGraphicsRootConstantBufferView(
         1, object_cb_->GetGPUVirtualAddress() + offset);
-    command_list_->DrawIndexedInstanced(mesh_slots_[slot].index_count, instance_count, 0, 0, 0);
+    if (indirect_args_buf_ && draw_indexed_cmd_sig_ &&
+        engine::QueryFeature("execute_indirect")) {
+      if (indirect_args_state_ != D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT) {
+        Transition(indirect_args_buf_.Get(), indirect_args_state_,
+                   D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+        indirect_args_state_ = D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;
+      }
+      command_list_->ExecuteIndirect(draw_indexed_cmd_sig_.Get(), 1, indirect_args_buf_.Get(), 0,
+                                     nullptr, 0);
+    } else {
+      command_list_->DrawIndexedInstanced(mesh_slots_[slot].index_count, instance_count, 0, 0, 0);
+    }
     lit_draws_ += instance_count;
     return Status::Ok();
   }
@@ -1790,6 +1965,8 @@ class D3D12Device final : public IDevice {
         od.use_orm = items[i].use_orm ? 1.f : 0.f;
         od.tex_slot = static_cast<float>(items[i].tex_slot);
         od.uv_scale = items[i].uv_scale > 0.f ? items[i].uv_scale : 1.f;
+        od.use_instances = 0.f;
+        od.pad = -1.f;  // classic t1/t4; bindless uses pad>=0 only on opaque path
         const auto offset = ObjectCbOffset(i);
         void* ptr = nullptr;
         if (FAILED(object_cb_->Map(0, nullptr, &ptr))) {
@@ -1843,6 +2020,30 @@ class D3D12Device final : public IDevice {
     const UINT64 bytes = static_cast<UINT64>(raw_u32.size() * sizeof(std::uint32_t));
     if (!indirect_args_buf_ || indirect_args_bytes_ < bytes) {
       indirect_args_buf_.Reset();
+      D3D12_HEAP_PROPERTIES def{};
+      def.Type = D3D12_HEAP_TYPE_DEFAULT;
+      D3D12_RESOURCE_DESC buf{};
+      buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+      buf.Width = bytes;
+      buf.Height = 1;
+      buf.DepthOrArraySize = 1;
+      buf.MipLevels = 1;
+      buf.SampleDesc.Count = 1;
+      buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+      buf.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+      const HRESULT hr =
+          device_->CreateCommittedResource(&def, D3D12_HEAP_FLAG_NONE, &buf,
+                                           D3D12_RESOURCE_STATE_COMMON, nullptr,
+                                           IID_PPV_ARGS(&indirect_args_buf_));
+      if (FAILED(hr)) {
+        return Status::Fail("Create indirect args UAV failed");
+      }
+      indirect_args_bytes_ = bytes;
+      indirect_args_state_ = D3D12_RESOURCE_STATE_COMMON;
+    }
+
+    if (!indirect_args_upload_ || indirect_args_upload_bytes_ < bytes) {
+      indirect_args_upload_.Reset();
       D3D12_HEAP_PROPERTIES upload{};
       upload.Type = D3D12_HEAP_TYPE_UPLOAD;
       D3D12_RESOURCE_DESC buf{};
@@ -1853,21 +2054,33 @@ class D3D12Device final : public IDevice {
       buf.MipLevels = 1;
       buf.SampleDesc.Count = 1;
       buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-      const HRESULT hr =
-          device_->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buf,
-                                           D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                           IID_PPV_ARGS(&indirect_args_buf_));
-      if (FAILED(hr)) {
-        return Status::Fail("Create indirect args failed");
+      if (FAILED(device_->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buf,
+                                                  D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                  IID_PPV_ARGS(&indirect_args_upload_)))) {
+        return Status::Fail("Create indirect args upload failed");
       }
-      indirect_args_bytes_ = bytes;
+      indirect_args_upload_bytes_ = bytes;
     }
+
     void* ptr = nullptr;
-    if (FAILED(indirect_args_buf_->Map(0, nullptr, &ptr))) {
-      return Status::Fail("Map indirect args failed");
+    if (FAILED(indirect_args_upload_->Map(0, nullptr, &ptr))) {
+      return Status::Fail("Map indirect args upload failed");
     }
+    // Seed index_count etc.; instance_count may be overwritten by Cull CS.
     std::memcpy(ptr, raw_u32.data(), static_cast<std::size_t>(bytes));
-    indirect_args_buf_->Unmap(0, nullptr);
+    indirect_args_upload_->Unmap(0, nullptr);
+
+    if (command_list_) {
+      if (indirect_args_state_ != D3D12_RESOURCE_STATE_COPY_DEST) {
+        Transition(indirect_args_buf_.Get(), indirect_args_state_, D3D12_RESOURCE_STATE_COPY_DEST);
+        indirect_args_state_ = D3D12_RESOURCE_STATE_COPY_DEST;
+      }
+      command_list_->CopyBufferRegion(indirect_args_buf_.Get(), 0, indirect_args_upload_.Get(), 0,
+                                      bytes);
+      Transition(indirect_args_buf_.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+                 D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+      indirect_args_state_ = D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;
+    }
 
     if (!draw_indexed_cmd_sig_) {
       D3D12_INDIRECT_ARGUMENT_DESC arg{};
@@ -1894,6 +2107,17 @@ class D3D12Device final : public IDevice {
       return Status::Fail("SetupLitMesh not called");
     }
     BindSceneColorTargets();
+    if (shadow_map_ && shadow_map_state_ != D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) {
+      Transition(shadow_map_.Get(), shadow_map_state_,
+                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+      shadow_map_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    }
+    if (local_shadow_map_ &&
+        local_shadow_map_state_ != D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) {
+      Transition(local_shadow_map_.Get(), local_shadow_map_state_,
+                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+      local_shadow_map_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    }
     command_list_->SetPipelineState(lit_pso_.Get());
     command_list_->SetGraphicsRootSignature(lit_root_.Get());
     command_list_->SetGraphicsRootConstantBufferView(
@@ -1906,14 +2130,18 @@ class D3D12Device final : public IDevice {
       command_list_->SetGraphicsRootShaderResourceView(3, ib->GetGPUVirtualAddress());
     }
     command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    // Use mesh slot 0 + object CB slot 0 (caller should have set them via prior draw setup).
     if (mesh_slots_[0].index_count == 0) {
       return Status::Fail("mesh slot 0 empty for ExecuteIndirect");
     }
     command_list_->IASetVertexBuffers(0, 1, &mesh_slots_[0].vbv);
     command_list_->IASetIndexBuffer(&mesh_slots_[0].ibv);
     command_list_->SetGraphicsRootConstantBufferView(
-        1, object_cb_->GetGPUVirtualAddress() + ObjectCbOffset(0));
+        1, object_cb_->GetGPUVirtualAddress() + ObjectCbOffset(kMaxLitDraws - 1));
+    if (indirect_args_state_ != D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT) {
+      Transition(indirect_args_buf_.Get(), indirect_args_state_,
+                 D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+      indirect_args_state_ = D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;
+    }
     command_list_->ExecuteIndirect(draw_indexed_cmd_sig_.Get(), draw_count,
                                    indirect_args_buf_.Get(), 0, nullptr, 0);
     lit_draws_ += draw_count;
@@ -4031,6 +4259,46 @@ class D3D12Device final : public IDevice {
     return Status::Ok();
   }
 
+  Status EnsureDepthReadbackBuffer() {
+    if (depth_readback_ && depth_readback_w_ == width_ && depth_readback_h_ == height_) {
+      return Status::Ok();
+    }
+    depth_readback_.Reset();
+    depth_readback_w_ = width_;
+    depth_readback_h_ = height_;
+    D3D12_RESOURCE_DESC src{};
+    src.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    src.Width = width_;
+    src.Height = height_;
+    src.DepthOrArraySize = 1;
+    src.MipLevels = 1;
+    src.Format = DXGI_FORMAT_R32_FLOAT;
+    src.SampleDesc.Count = 1;
+    src.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    UINT64 total = 0;
+    device_->GetCopyableFootprints(&src, 0, 1, 0, &footprint, nullptr, nullptr, &total);
+
+    D3D12_HEAP_PROPERTIES heap{};
+    heap.Type = D3D12_HEAP_TYPE_READBACK;
+    D3D12_RESOURCE_DESC buf{};
+    buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    buf.Width = total;
+    buf.Height = 1;
+    buf.DepthOrArraySize = 1;
+    buf.MipLevels = 1;
+    buf.SampleDesc.Count = 1;
+    buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    const HRESULT hr =
+        device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buf,
+                                         D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                         IID_PPV_ARGS(&depth_readback_));
+    if (FAILED(hr)) {
+      return Status::Fail("Create depth readback failed: " + HrToString(hr));
+    }
+    return Status::Ok();
+  }
+
   Status CreateGpuTimestampResources() {
     D3D12_QUERY_HEAP_DESC qh{};
     qh.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
@@ -4179,6 +4447,9 @@ class D3D12Device final : public IDevice {
   ComPtr<ID3D12Resource> color_readback_;
   std::uint32_t color_readback_w_ = 0;
   std::uint32_t color_readback_h_ = 0;
+  ComPtr<ID3D12Resource> depth_readback_;
+  std::uint32_t depth_readback_w_ = 0;
+  std::uint32_t depth_readback_h_ = 0;
   ColorRgba last_clear_{0.14f, 0.16f, 0.20f, 1.f};
   ComPtr<ID3D12Resource> vertex_buffer_;
   ComPtr<ID3D12Resource> texture_;
@@ -4206,7 +4477,11 @@ class D3D12Device final : public IDevice {
   std::array<ComPtr<ID3D12Resource>, kFrameCount> instance_bufs_{};
   std::array<UINT64, kFrameCount> instance_buf_bytes_{};
   ComPtr<ID3D12Resource> indirect_args_buf_;
+  ComPtr<ID3D12Resource> indirect_args_upload_;
+  ComPtr<ID3D12Resource> indirect_zero_upload_;
   UINT64 indirect_args_bytes_ = 0;
+  UINT64 indirect_args_upload_bytes_ = 0;
+  D3D12_RESOURCE_STATES indirect_args_state_ = D3D12_RESOURCE_STATE_COMMON;
   ComPtr<ID3D12CommandSignature> draw_indexed_cmd_sig_;
   ComPtr<ID3D12Resource> probe_face_color_;
   ComPtr<ID3D12Resource> probe_face_depth_;

@@ -204,6 +204,9 @@ int main(int argc, char** argv) {
     rdesc.debug_ps = shader_dir / "debug_line.ps.cso";
     rdesc.enable_shadows = true;
     rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
+    // Halton clip jitter without a rock-solid history resolve crawls on large floors /
+    // thin green scale pillars. Keep High shadows; TAA stays opt-in via ImGui.
+    rdesc.quality.enable_taa = false;
   }
   if (auto st = render.Init(a.device(), rdesc); !st) {
     engine::LogError(st.message());
@@ -1027,16 +1030,19 @@ int main(int argc, char** argv) {
           scale_worlds, {}, scale_vp, &scale_occ, visible, iargs, 36);
       if (kept > 0) {
         (void)app_ref.device().UploadInstanceTransforms(visible);
-        std::uint32_t gpu_vis = kept;
-        (void)app_ref.device().DispatchInstanceCull(scale_vp, kept, gpu_vis);
         engine::rhi::LitDrawItem proto{};
         proto.color = {0.35f, 0.55f, 0.32f, 1.f};
         proto.metallic = 0.05f;
         proto.roughness = 0.7f;
         proto.use_albedo = false;
         render.SetPendingLitInstanced(proto, kept);
-        const auto packed = engine::gpu_driven::PackIndirectArgsU32(iargs);
+        // Seed IndirectArgs (instance_count=0); Cull CS writes instance_count via UAV.
+        engine::gpu_driven::IndirectDrawArgs seed = iargs;
+        seed.instance_count = 0;
+        const auto packed = engine::gpu_driven::PackIndirectArgsU32(seed);
         (void)app_ref.device().UploadIndirectIndexedArgs(packed);
+        std::uint32_t gpu_vis = kept;
+        (void)app_ref.device().DispatchInstanceCull(scale_vp, kept, gpu_vis);
       }
       if ((app_ref.frame_index() % 60) == 0) {
         engine::LogInfo("scale instances visible=" + std::to_string(kept) + "/" +
@@ -1119,6 +1125,26 @@ int main(int argc, char** argv) {
             out.write(reinterpret_cast<const char*>(&h32), 4);
             out.write(reinterpret_cast<const char*>(rgba.data()),
                       static_cast<std::streamsize>(w32 * h32 * 4));
+          }
+        }
+        if (const char* dump_d = std::getenv("ENGINE_GOLDEN_DUMP_DEPTH")) {
+          if (dump_d[0] != '\0') {
+            std::vector<std::uint8_t> depth_rgba;
+            int dw = 0;
+            int dh = 0;
+            if (auto dst = app_ref.device().ReadbackDepthRgbaStub(depth_rgba, dw, dh);
+                dst && dw > 0 && dh > 0 &&
+                depth_rgba.size() >= static_cast<std::size_t>(dw * dh * 4)) {
+              std::ofstream out(dump_d, std::ios::binary);
+              const std::uint32_t w32 = static_cast<std::uint32_t>(dw);
+              const std::uint32_t h32 = static_cast<std::uint32_t>(dh);
+              out.write(reinterpret_cast<const char*>(&w32), 4);
+              out.write(reinterpret_cast<const char*>(&h32), 4);
+              out.write(reinterpret_cast<const char*>(depth_rgba.data()),
+                        static_cast<std::streamsize>(w32 * h32 * 4));
+            } else if (!dst) {
+              engine::LogError(dst.message());
+            }
           }
         }
       }

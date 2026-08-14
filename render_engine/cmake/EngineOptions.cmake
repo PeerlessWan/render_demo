@@ -29,6 +29,7 @@ endif()
 option(ENGINE_WITH_HTTPLIB "HTTP(S) client via cpp-httplib" ${ENGINE_WITH_HTTPLIB_DEFAULT})
 
 # Optional OpenSSL for HTTPS (cpp-httplib). Off by default; enable when SDK present.
+# Hint: set OPENSSL_ROOT_DIR to the OpenSSL install prefix when CMake cannot find it.
 find_package(OpenSSL QUIET)
 if(OpenSSL_FOUND)
   set(ENGINE_WITH_OPENSSL_DEFAULT ON)
@@ -38,6 +39,18 @@ endif()
 option(ENGINE_WITH_OPENSSL "Enable HTTPS via OpenSSL + cpp-httplib" ${ENGINE_WITH_OPENSSL_DEFAULT})
 if(ENGINE_WITH_OPENSSL AND NOT OpenSSL_FOUND)
   message(WARNING "ENGINE_WITH_OPENSSL=ON but OpenSSL not found; HTTPS will stay Unavailable")
+endif()
+
+# RmlUi (vendored). Thin RetainedUi adapter when present; full document parse later.
+set(ENGINE_RMLUI_DIR "${CMAKE_SOURCE_DIR}/third_party/RmlUi" CACHE PATH "RmlUi root")
+if(EXISTS "${ENGINE_RMLUI_DIR}/Include/RmlUi/Core.h" OR EXISTS "${ENGINE_RMLUI_DIR}/Include/RmlUi/Core/Core.h")
+  set(ENGINE_WITH_RMLUI_DEFAULT ON)
+else()
+  set(ENGINE_WITH_RMLUI_DEFAULT OFF)
+endif()
+option(ENGINE_WITH_RMLUI "Retained UI via RmlUi vendor (thin adapter OK)" ${ENGINE_WITH_RMLUI_DEFAULT})
+if(ENGINE_WITH_RMLUI AND NOT (EXISTS "${ENGINE_RMLUI_DIR}/Include/RmlUi/Core.h" OR EXISTS "${ENGINE_RMLUI_DIR}/Include/RmlUi/Core/Core.h"))
+  message(FATAL_ERROR "ENGINE_WITH_RMLUI=ON but RmlUi headers not found at ${ENGINE_RMLUI_DIR}")
 endif()
 
 set(ENGINE_DDSKTX_DIR "${CMAKE_SOURCE_DIR}/third_party/dds-ktx" CACHE PATH "dds-ktx directory")

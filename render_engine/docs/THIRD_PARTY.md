@@ -56,7 +56,7 @@
 | **着色器编译** | **DirectXShaderCompiler (DXC)** | HLSL → DXIL；HLSL → SPIR-V（Vulkan） | Windows SDK / NuGet / 官方包；构建时调用 |
 | **Vulkan** | **Vulkan SDK**（LunarG） | Device/Swapchain/校验层 | M17+；Linux 必选 |
 | **视频硬解** | **D3D12VA**（Win+D3D12）；**Vulkan Video**（Win/Linux+Vulkan） | 与当前渲染 Device 绑定 | 跟随 RHI；**无软解、不跨 API** |
-| **HTTP(S)** | [cpp-httplib](https://github.com/yhirose/cpp-httplib) | HTTP 客户端（可兼调试服务端） | header-only；TLS 需 OpenSSL/等价；见 ADR 0021 |
+| **HTTP(S)** | [cpp-httplib](https://github.com/yhirose/cpp-httplib) | HTTP 客户端（可兼调试服务端） | header-only；TLS 需系统 OpenSSL（`OPENSSL_ROOT_DIR` / `ENGINE_WITH_OPENSSL`）；见 ADR 0021 |
 | **WebSocket** | [IXWebSocket](https://github.com/machinezone/IXWebSocket) | WS / WSS 客户端（可服务端） | 轻量、跨平台、少依赖 |
 | **QUIC** | [MsQuic](https://github.com/microsoft/msquic) | IETF QUIC **可靠流** | Win/Linux；可换 ngtcp2 栈须 ADR |
 
@@ -139,7 +139,7 @@
 | mini_test（自研） | M1 | 本仓库 | 头文件 | 临时单测 harness；计划替换为 Catch2 |
 | Jolt | **v5.6.0**（`third_party/JoltPhysics`） | MIT | 静态 | 经 `IPhysicsWorld`/`jolt_world`；Sample 不直链；缺源码则 `ENGINE_WITH_JOLT=OFF` |
 | Dear ImGui | **v1.91.8**（`third_party/imgui-v1.91.8`） | MIT | 静态 | 经 `ImmediateUi` 封装；Sample 不直链 |
-| RmlUi | TBD | TBD | TBD | |
+| RmlUi | **6.0**（`third_party/RmlUi`） | MIT | 源码 vendor；本档薄适配 | 经 `CreateRetainedUiBackend`；`ENGINE_WITH_RMLUI`；Sample 不直链 |
 | cgltf / fastgltf | TBD | TBD | TBD | |
 | stb / dr_libs | **stb_image**（`third_party/stb/stb_image.h`） | 公有域/MIT | 头文件 | 经 `IImageLoader`；Sample 不直链 |
 | FSR | TBD | AMD 许可 | TBD | 遵守 NOTICE |
@@ -147,7 +147,7 @@
 | DXC | TBD | 随工具链 | 构建机 | 运行时不一定需要 |
 | D3D12MA | TBD | MIT | TBD | |
 | miniaudio | TBD | 可选许可 | 单文件 | |
-| cpp-httplib | header vendored (`third_party/cpp-httplib`) | MIT | 头文件 | 经 `IHttpClient`/`http_httplib`；HTTPS 需 OpenSSL（未链则 Unavailable）；Win 链 `ws2_32`/`crypt32` |
+| cpp-httplib | header vendored (`third_party/cpp-httplib`) | MIT | 头文件 | 经 `IHttpClient`/`http_httplib`；HTTPS：系统 OpenSSL（`find_package` / `OPENSSL_ROOT_DIR`）；`ENGINE_WITH_OPENSSL`；未链则 Unavailable；Win 链 `ws2_32`/`crypt32` |
 | dds-ktx | ~v1.1+ (`third_party/dds-ktx`) | BSD-2-Clause | 头文件 | 经 `ITextureLoader`；Sample 不直链 |
 | IXWebSocket | TBD | BSD | 静态/动态 | |
 | MsQuic | TBD | MIT | 通常动态 | 注意平台构建 |

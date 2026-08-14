@@ -63,7 +63,7 @@ add_library(engine_platform STATIC
 target_include_directories(engine_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_platform PUBLIC engine_core)
 if(WIN32)
-  target_link_libraries(engine_platform PRIVATE user32 gdi32)
+  target_link_libraries(engine_platform PRIVATE user32 gdi32 imm32)
 endif()
 
 add_library(engine_input STATIC
@@ -211,6 +211,14 @@ else()
   message(STATUS "Dear ImGui disabled")
 endif()
 
+if(ENGINE_WITH_RMLUI)
+  target_include_directories(engine_ui PRIVATE "${ENGINE_RMLUI_DIR}/Include")
+  target_compile_definitions(engine_ui PUBLIC ENGINE_WITH_RMLUI=1)
+  message(STATUS "RmlUi vendor enabled (thin RetainedUi adapter): ${ENGINE_RMLUI_DIR}")
+else()
+  target_compile_definitions(engine_ui PUBLIC ENGINE_WITH_RMLUI=0)
+endif()
+
 add_library(engine_render2d STATIC
   render2d/sprite.cpp
   render2d/tilemap_stream.cpp
@@ -274,11 +282,11 @@ if(ENGINE_WITH_HTTPLIB)
     target_link_libraries(engine_net PRIVATE ws2_32 crypt32)
   endif()
   if(ENGINE_WITH_OPENSSL AND OpenSSL_FOUND)
-    target_compile_definitions(engine_net PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT ENGINE_WITH_OPENSSL=1)
+    target_compile_definitions(engine_net PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT ENGINE_WITH_OPENSSL=1)
     target_link_libraries(engine_net PRIVATE OpenSSL::SSL OpenSSL::Crypto)
     message(STATUS "cpp-httplib HTTPS via OpenSSL enabled")
   else()
-    target_compile_definitions(engine_net PRIVATE ENGINE_WITH_OPENSSL=0)
+    target_compile_definitions(engine_net PUBLIC ENGINE_WITH_OPENSSL=0)
   endif()
   message(STATUS "cpp-httplib enabled: ${ENGINE_HTTPLIB_DIR}")
 else()

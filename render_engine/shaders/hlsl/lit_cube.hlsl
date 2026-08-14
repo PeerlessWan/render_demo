@@ -259,6 +259,15 @@ float4 PSMain(VSOutput input) : SV_Target {
   float2 uv = input.uv * max(g_uv_scale, 1.0);
   float3 base = g_base_color.rgb;
   if (g_use_albedo > 0.5) {
+#if defined(__SHADER_TARGET_MAJOR) && (__SHADER_TARGET_MAJOR > 6 || \
+    (__SHADER_TARGET_MAJOR == 6 && __SHADER_TARGET_MINOR >= 6))
+    // Optional bindless sample: g_pad >= 0 → CBV_SRV_UAV heap slot (uniform per draw).
+    // Prefer classic t1/t4 when g_pad < 0 (default / safer path).
+    if (g_pad >= 0.0) {
+      Texture2D bindless_albedo = ResourceDescriptorHeap[(uint)g_pad];
+      base *= bindless_albedo.Sample(g_linear_samp, uv).rgb;
+    } else
+#endif
     if (g_tex_slot > 0.5) {
       base *= g_albedo_map2.Sample(g_linear_samp, uv).rgb;
     } else {

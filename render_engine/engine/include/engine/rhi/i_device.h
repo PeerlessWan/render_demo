@@ -247,6 +247,11 @@ class IDevice {
 
   virtual Status DispatchCompute(const ComputeDispatchDesc& desc) = 0;
   virtual Status ReadbackTextureStub(std::vector<std::uint8_t>& out_rgba, int& w, int& h) = 0;
+  // Q3: linear depth visualized as grayscale RGBA8 (same .rgba dump layout as color).
+  virtual Status ReadbackDepthRgbaStub(std::vector<std::uint8_t>& /*out_rgba*/, int& /*w*/,
+                                       int& /*h*/) {
+    return Status::Fail("ReadbackDepthRgbaStub not supported on this device");
+  }
 
   // M14: parallel submit preference (validated; backends may still fall back to single-thread).
   virtual Status SetSubmitConfig(const SubmitConfig& cfg) { return ValidateSubmitConfig(cfg); }
