@@ -66,3 +66,9 @@ struct AssertFailure : std::exception {
   } while (0)
 
 #define REQUIRE_FALSE(expr) REQUIRE(!(expr))
+
+#define SKIP_TEST(reason)                                                         \
+  do {                                                                            \
+    std::cout << "[SKIP] " << (reason) << '\n';                                  \
+    return;                                                                       \
+  } while (0)

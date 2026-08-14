@@ -182,6 +182,7 @@ TEST_CASE("CPU morph targets blend deltas", "[animation]") {
 }
 
 TEST_CASE("SubmitConfig validates multithread workers", "[rhi]") {
+  engine::ClearFeatureOverrides();
   engine::rhi::SubmitConfig ok;
   ok.multithread = true;
   ok.worker_count = 2;

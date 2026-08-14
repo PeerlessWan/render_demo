@@ -7,6 +7,7 @@
 #include "engine/core/log.h"
 #include "engine/debug/console.h"
 #include "engine/gi/probe_volume.h"
+#include "engine/gi/reflection_probe.h"
 #include "engine/media/media.h"
 #include "engine/mixed/pick.h"
 #include "engine/net/net_system.h"
@@ -59,11 +60,19 @@ int main(int argc, char** argv) {
   desc.window.height = 720;
   desc.clear_color = {0.14f, 0.16f, 0.20f, 1.f};
   bool use_vulkan = false;
+  bool gpu_headless_assert = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i] ? argv[i] : "";
     if (arg == "--headless") {
       desc.headless = true;
       desc.window.headless = true;
+      if (desc.headless_frames <= 0) {
+        desc.headless_frames = 3;
+      }
+    } else if (arg == "--gpu-headless") {
+      desc.gpu_headless = true;
+      desc.window.headless = true;
+      gpu_headless_assert = true;
       if (desc.headless_frames <= 0) {
         desc.headless_frames = 3;
       }
@@ -516,6 +525,13 @@ int main(int argc, char** argv) {
   probes.Configure({-4.f, 0.5f, -4.f}, {2.f, 1.5f, 2.f}, 5, 3, 5);
   bool enable_gi = false;
 
+  engine::gi::ReflectionProbe reflection_probe;
+  reflection_probe.Configure({0.f, 1.6f, 0.f}, 32);
+  reflection_probe.UpdateFromEnvironment(env.sun_direction, env.sun_color, 3.f, env.ambient);
+  (void)a.device().UploadReflectionCubemap(reflection_probe.rgba_faces().data(),
+                                           reflection_probe.face_size());
+  reflection_probe.ClearDirty();
+
   engine::vfx::ParticleEmitter particles;
   particles.Configure({1.8f, 2.6f, 1.0f}, 28.f, 1.1f);
 
@@ -885,11 +901,41 @@ int main(int argc, char** argv) {
     }
 
     profiler.Begin("DrawFrame");
+    if ((app_ref.frame_index() % 8) == 1) {
+      // CPU-side dynamic update; GPU cubemap refreshed at init (mid-frame upload unsafe).
+      reflection_probe.UpdateFromEnvironment(env.sun_direction, env.sun_color, fx.sun_intensity,
+                                             env.ambient);
+      reflection_probe.ClearDirty();
+    }
     if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites,
                                    retained_quads.empty() ? nullptr : &retained_quads,
                                    use_vulkan ? nullptr : &dbg);
         !st) {
       engine::LogError(st.message());
+    }
+    if (gpu_headless_assert) {
+      std::vector<std::uint8_t> rgba;
+      int rw = 0;
+      int rh = 0;
+      if (auto st = app_ref.device().ReadbackTextureStub(rgba, rw, rh); !st) {
+        engine::LogError(st.message());
+        app_ref.window().RequestClose();
+      } else {
+        bool all_black = true;
+        bool all_white = true;
+        for (std::size_t i = 0; i + 2 < rgba.size(); i += 4) {
+          if (rgba[i] > 2 || rgba[i + 1] > 2 || rgba[i + 2] > 2) {
+            all_black = false;
+          }
+          if (rgba[i] < 250 || rgba[i + 1] < 250 || rgba[i + 2] < 250) {
+            all_white = false;
+          }
+        }
+        if (rw <= 0 || rh <= 0 || all_black || all_white) {
+          engine::LogError("gpu-headless readback assertion failed (blank/white frame)");
+          app_ref.window().RequestClose();
+        }
+      }
     }
     profiler.End("DrawFrame");
     if (imgui_ready) {

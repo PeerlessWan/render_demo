@@ -25,6 +25,11 @@ cbuffer FrameCB : register(b0) {
   float g_local_shadow_bias;
   float g_local_shadow_count;
   float g_local_shadow_tiles;
+  float4x4 g_prev_view_proj;
+  float g_jitter_x;
+  float g_jitter_y;
+  float g_enable_reflection;
+  float g_reflection_intensity;
 };
 
 cbuffer ObjectCB : register(b1) {
@@ -45,6 +50,7 @@ Texture2D g_local_shadow_map : register(t2);
 Texture2D g_orm_map : register(t3);
 Texture2D g_albedo_map2 : register(t4);
 Texture2D g_orm_map2 : register(t5);
+TextureCube g_reflection_map : register(t6);
 SamplerComparisonState g_shadow_samp : register(s0);
 SamplerState g_linear_samp : register(s1);
 
@@ -59,6 +65,7 @@ struct VSOutput {
   float3 world_normal : NORMAL;
   float3 world_pos : TEXCOORD0;
   float2 uv : TEXCOORD1;
+  float2 velocity : TEXCOORD2;  // NDC motion (curr - prev)
   // Extra clip plane in front of the camera near plane. Stops floor tris from
   // straddling z_near (which otherwise becomes a floating screen-space slab).
   float clip_near : SV_ClipDistance0;
@@ -69,7 +76,14 @@ VSOutput VSMain(VSInput input) {
   float4 wp = mul(g_world, float4(input.position, 1.0f));
   o.world_pos = wp.xyz;
   o.world_normal = normalize(mul((float3x3)g_world, input.normal));
-  o.position = mul(g_view_proj, wp);
+  float4 curr = mul(g_view_proj, wp);
+  float4 prev = mul(g_prev_view_proj, wp);
+  // Sub-pixel jitter in clip space (NDC xy * w).
+  curr.xy += float2(g_jitter_x, g_jitter_y) * curr.w;
+  o.position = curr;
+  float2 curr_ndc = curr.xy / max(curr.w, 1e-5);
+  float2 prev_ndc = prev.xy / max(prev.w, 1e-5);
+  o.velocity = curr_ndc - prev_ndc;
   o.uv = input.uv;
   float vz = dot(o.world_pos - g_eye, normalize(g_cam_forward));
   // Floors: clip anything closer than 0.35m in view space.
@@ -268,6 +282,15 @@ float4 PSMain(VSOutput input) : SV_Target {
   float3 sun_term = (diffuse * ndotl + g_sun_color * spec) * g_sun_intensity * sh * ao;
   sun_term = min(sun_term, 8.0.xxx);
   float3 lit = g_ambient * base * ao + sun_term;
+
+  if (g_enable_reflection > 0.5) {
+    float3 R = reflect(-v, n);
+    float lod = saturate(roughness) * 4.0;
+    float3 env = g_reflection_map.SampleLevel(g_linear_samp, R, lod).rgb;
+    float fres = lerp(0.04, 1.0, metallic);
+    fres *= pow(1.0 - ndotv, 5.0) * (1.0 - metallic) + metallic;
+    lit += env * fres * g_reflection_intensity * ao;
+  }
 
   int lc = (int)g_local_count;
   [unroll] for (int i = 0; i < 4; ++i) {

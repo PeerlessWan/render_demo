@@ -185,9 +185,28 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
 
   rhi::FrameLighting lighting;
   lighting.view_proj = scene.camera.view_proj_matrix(aspect);
+  lighting.prev_view_proj = have_prev_view_proj_ ? prev_view_proj_ : lighting.view_proj;
   const bool want_ssao = effect_.enable_ssao && post_.enabled("SSAO");
   const bool want_taa = effect_.enable_taa && post_.enabled("TAA");
-  // No sub-pixel jitter: without motion-vector reprojection it makes floors pop and frames flash.
+  if (want_taa) {
+    // Halton(2,3) sub-pixel jitter in NDC.
+    auto halton = [](int index, int base) {
+      float f = 1.f;
+      float r = 0.f;
+      int i = index;
+      while (i > 0) {
+        f /= static_cast<float>(base);
+        r += f * static_cast<float>(i % base);
+        i /= base;
+      }
+      return r;
+    };
+    const int sample = static_cast<int>(frame_index_ % 8u) + 1;
+    const float w = static_cast<float>((std::max)(1u, device.width()));
+    const float h = static_cast<float>((std::max)(1u, device.height()));
+    lighting.jitter_x = (halton(sample, 2) * 2.f - 1.f) / w;
+    lighting.jitter_y = (halton(sample, 3) * 2.f - 1.f) / h;
+  }
   lighting.sun_direction = Normalize(env.sun_direction);
   lighting.sun_intensity = effect_.sun_intensity;
   lighting.ambient = {env.ambient.r * effect_.ambient_scale, env.ambient.g * effect_.ambient_scale,
@@ -250,6 +269,15 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   // Real SSAO/TAA run in ResolvePostEffects; avoid double-applying lit approximate path.
   lighting.enable_ssao = false;
   lighting.enable_taa = want_taa;  // mild lit hint only when TAA on
+  lighting.enable_reflection_probe = effect_.enable_reflection_probe;
+  lighting.reflection_intensity = effect_.reflection_intensity;
+
+  if (quality_.multithread_submit) {
+    rhi::SubmitConfig cfg;
+    cfg.multithread = true;
+    cfg.worker_count = 2;
+    (void)device.SetSubmitConfig(cfg);
+  }
 
   std::vector<rhi::ScreenQuad> quads;
   if (sprites) {
@@ -385,6 +413,9 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       post.dof_scale = effect_.dof_scale;
       post.enable_motion_blur = want_motion_blur;
       post.motion_blur_strength = effect_.motion_blur_strength;
+      post.prev_view_proj = lighting.prev_view_proj;
+      post.jitter_x = lighting.jitter_x;
+      post.jitter_y = lighting.jitter_y;
       if (auto st = device.ResolvePostEffects(post); !st) {
         LogError(st.message());
       }
@@ -436,6 +467,8 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   if (auto st = graph_.Execute(); !st) {
     return st;
   }
+  prev_view_proj_ = lighting.view_proj;
+  have_prev_view_proj_ = true;
   last_draw_count_ = static_cast<std::uint32_t>(opaque.size() + transparent.size());
   return Status::Ok();
 }

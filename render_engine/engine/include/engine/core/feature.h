@@ -21,4 +21,8 @@ struct FeatureSet {
 FeatureSet QueryFeatures();
 bool QueryFeature(std::string_view name);
 
+// Runtime capability reported by a live device (e.g. D3D12 after bindless/HDR init).
+void SetFeatureOverride(std::string_view name, bool value);
+void ClearFeatureOverrides();
+
 }  // namespace engine

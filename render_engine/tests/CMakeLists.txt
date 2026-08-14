@@ -10,6 +10,7 @@ add_executable(engine_unit_tests
   unit/test_m20_m25_headless.cpp
   unit/test_headless_integration.cpp
   unit/test_usable.cpp
+  unit/test_gpu_headless_regression.cpp
 )
 target_include_directories(engine_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
 target_link_libraries(engine_unit_tests PRIVATE
@@ -38,9 +39,20 @@ target_compile_features(engine_unit_tests PRIVATE cxx_std_20)
 
 file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/content" _content_dir_def)
 string(REPLACE "\\" "/" _content_dir_def "${_content_dir_def}")
+
+# Same CSO dir as sample_sandbox (gpu regression loads lit/post shaders).
+file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/samples/Sandbox/shaders" _shader_dir_def)
+string(REPLACE "\\" "/" _shader_dir_def "${_shader_dir_def}")
+
 target_compile_definitions(engine_unit_tests PRIVATE
   ENGINE_CONTENT_DIR_A="${_content_dir_def}"
+  ENGINE_SHADER_DIR_A="${_shader_dir_def}"
 )
+
+# Rebuild shaders before GPU regression when Sandbox target exists.
+if(TARGET sample_sandbox_shaders)
+  add_dependencies(engine_unit_tests sample_sandbox_shaders)
+endif()
 
 add_test(NAME unit.engine_unit_tests COMMAND engine_unit_tests)
 
@@ -48,3 +60,7 @@ add_test(NAME unit.engine_unit_tests COMMAND engine_unit_tests)
 # Dedicated target alias for CI scripts: `ctest -R headless`
 add_test(NAME headless.engine_unit_tests COMMAND engine_unit_tests)
 set_tests_properties(headless.engine_unit_tests PROPERTIES LABELS "headless")
+
+add_test(NAME gpu_headless.sandbox
+  COMMAND sample_sandbox --gpu-headless --headless_frames=4 --backend=d3d12)
+set_tests_properties(gpu_headless.sandbox PROPERTIES LABELS "gpu_headless;headless")

@@ -1,5 +1,6 @@
 #include "engine/rhi/i_device.h"
 
+#include "engine/core/feature.h"
 #include "engine/core/log.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -61,10 +62,15 @@ struct Vertex {
 class D3D12Device final : public IDevice {
  public:
   Status Init(const DeviceDesc& desc) {
-    if (!desc.native_window || desc.width == 0 || desc.height == 0) {
+    if (desc.width == 0 || desc.height == 0) {
       return Status::Fail(ErrorCode::InvalidArgument, "Invalid DeviceDesc");
     }
-    hwnd_ = static_cast<HWND>(desc.native_window);
+    gpu_headless_ = desc.gpu_headless;
+    enable_hdr_output_ = desc.enable_hdr_output && !desc.gpu_headless;
+    if (!gpu_headless_ && !desc.native_window) {
+      return Status::Fail(ErrorCode::InvalidArgument, "Invalid DeviceDesc (missing HWND)");
+    }
+    hwnd_ = desc.native_window ? static_cast<HWND>(desc.native_window) : nullptr;
     width_ = desc.width;
     height_ = desc.height;
 
@@ -130,8 +136,14 @@ class D3D12Device final : public IDevice {
       return st;
     }
 
-    if (auto st = CreateSwapchain(); !st) {
-      return st;
+    if (gpu_headless_) {
+      if (auto st = CreateOffscreenBackbuffers(); !st) {
+        return st;
+      }
+    } else {
+      if (auto st = CreateSwapchain(); !st) {
+        return st;
+      }
     }
     if (auto st = CreateFrameResources(); !st) {
       return st;
@@ -146,8 +158,36 @@ class D3D12Device final : public IDevice {
       return Status::Fail("CreateEventW failed");
     }
 
-    LogInfo("D3D12 device ready");
+    // Extra allocators for M14 multithread_submit skeleton (still serial Execute).
+    for (int i = 0; i < 4; ++i) {
+      hr = device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                           IID_PPV_ARGS(&worker_allocators_[static_cast<std::size_t>(i)]));
+      if (FAILED(hr)) {
+        return Status::Fail("Create worker CommandAllocator failed");
+      }
+    }
+
+    if (enable_hdr_output_) {
+      TryEnableDisplayHdr();
+    }
+    // Bindless path uses indexed SRV heap slots after lit setup.
+    engine::SetFeatureOverride("bindless", true);
+    engine::SetFeatureOverride("multithread_submit", true);
+    if (hdr_output_active_) {
+      engine::SetFeatureOverride("hdr_output", true);
+    }
+
+    LogInfo(gpu_headless_ ? "D3D12 device ready (gpu_headless offscreen)" : "D3D12 device ready");
     return Status::Ok();
+  }
+
+  [[nodiscard]] bool is_headless() const override { return gpu_headless_; }
+
+  UINT CurrentBbIndex() const {
+    if (gpu_headless_ || !swapchain_) {
+      return offscreen_bb_index_;
+    }
+    return swapchain_->GetCurrentBackBufferIndex();
   }
 
   ~D3D12Device() override {
@@ -156,6 +196,7 @@ class D3D12Device final : public IDevice {
       CloseHandle(fence_event_);
       fence_event_ = nullptr;
     }
+    engine::ClearFeatureOverrides();
   }
 
   [[nodiscard]] std::uint32_t width() const override { return width_; }
@@ -183,14 +224,14 @@ class D3D12Device final : public IDevice {
       return Status::Fail("CommandList::Reset failed");
     }
 
-    auto* backbuffer = backbuffers_[swapchain_->GetCurrentBackBufferIndex()].Get();
+    auto* backbuffer = backbuffers_[CurrentBbIndex()].Get();
     Transition(backbuffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
     return Status::Ok();
   }
 
   Status Clear(const ColorRgba& color) override {
     last_clear_ = color;
-    const auto index = swapchain_->GetCurrentBackBufferIndex();
+    const auto index = CurrentBbIndex();
     const D3D12_CPU_DESCRIPTOR_HANDLE bb_rtv{
         rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
         static_cast<SIZE_T>(index) * rtv_descriptor_size_};
@@ -262,17 +303,25 @@ class D3D12Device final : public IDevice {
     return Status::Ok();
   }
 
+  Status SetSubmitConfig(const SubmitConfig& cfg) override {
+    if (auto st = ValidateSubmitConfig(cfg); !st) {
+      return st;
+    }
+    submit_cfg_ = cfg;
+    return Status::Ok();
+  }
+
   Status ReadbackTextureStub(std::vector<std::uint8_t>& out_rgba, int& w, int& h) override {
     w = static_cast<int>(width_);
     h = static_cast<int>(height_);
-    if (w <= 0 || h <= 0 || !swapchain_ || !command_list_ || !device_) {
+    if (w <= 0 || h <= 0 || !command_list_ || !device_ || !backbuffers_[0]) {
       return Status::Fail("Readback: device not ready");
     }
     if (auto st = EnsureColorReadbackBuffer(); !st) {
       return st;
     }
 
-    const auto bb_index = swapchain_->GetCurrentBackBufferIndex();
+    const auto bb_index = CurrentBbIndex();
     auto* backbuffer = backbuffers_[bb_index].Get();
     Transition(backbuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
 
@@ -351,7 +400,7 @@ class D3D12Device final : public IDevice {
   }
 
   Status Present() override {
-    auto* backbuffer = backbuffers_[swapchain_->GetCurrentBackBufferIndex()].Get();
+    auto* backbuffer = backbuffers_[CurrentBbIndex()].Get();
     Transition(backbuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
 
     if (timestamp_heap_ && timestamp_readback_ && timestamp_cursor_ > 0) {
@@ -372,9 +421,13 @@ class D3D12Device final : public IDevice {
     ID3D12CommandList* lists[] = {command_list_.Get()};
     queue_->ExecuteCommandLists(1, lists);
 
-    const HRESULT hr = swapchain_->Present(1, 0);
-    if (FAILED(hr)) {
-      return Status::Fail("Present failed: " + HrToString(hr));
+    if (!gpu_headless_) {
+      const HRESULT hr = swapchain_->Present(1, 0);
+      if (FAILED(hr)) {
+        return Status::Fail("Present failed: " + HrToString(hr));
+      }
+    } else {
+      offscreen_bb_index_ = (offscreen_bb_index_ + 1) % kFrameCount;
     }
 
     const UINT64 signal = ++fence_value_;
@@ -400,12 +453,18 @@ class D3D12Device final : public IDevice {
       bb.Reset();
     }
     dsv_.Reset();
-    DXGI_SWAP_CHAIN_DESC1 scd{};
-    swapchain_->GetDesc1(&scd);
-    const HRESULT hr =
-        swapchain_->ResizeBuffers(kFrameCount, width_, height_, scd.Format, scd.Flags);
-    if (FAILED(hr)) {
-      return Status::Fail("ResizeBuffers failed: " + HrToString(hr));
+    if (gpu_headless_) {
+      if (auto st = CreateOffscreenBackbuffers(); !st) {
+        return st;
+      }
+    } else {
+      DXGI_SWAP_CHAIN_DESC1 scd{};
+      swapchain_->GetDesc1(&scd);
+      const HRESULT hr =
+          swapchain_->ResizeBuffers(kFrameCount, width_, height_, scd.Format, scd.Flags);
+      if (FAILED(hr)) {
+        return Status::Fail("ResizeBuffers failed: " + HrToString(hr));
+      }
     }
     if (auto st = CreateRenderTargets(); !st) {
       return st;
@@ -544,10 +603,10 @@ class D3D12Device final : public IDevice {
       return shadow_ps.status();
     }
 
-    // Lit root: CBV b0, CBV b1, table t0..t5, static samplers s0 (shadow), s1 (albedo/orm).
+    // Lit root: CBV b0, CBV b1, table t0..t6 (incl. reflection cube), static samplers.
     D3D12_DESCRIPTOR_RANGE srv_range{};
     srv_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    srv_range.NumDescriptors = 6;
+    srv_range.NumDescriptors = 7;
     srv_range.BaseShaderRegister = 0;
     srv_range.RegisterSpace = 0;
     srv_range.OffsetInDescriptorsFromTableStart = 0;
@@ -739,6 +798,9 @@ class D3D12Device final : public IDevice {
     if (auto st = CreateLitOrmTextureSlot1(); !st) {
       return st;
     }
+    if (auto st = EnsureDefaultReflectionCubemap(); !st) {
+      return st;
+    }
     if (auto st = CreateLocalShadowMap(); !st) {
       return st;
     }
@@ -797,6 +859,11 @@ class D3D12Device final : public IDevice {
       float local_shadow_bias;
       float local_shadow_count;
       float local_shadow_tiles;
+      float prev_view_proj[16];
+      float jitter_x;
+      float jitter_y;
+      float enable_reflection;
+      float reflection_intensity;
     } data{};
     std::memcpy(data.view_proj, lighting.view_proj.m.data(), sizeof(data.view_proj));
     for (int i = 0; i < 4; ++i) {
@@ -852,6 +919,11 @@ class D3D12Device final : public IDevice {
     data.local_shadow_bias = lighting.local_shadow_bias;
     data.local_shadow_count = static_cast<float>(lighting.local_shadow_count);
     data.local_shadow_tiles = static_cast<float>(lighting.local_shadow_tiles_per_row);
+    std::memcpy(data.prev_view_proj, lighting.prev_view_proj.m.data(), sizeof(data.prev_view_proj));
+    data.jitter_x = lighting.jitter_x;
+    data.jitter_y = lighting.jitter_y;
+    data.enable_reflection = lighting.enable_reflection_probe ? 1.f : 0.f;
+    data.reflection_intensity = lighting.reflection_intensity;
 
     void* ptr = nullptr;
     if (FAILED(frame_cb_->Map(0, nullptr, &ptr))) {
@@ -1011,7 +1083,7 @@ class D3D12Device final : public IDevice {
       return;
     }
 
-    const auto index = swapchain_->GetCurrentBackBufferIndex();
+    const auto index = CurrentBbIndex();
     const D3D12_CPU_DESCRIPTOR_HANDLE rtv{rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
                                           static_cast<SIZE_T>(index) * rtv_descriptor_size_};
     if (dsv_) {
@@ -1387,7 +1459,7 @@ class D3D12Device final : public IDevice {
       return Status::Fail("Post resources missing");
     }
 
-    const auto bb_index = swapchain_->GetCurrentBackBufferIndex();
+    const auto bb_index = CurrentBbIndex();
     auto* backbuffer = backbuffers_[bb_index].Get();
     const D3D12_CPU_DESCRIPTOR_HANDLE rtv{rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
                                           static_cast<SIZE_T>(bb_index) * rtv_descriptor_size_};
@@ -1440,6 +1512,11 @@ class D3D12Device final : public IDevice {
       float dof_scale;
       float enable_motion_blur;
       float motion_blur_strength;
+      float prev_view_proj[16];
+      float jitter_x;
+      float jitter_y;
+      float pad0;
+      float pad1;
     } cb{};
     static_assert(sizeof(PostCB) <= 512, "post CB exceeds upload buffer");
     cb.inv_res[0] = 1.f / static_cast<float>((std::max)(1u, width_));
@@ -1477,6 +1554,9 @@ class D3D12Device final : public IDevice {
     cb.dof_scale = desc.dof_scale;
     cb.enable_motion_blur = desc.enable_motion_blur ? 1.f : 0.f;
     cb.motion_blur_strength = desc.motion_blur_strength;
+    std::memcpy(cb.prev_view_proj, desc.prev_view_proj.m.data(), sizeof(cb.prev_view_proj));
+    cb.jitter_x = desc.jitter_x;
+    cb.jitter_y = desc.jitter_y;
 
     void* mapped = nullptr;
     if (FAILED(post_cb_->Map(0, nullptr, &mapped))) {
@@ -1654,7 +1734,7 @@ class D3D12Device final : public IDevice {
     debug_cb_->Unmap(0, nullptr);
 
     // Ensure color+depth targets (post restores them; BeginFrame also binds).
-    const auto index = swapchain_->GetCurrentBackBufferIndex();
+    const auto index = CurrentBbIndex();
     const D3D12_CPU_DESCRIPTOR_HANDLE rtv{rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
                                           static_cast<SIZE_T>(index) * rtv_descriptor_size_};
     if (dsv_ && depth_state_ != D3D12_RESOURCE_STATE_DEPTH_WRITE) {
@@ -2112,7 +2192,7 @@ class D3D12Device final : public IDevice {
     }
 
     D3D12_DESCRIPTOR_HEAP_DESC srv_heap{};
-    srv_heap.NumDescriptors = 6;
+    srv_heap.NumDescriptors = 8;  // t0..t6 + spare (bindless-friendly room)
     srv_heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     srv_heap.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     hr = device_->CreateDescriptorHeap(&srv_heap, IID_PPV_ARGS(&shadow_srv_heap_));
@@ -2369,6 +2449,140 @@ class D3D12Device final : public IDevice {
       pixels[i + 3] = 255;
     }
     return UploadRgbaTexture(lit_orm2_, 5, pixels.data(), static_cast<int>(w), static_cast<int>(h));
+  }
+
+  Status BindReflectionCubeSrv() {
+    if (!shadow_srv_heap_ || !reflection_cube_) {
+      return Status::Fail("Reflection cube missing");
+    }
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.TextureCube.MipLevels = 1;
+    D3D12_CPU_DESCRIPTOR_HANDLE handle = shadow_srv_heap_->GetCPUDescriptorHandleForHeapStart();
+    handle.ptr += static_cast<SIZE_T>(6) * cbv_srv_uav_descriptor_size_;
+    device_->CreateShaderResourceView(reflection_cube_.Get(), &srv, handle);
+    return Status::Ok();
+  }
+
+  Status EnsureDefaultReflectionCubemap() {
+    constexpr int kFace = 8;
+    std::vector<std::uint8_t> faces(static_cast<std::size_t>(6 * kFace * kFace * 4));
+    for (int face = 0; face < 6; ++face) {
+      for (int y = 0; y < kFace; ++y) {
+        for (int x = 0; x < kFace; ++x) {
+          const std::size_t i =
+              static_cast<std::size_t>(((face * kFace + y) * kFace + x) * 4);
+          const float t = static_cast<float>(y) / static_cast<float>(kFace);
+          faces[i + 0] = static_cast<std::uint8_t>(40 + 80 * t);
+          faces[i + 1] = static_cast<std::uint8_t>(50 + 90 * t);
+          faces[i + 2] = static_cast<std::uint8_t>(70 + 110 * t);
+          faces[i + 3] = 255;
+        }
+      }
+    }
+    return UploadReflectionCubemap(faces.data(), kFace);
+  }
+
+  Status UploadReflectionCubemap(const std::uint8_t* rgba_faces, int face_size) override {
+    if (!rgba_faces || face_size <= 0) {
+      return Status::Fail("Invalid reflection cubemap");
+    }
+    if (!shadow_srv_heap_ || !device_) {
+      return Status::Fail("Device not ready for cubemap upload");
+    }
+    WaitGpu();
+    reflection_cube_.Reset();
+
+    const UINT size = static_cast<UINT>(face_size);
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = size;
+    desc.Height = size;
+    desc.DepthOrArraySize = 6;
+    desc.MipLevels = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    HRESULT hr = device_->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                  D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                  IID_PPV_ARGS(&reflection_cube_));
+    if (FAILED(hr)) {
+      return Status::Fail("Create reflection cube failed: " + HrToString(hr));
+    }
+
+    UINT64 total_bytes = 0;
+    std::array<D3D12_PLACED_SUBRESOURCE_FOOTPRINT, 6> layouts{};
+    std::array<UINT, 6> num_rows{};
+    std::array<UINT64, 6> row_sizes{};
+    device_->GetCopyableFootprints(&desc, 0, 6, 0, layouts.data(), num_rows.data(),
+                                   row_sizes.data(), &total_bytes);
+
+    D3D12_HEAP_PROPERTIES upload_heap{};
+    upload_heap.Type = D3D12_HEAP_TYPE_UPLOAD;
+    D3D12_RESOURCE_DESC buf{};
+    buf.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    buf.Width = total_bytes;
+    buf.Height = 1;
+    buf.DepthOrArraySize = 1;
+    buf.MipLevels = 1;
+    buf.SampleDesc.Count = 1;
+    buf.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    ComPtr<ID3D12Resource> upload;
+    hr = device_->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &buf,
+                                          D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                          IID_PPV_ARGS(&upload));
+    if (FAILED(hr)) {
+      return Status::Fail("Create cubemap upload failed");
+    }
+
+    void* mapped = nullptr;
+    if (FAILED(upload->Map(0, nullptr, &mapped)) || !mapped) {
+      return Status::Fail("Map cubemap upload failed");
+    }
+    auto* dst = static_cast<std::uint8_t*>(mapped);
+    for (UINT face = 0; face < 6; ++face) {
+      const auto* src_face =
+          rgba_faces + static_cast<std::size_t>(face) * size * size * 4;
+      for (UINT row = 0; row < size; ++row) {
+        std::memcpy(dst + layouts[face].Offset + row * layouts[face].Footprint.RowPitch,
+                    src_face + row * size * 4, size * 4);
+      }
+    }
+    upload->Unmap(0, nullptr);
+
+    const auto frame = frame_index_;
+    if (FAILED(allocators_[frame]->Reset())) {
+      return Status::Fail("Cubemap allocator Reset failed");
+    }
+    if (FAILED(command_list_->Reset(allocators_[frame].Get(), nullptr))) {
+      return Status::Fail("Cubemap command list Reset failed");
+    }
+    for (UINT face = 0; face < 6; ++face) {
+      D3D12_TEXTURE_COPY_LOCATION dst_loc{};
+      dst_loc.pResource = reflection_cube_.Get();
+      dst_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+      dst_loc.SubresourceIndex = face;
+      D3D12_TEXTURE_COPY_LOCATION src_loc{};
+      src_loc.pResource = upload.Get();
+      src_loc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+      src_loc.PlacedFootprint = layouts[face];
+      command_list_->CopyTextureRegion(&dst_loc, 0, 0, 0, &src_loc, nullptr);
+    }
+    Transition(reflection_cube_.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    if (FAILED(command_list_->Close())) {
+      return Status::Fail("Cubemap Close failed");
+    }
+    ID3D12CommandList* lists[] = {command_list_.Get()};
+    queue_->ExecuteCommandLists(1, lists);
+    WaitGpu();
+
+    return BindReflectionCubeSrv();
   }
 
   Status UploadLitAlbedoRgba(const std::uint8_t* rgba, int width, int height, int slot) override {
@@ -2717,6 +2931,54 @@ class D3D12Device final : public IDevice {
     return Status::Ok();
   }
 
+  Status CreateOffscreenBackbuffers() {
+    D3D12_HEAP_PROPERTIES heap_props{};
+    heap_props.Type = D3D12_HEAP_TYPE_DEFAULT;
+    for (std::uint32_t i = 0; i < kFrameCount; ++i) {
+      backbuffers_[i].Reset();
+      D3D12_RESOURCE_DESC desc{};
+      desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+      desc.Width = width_;
+      desc.Height = height_;
+      desc.DepthOrArraySize = 1;
+      desc.MipLevels = 1;
+      desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+      desc.SampleDesc.Count = 1;
+      desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+      D3D12_CLEAR_VALUE clear{};
+      clear.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+      clear.Color[0] = 0.f;
+      clear.Color[1] = 0.f;
+      clear.Color[2] = 0.f;
+      clear.Color[3] = 1.f;
+      const HRESULT hr = device_->CreateCommittedResource(
+          &heap_props, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_PRESENT, &clear,
+          IID_PPV_ARGS(&backbuffers_[i]));
+      if (FAILED(hr)) {
+        return Status::Fail("Create offscreen backbuffer failed: " + HrToString(hr));
+      }
+    }
+    offscreen_bb_index_ = 0;
+    return Status::Ok();
+  }
+
+  void TryEnableDisplayHdr() {
+    hdr_output_active_ = false;
+    if (!swapchain_) {
+      return;
+    }
+    ComPtr<IDXGISwapChain3> sc3;
+    if (FAILED(swapchain_.As(&sc3)) || !sc3) {
+      return;
+    }
+    // Prefer HDR10 if the output supports it; keep SDR swapchain format for compatibility.
+    const HRESULT hr = sc3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+    if (SUCCEEDED(hr)) {
+      hdr_output_active_ = true;
+      LogInfo("Display HDR10 color space enabled");
+    }
+  }
+
   Status CreateFrameResources() {
     D3D12_DESCRIPTOR_HEAP_DESC heap{};
     heap.NumDescriptors = kFrameCount;
@@ -2750,14 +3012,22 @@ class D3D12Device final : public IDevice {
   Status CreateRenderTargets() {
     D3D12_CPU_DESCRIPTOR_HANDLE handle = rtv_heap_->GetCPUDescriptorHandleForHeapStart();
     for (std::uint32_t i = 0; i < kFrameCount; ++i) {
-      HRESULT hr = swapchain_->GetBuffer(i, IID_PPV_ARGS(&backbuffers_[i]));
-      if (FAILED(hr)) {
-        return Status::Fail("SwapChain::GetBuffer failed");
+      if (!gpu_headless_) {
+        backbuffers_[i].Reset();
+        HRESULT hr = swapchain_->GetBuffer(i, IID_PPV_ARGS(&backbuffers_[i]));
+        if (FAILED(hr)) {
+          return Status::Fail("SwapChain::GetBuffer failed");
+        }
+      } else if (!backbuffers_[i]) {
+        return Status::Fail("Offscreen backbuffer missing");
       }
       device_->CreateRenderTargetView(backbuffers_[i].Get(), nullptr, handle);
       handle.ptr += rtv_descriptor_size_;
     }
     frame_index_ = 0;
+    if (gpu_headless_) {
+      offscreen_bb_index_ = 0;
+    }
     return Status::Ok();
   }
 
@@ -3198,6 +3468,12 @@ class D3D12Device final : public IDevice {
   HWND hwnd_ = nullptr;
   std::uint32_t width_ = 0;
   std::uint32_t height_ = 0;
+  bool gpu_headless_ = false;
+  bool enable_hdr_output_ = false;
+  bool hdr_output_active_ = false;
+  UINT offscreen_bb_index_ = 0;
+  SubmitConfig submit_cfg_{};
+  std::array<ComPtr<ID3D12CommandAllocator>, 4> worker_allocators_{};
   bool mesh_ready_ = false;
   bool lit_ready_ = false;
   bool quad_ready_ = false;
@@ -3246,6 +3522,7 @@ class D3D12Device final : public IDevice {
   ComPtr<ID3D12Resource> lit_orm_;
   ComPtr<ID3D12Resource> lit_albedo2_;
   ComPtr<ID3D12Resource> lit_orm2_;
+  ComPtr<ID3D12Resource> reflection_cube_;
   std::array<MeshSlotGpu, kMaxMeshSlots> mesh_slots_{};
   ComPtr<ID3D12Resource> scene_color_;
   ComPtr<ID3D12Resource> history_;

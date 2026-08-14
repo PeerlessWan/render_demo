@@ -64,7 +64,7 @@ void Application::SyncInputFromWindow() {
 
 Result<std::unique_ptr<Application>> Application::Create(const ApplicationDesc& desc) {
   WindowDesc wdesc = desc.window;
-  wdesc.headless = desc.headless || desc.window.headless;
+  wdesc.headless = desc.headless || desc.window.headless || desc.gpu_headless;
 
   auto window = Window::Create(wdesc);
   if (!window) {
@@ -75,17 +75,20 @@ Result<std::unique_ptr<Application>> Application::Create(const ApplicationDesc& 
   device_desc.native_window = window.value()->native_handle();
   device_desc.width = window.value()->width();
   device_desc.height = window.value()->height();
-  device_desc.headless = window.value()->is_headless();
+  device_desc.gpu_headless = desc.gpu_headless;
+  // CPU stub only when headless and not requesting real GPU offscreen.
+  device_desc.headless = window.value()->is_headless() && !desc.gpu_headless;
 
-  // Headless always resolved inside CreateDevice (both D3D12 and Vulkan).
+  // Headless / gpu_headless resolved inside CreateDevice.
   Result<std::unique_ptr<rhi::IDevice>> device = rhi::CreateDevice(desc.backend, device_desc);
   if (!device) {
     return Result<std::unique_ptr<Application>>::Fail(device.status());
   }
 
+  const bool app_headless = desc.headless || desc.gpu_headless || device_desc.headless;
   auto app = std::unique_ptr<Application>(
       new Application(std::move(window.value()), std::move(device.value()), desc.clear_color,
-                      device_desc.headless, desc.headless_frames));
+                      app_headless, desc.headless_frames));
   return Result<std::unique_ptr<Application>>::Ok(std::move(app));
 }
 

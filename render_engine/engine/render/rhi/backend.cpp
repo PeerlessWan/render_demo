@@ -5,13 +5,17 @@ namespace engine::rhi {
 Result<std::unique_ptr<IDevice>> CreateDevice(Backend backend, const DeviceDesc& desc) {
   switch (backend) {
     case Backend::D3D12:
+      // Prefer real GPU offscreen when requested (CI regression / automated readback).
+      if (desc.gpu_headless) {
+        return CreateD3D12Device(desc);
+      }
       if (desc.headless || desc.native_window == nullptr) {
         return CreateHeadlessDevice(desc);
       }
       return CreateD3D12Device(desc);
     case Backend::Vulkan:
       // Unit/CI: always headless device (no real VkInstance required).
-      if (desc.headless) {
+      if (desc.headless || desc.gpu_headless) {
         return CreateHeadlessDevice(desc);
       }
 #if defined(ENGINE_WITH_VULKAN) && ENGINE_WITH_VULKAN

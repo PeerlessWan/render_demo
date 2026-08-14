@@ -221,6 +221,7 @@ target_link_libraries(engine_mixed PUBLIC engine_core engine_rhi engine_render2d
 
 add_library(engine_gi STATIC
   gi/probe_volume.cpp
+  gi/reflection_probe.cpp
 )
 target_include_directories(engine_gi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_gi PUBLIC engine_core)

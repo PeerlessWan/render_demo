@@ -27,6 +27,8 @@ struct ApplicationDesc {
   ColorRgba clear_color{0.1f, 0.2f, 0.35f, 1.f};
   rhi::Backend backend = rhi::Backend::D3D12;  // Sandbox/default; set Vulkan for M17 clear
   bool headless = false;
+  // Real D3D12 without HWND (offscreen). Implies headless window + frame limit behavior.
+  bool gpu_headless = false;
   int headless_frames = 0;  // >0: auto RequestClose after N frames (headless CI)
 };
 

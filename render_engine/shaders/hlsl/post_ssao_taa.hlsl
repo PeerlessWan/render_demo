@@ -37,6 +37,11 @@ cbuffer PostCB : register(b0) {
   float g_dof_scale;
   float g_enable_motion_blur;
   float g_motion_blur_strength;
+  float4x4 g_prev_view_proj;
+  float g_jitter_x;
+  float g_jitter_y;
+  float g_pad0;
+  float g_pad1;
 };
 
 Texture2D g_scene_color : register(t0);
@@ -255,7 +260,17 @@ float4 PSMain(VSOut input) : SV_Target {
   }
 
   if (g_enable_taa > 0.5) {
-    float3 hist = g_history.Sample(g_linear, uv).rgb;
+    // Camera motion vectors from depth reprojection (static geometry).
+    float2 hist_uv = uv;
+    if (has_surface) {
+      float4 prev_clip = mul(g_prev_view_proj, float4(origin, 1.0));
+      float2 prev_ndc = prev_clip.xy / max(prev_clip.w, 1e-5);
+      hist_uv = prev_ndc * float2(0.5, -0.5) + 0.5;
+      // Undo current jitter so history lines up with unjittered UV.
+      hist_uv -= float2(g_jitter_x, -g_jitter_y) * 0.5;
+    }
+    hist_uv = saturate(hist_uv);
+    float3 hist = g_history.Sample(g_linear, hist_uv).rgb;
     float3 cmin = color;
     float3 cmax = color;
     [unroll] for (int y = -1; y <= 1; ++y) {
@@ -266,13 +281,17 @@ float4 PSMain(VSOut input) : SV_Target {
       }
     }
     hist = clamp(hist, cmin, cmax);
-    // Without motion vectors, keep blend modest so camera motion does not flash.
-    float blend = min(g_taa_blend, 0.35);
+    float blend = g_taa_blend;
+    float2 mv = hist_uv - uv;
+    float mv_len = length(mv);
+    if (mv_len > 0.08) {
+      blend *= 0.25;  // fast camera motion
+    }
     float luma_delta = abs(Luma(color) - Luma(hist));
     if (luma_delta > 0.35) {
       blend *= 0.15;  // disocclusion / big lighting change
     }
-    color = lerp(color, hist, blend);
+    color = lerp(color, hist, saturate(blend));
   } else if (g_enable_motion_blur > 0.5) {
     // Cheap camera-motion stand-in: blend toward last resolved frame.
     float3 hist = g_history.Sample(g_linear, uv).rgb;

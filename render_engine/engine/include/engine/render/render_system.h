@@ -67,6 +67,8 @@ struct EffectTuning {
   float dof_scale = 0.08f;
   bool enable_motion_blur = false;
   float motion_blur_strength = 0.35f;
+  bool enable_reflection_probe = true;
+  float reflection_intensity = 0.45f;
 };
 
 class RenderSystem {
@@ -107,6 +109,8 @@ class RenderSystem {
   ShadowAtlas atlas_{2048};
   LocalLightShadowScheduler local_shadows_;
   std::vector<LocalLight> local_lights_;
+  Mat4 prev_view_proj_ = Mat4::Identity();
+  bool have_prev_view_proj_ = false;
 };
 
 }  // namespace engine::render

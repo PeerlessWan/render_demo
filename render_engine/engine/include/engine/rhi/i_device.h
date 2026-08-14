@@ -19,6 +19,10 @@ struct DeviceDesc {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
   bool headless = false;
+  // True GPU without HWND (D3D12 offscreen RTs). Mutually preferred over CPU HeadlessDevice.
+  bool gpu_headless = false;
+  // Request display HDR10 path when swapchain exists (ignored for offscreen/gpu_headless).
+  bool enable_hdr_output = false;
 };
 
 struct SimpleMeshShaders {
@@ -71,6 +75,9 @@ struct PostResolveDesc {
   float dof_scale = 0.08f;
   bool enable_motion_blur = false;
   float motion_blur_strength = 0.35f;
+  Mat4 prev_view_proj = Mat4::Identity();
+  float jitter_x = 0.f;
+  float jitter_y = 0.f;
 
   [[nodiscard]] bool NeedsResolve() const {
     return enable_ssao || enable_taa || enable_tonemap || enable_auto_exposure || enable_bloom ||
@@ -93,6 +100,7 @@ struct ComputeDispatchDesc {
 
 struct FrameLighting {
   Mat4 view_proj = Mat4::Identity();
+  Mat4 prev_view_proj = Mat4::Identity();  // TAA / motion reprojection
   Mat4 light_view_proj = Mat4::Identity();  // cascade 0 (compat)
   std::array<Mat4, 4> cascade_view_proj{};
   std::array<float, 4> cascade_splits{};
@@ -106,9 +114,13 @@ struct FrameLighting {
   Vec3 camera_forward{0, 0, -1};
   float shadow_bias = 0.0015f;
   float specular_power = 64.f;
+  float jitter_x = 0.f;  // NDC sub-pixel offset when TAA on
+  float jitter_y = 0.f;
   bool enable_shadows = true;
   bool enable_ssao = false;
   bool enable_taa = false;
+  bool enable_reflection_probe = false;
+  float reflection_intensity = 0.45f;
   // Up to 4 local (point) lights.
   int local_light_count = 0;
   std::array<Vec3, 4> local_pos{};
@@ -234,6 +246,11 @@ class IDevice {
 
   // M14: parallel submit preference (validated; backends may still fall back to single-thread).
   virtual Status SetSubmitConfig(const SubmitConfig& cfg) { return ValidateSubmitConfig(cfg); }
+
+  // M13: upload 6 RGBA8 faces (face-major, each face = size*size*4) for specular reflections.
+  virtual Status UploadReflectionCubemap(const std::uint8_t* /*rgba_faces*/, int /*face_size*/) {
+    return Status::Ok();
+  }
 };
 
 Result<std::unique_ptr<IDevice>> CreateD3D12Device(const DeviceDesc& desc);
