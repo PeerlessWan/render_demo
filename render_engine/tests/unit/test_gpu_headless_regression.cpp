@@ -248,3 +248,94 @@ TEST_CASE("GPU headless lit regression smoke", "[gpu_headless][headless][regress
   REQUIRE(std::fabs(center - corner) > 1e-4f || mean > 0.05f);
   engine::ClearFeatureOverrides();
 }
+
+TEST_CASE("GPU headless semantic mean / TAA / shadows (C5)", "[gpu_headless][headless][semantic]") {
+  engine::ClearFeatureOverrides();
+  const auto shader_dir = ShaderDir();
+  if (shader_dir.empty() || !std::filesystem::exists(shader_dir / "lit_cube.vs.cso")) {
+    SKIP_TEST("compiled shaders missing");
+  }
+
+  auto run_capture = [&](bool taa, bool shadows, std::vector<std::uint8_t>& out_rgba) -> bool {
+    engine::ApplicationDesc adesc;
+    adesc.gpu_headless = true;
+    adesc.headless_frames = 2;
+    adesc.window.width = 128;
+    adesc.window.height = 72;
+    adesc.clear_color = {0.14f, 0.16f, 0.20f, 1.f};
+    auto app = engine::Application::Create(adesc);
+    if (!app) {
+      return false;
+    }
+    auto ground = app.value()->world().CreateNode("g");
+    engine::scene::MeshRenderer gm;
+    gm.mesh_id = "ground";
+    app.value()->world().set_mesh(ground, gm);
+    auto cube = app.value()->world().CreateNode("c");
+    engine::scene::MeshRenderer cm;
+    cm.mesh_id = "cube";
+    app.value()->world().set_mesh(cube, cm);
+    app.value()->camera().position = {0.f, 2.2f, 6.2f};
+    app.value()->camera().pitch = -0.22f;
+
+    engine::render::RenderSystem render;
+    engine::render::RenderSystemDesc rdesc;
+    rdesc.lit_vs = shader_dir / "lit_cube.vs.cso";
+    rdesc.lit_ps = shader_dir / "lit_cube.ps.cso";
+    rdesc.shadow_vs = shader_dir / "shadow.vs.cso";
+    rdesc.shadow_ps = shader_dir / "shadow.ps.cso";
+    rdesc.quad_vs = shader_dir / "quad.vs.cso";
+    rdesc.quad_ps = shader_dir / "quad.ps.cso";
+    rdesc.post_vs = shader_dir / "post_ssao_taa.vs.cso";
+    rdesc.post_ps = shader_dir / "post_ssao_taa.ps.cso";
+    rdesc.debug_vs = shader_dir / "debug_line.vs.cso";
+    rdesc.debug_ps = shader_dir / "debug_line.ps.cso";
+    rdesc.enable_shadows = shadows;
+    rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
+    rdesc.quality.enable_taa = taa;
+    if (!render.Init(app.value()->device(), rdesc)) {
+      return false;
+    }
+    auto fx = render.effect_tuning();
+    fx.enable_taa = taa;
+    fx.enable_shadows = shadows;
+    fx.enable_ssao = false;
+    fx.enable_bloom = false;
+    fx.enable_ssr = false;
+    render.set_effect_tuning(fx);
+
+    engine::render::Environment env;
+    int last_w = 0;
+    int last_h = 0;
+    if (!app.value()->Run([&](engine::Application& a) {
+          REQUIRE(render.DrawFrame(a.device(), a.render_scene(), env, 128.f / 72.f));
+          REQUIRE(a.device().ReadbackTextureStub(out_rgba, last_w, last_h));
+        })) {
+      return false;
+    }
+    return last_w == 128 && last_h == 72 && !out_rgba.empty();
+  };
+
+  std::vector<std::uint8_t> base_rgba;
+  std::vector<std::uint8_t> taa_off_rgba;
+  std::vector<std::uint8_t> shadows_off_rgba;
+  if (!run_capture(true, true, base_rgba)) {
+    SKIP_TEST("gpu_headless semantic capture unavailable");
+  }
+  REQUIRE(run_capture(false, true, taa_off_rgba));
+  REQUIRE(run_capture(true, false, shadows_off_rgba));
+
+  const float mean_base = MeanLuma(base_rgba);
+  const float mean_taa_off = MeanLuma(taa_off_rgba);
+  const float mean_shadows_off = MeanLuma(shadows_off_rgba);
+
+  REQUIRE(mean_base > 0.02f);
+  REQUIRE(mean_base < 0.98f);
+  // TAA on vs off should not be bit-identical (history / jitter path).
+  REQUIRE(base_rgba != taa_off_rgba);
+  // Shadows on should be darker (or equal within noise) than shadows off.
+  REQUIRE(mean_base <= mean_shadows_off + 0.08f);
+  REQUIRE(mean_shadows_off > 0.02f);
+  (void)mean_taa_off;
+  engine::ClearFeatureOverrides();
+}

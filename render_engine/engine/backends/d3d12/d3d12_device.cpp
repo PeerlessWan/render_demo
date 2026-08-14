@@ -343,7 +343,7 @@ class D3D12Device final : public IDevice {
       return Status::Fail("Cull CS empty");
     }
 
-    D3D12_ROOT_PARAMETER params[2]{};
+    D3D12_ROOT_PARAMETER params[3]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     params[0].Constants.Num32BitValues = 20;
     params[0].Constants.ShaderRegister = 0;
@@ -351,9 +351,12 @@ class D3D12Device final : public IDevice {
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
     params[1].Descriptor.ShaderRegister = 0;
     params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+    params[2].Descriptor.ShaderRegister = 1;
+    params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_ROOT_SIGNATURE_DESC rs{};
-    rs.NumParameters = 2;
+    rs.NumParameters = 3;
     rs.pParameters = params;
     ComPtr<ID3DBlob> sig;
     ComPtr<ID3DBlob> err;
@@ -372,7 +375,7 @@ class D3D12Device final : public IDevice {
       return Status::Fail("Create cull PSO failed");
     }
     cull_ready_ = true;
-    LogInfo("D3D12 instance cull CS ready (UAV IndirectArgs.instance_count)");
+    LogInfo("D3D12 instance cull CS ready (UAV IndirectArgs + compact indices)");
     return Status::Ok();
   }
 
@@ -422,6 +425,34 @@ class D3D12Device final : public IDevice {
                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     indirect_args_state_ = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 
+    // Compact indices UAV (identity map while visibility is always-true).
+    const UINT64 compact_bytes =
+        (std::max)(static_cast<UINT64>(instance_count) * sizeof(UINT), static_cast<UINT64>(256));
+    if (!cull_compact_buf_ || cull_compact_bytes_ < compact_bytes) {
+      cull_compact_buf_.Reset();
+      D3D12_HEAP_PROPERTIES heap{};
+      heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+      D3D12_RESOURCE_DESC desc{};
+      desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+      desc.Width = compact_bytes;
+      desc.Height = 1;
+      desc.DepthOrArraySize = 1;
+      desc.MipLevels = 1;
+      desc.SampleDesc.Count = 1;
+      desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+      desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+      if (FAILED(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                 IID_PPV_ARGS(&cull_compact_buf_)))) {
+        return Status::Fail("Create cull compact UAV failed");
+      }
+      cull_compact_bytes_ = compact_bytes;
+      cull_compact_state_ = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    } else if (cull_compact_state_ != D3D12_RESOURCE_STATE_UNORDERED_ACCESS) {
+      Transition(cull_compact_buf_.Get(), cull_compact_state_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+      cull_compact_state_ = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    }
+
     struct CullCB {
       float vp[16];
       UINT count;
@@ -433,6 +464,7 @@ class D3D12Device final : public IDevice {
     command_list_->SetPipelineState(cull_pso_.Get());
     command_list_->SetComputeRoot32BitConstants(0, 20, &cb, 0);
     command_list_->SetComputeRootUnorderedAccessView(1, indirect_args_buf_->GetGPUVirtualAddress());
+    command_list_->SetComputeRootUnorderedAccessView(2, cull_compact_buf_->GetGPUVirtualAddress());
     const UINT groups = (instance_count + 63u) / 64u;
     command_list_->Dispatch(groups, 1, 1);
     ++compute_dispatches_;
@@ -441,12 +473,17 @@ class D3D12Device final : public IDevice {
     uav.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
     uav.UAV.pResource = indirect_args_buf_.Get();
     command_list_->ResourceBarrier(1, &uav);
+    D3D12_RESOURCE_BARRIER uav2{};
+    uav2.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    uav2.UAV.pResource = cull_compact_buf_.Get();
+    command_list_->ResourceBarrier(1, &uav2);
     Transition(indirect_args_buf_.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
     indirect_args_state_ = D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;
 
     engine::SetFeatureOverride("hiz", true);
     engine::SetFeatureOverride("execute_indirect", true);
+    engine::SetFeatureOverride("gpu_cull_compact", true);
     return Status::Ok();
   }
 
@@ -1599,7 +1636,7 @@ class D3D12Device final : public IDevice {
       od.tex_slot = static_cast<float>(items[i].tex_slot);
       od.uv_scale = items[i].uv_scale > 0.f ? items[i].uv_scale : 1.f;
       od.use_instances = 0.f;
-      // Default classic t1/t4. Opt-in bindless: set pad to heap slot (1/4) when stable.
+      // Auto-wave tried single-draw bindless (pad=1) — sandbox golden RMSE drifted; keep classic.
       // ResourceDescriptorHeap path remains in PS for Feature probe / future enable.
       od.pad = -1.f;
 
@@ -4401,6 +4438,9 @@ class D3D12Device final : public IDevice {
   bool cull_ready_ = false;
   ComPtr<ID3D12RootSignature> cull_root_;
   ComPtr<ID3D12PipelineState> cull_pso_;
+  ComPtr<ID3D12Resource> cull_compact_buf_;
+  UINT64 cull_compact_bytes_ = 0;
+  D3D12_RESOURCE_STATES cull_compact_state_ = D3D12_RESOURCE_STATE_COMMON;
   std::uint32_t lit_draws_ = 0;
   std::uint32_t shadow_draws_ = 0;
   std::uint32_t screen_quad_draws_ = 0;

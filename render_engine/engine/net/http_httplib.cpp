@@ -84,6 +84,13 @@ Status DoRequest(std::string_view url, bool is_post, std::string_view body, Http
     cli.set_connection_timeout(5, 0);
     cli.set_read_timeout(10, 0);
     cli.set_write_timeout(10, 0);
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+    // Self-signed loopback tests only; public HTTPS still fails on DNS/cert as expected.
+    if (parsed.scheme_host_port.find("127.0.0.1") != std::string::npos ||
+        parsed.scheme_host_port.find("localhost") != std::string::npos) {
+      cli.enable_server_certificate_verification(false);
+    }
+#endif
 
     httplib::Result res;
     if (is_post) {

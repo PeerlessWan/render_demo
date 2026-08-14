@@ -45,10 +45,21 @@ string(REPLACE "\\" "/" _content_dir_def "${_content_dir_def}")
 file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/samples/Sandbox/shaders" _shader_dir_def)
 string(REPLACE "\\" "/" _shader_dir_def "${_shader_dir_def}")
 
+file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/tests/certs" _certs_dir_def)
+string(REPLACE "\\" "/" _certs_dir_def "${_certs_dir_def}")
+
 target_compile_definitions(engine_unit_tests PRIVATE
   ENGINE_CONTENT_DIR_A="${_content_dir_def}"
   ENGINE_SHADER_DIR_A="${_shader_dir_def}"
+  ENGINE_TEST_CERTS_DIR_A="${_certs_dir_def}"
 )
+
+if(ENGINE_WITH_HTTPLIB)
+  target_include_directories(engine_unit_tests PRIVATE "${ENGINE_HTTPLIB_DIR}")
+endif()
+if(ENGINE_WITH_OPENSSL AND OpenSSL_FOUND)
+  target_link_libraries(engine_unit_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+endif()
 
 # Rebuild shaders before GPU regression when Sandbox target exists.
 if(TARGET sample_sandbox_shaders)

@@ -1,4 +1,5 @@
-// GPU cull CS: writes IndirectDrawArgs.instance_count (byte offset 4) via InterlockedAdd.
+// GPU cull CS: writes IndirectDrawArgs.instance_count (byte offset 4) via InterlockedAdd,
+// and compact visible instance indices into g_compact_indices[slot].
 // Visibility is currently always-true for the first `instance_count` threads (CPU list length).
 
 cbuffer CullCB : register(b0) {
@@ -10,6 +11,7 @@ cbuffer CullCB : register(b0) {
 };
 
 RWByteAddressBuffer g_indirect_args : register(u0);
+RWStructuredBuffer<uint> g_compact_indices : register(u1);
 
 [numthreads(64, 1, 1)]
 void CSMain(uint3 dtid : SV_DispatchThreadID) {
@@ -22,5 +24,7 @@ void CSMain(uint3 dtid : SV_DispatchThreadID) {
     // unreachable
   }
   // D3D12_DRAW_INDEXED_ARGUMENTS.InstanceCount @ offset 4.
-  g_indirect_args.InterlockedAdd(4, 1u);
+  uint slot = 0;
+  g_indirect_args.InterlockedAdd(4, 1u, slot);
+  g_compact_indices[slot] = dtid.x;
 }

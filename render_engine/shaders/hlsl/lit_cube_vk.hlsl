@@ -1,5 +1,4 @@
-// Vulkan lit cube with directional CSM (HLSL → SPIR-V via DXC).
-// No albedo/ORM/local lights — shadow atlas + comparison sampling only.
+// Vulkan lit cube with directional CSM + optional local-shadow atlas sample (HLSL → SPIR-V).
 
 cbuffer FrameCB : register(b0) {
   float4x4 g_view_proj;
@@ -18,7 +17,11 @@ cbuffer FrameCB : register(b0) {
   float g_tiles_per_row;
   float g_enable_ibl;
   float g_ibl_intensity;
-  float _pad_frame;
+  float g_enable_local_shadow;
+  float g_local_shadow_bias;
+  float g_local_shadow_tiles;
+  float _pad_local;
+  float4x4 g_local_shadow_vp;
 };
 
 cbuffer ObjectCB : register(b1) {
@@ -101,6 +104,32 @@ float ShadowFactor(float3 world_pos) {
   return shadow / 9.0;
 }
 
+// Local-shadow deepen: sample shared atlas with local light VP (tile 0 layout).
+float LocalShadowFactor(float3 world_pos) {
+  if (g_enable_local_shadow < 0.5f) {
+    return 1.0f;
+  }
+  float4 lp = mul(g_local_shadow_vp, float4(world_pos, 1.0f));
+  float3 proj = lp.xyz / max(lp.w, 1e-5);
+  float2 uv = proj.xy * float2(0.5, -0.5) + 0.5;
+  if (uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1 || proj.z < 0 || proj.z > 1) {
+    return 1.0f;
+  }
+  float tiles = max(g_local_shadow_tiles, 1.0);
+  float tile = 1.0 / tiles;
+  // Tile 0 occupies top-left of the shared atlas (matches BindLocalShadowTile(0)).
+  float2 atlas_uv = uv * (tile * 0.998) + 0.001 * tile;
+  float cmp = proj.z - g_local_shadow_bias;
+  float shadow = 0;
+  float2 texel = 1.0 / 2048.0;
+  [unroll] for (int y = -1; y <= 1; ++y) {
+    [unroll] for (int x = -1; x <= 1; ++x) {
+      shadow += g_shadow_map.SampleCmpLevelZero(g_shadow_samp, atlas_uv + float2(x, y) * texel, cmp);
+    }
+  }
+  return shadow / 9.0;
+}
+
 float4 PSMain(VSOutput input) : SV_Target {
   float3 n = normalize(input.world_normal);
   float3 l = normalize(-g_sun_dir);
@@ -114,6 +143,8 @@ float4 PSMain(VSOutput input) : SV_Target {
   float spec = pow(saturate(dot(n, h)), max(1.0, g_specular_power * (1.0 - roughness))) *
                (1.0 - roughness) * lerp(0.04, 1.0, metallic);
   float sh = ShadowFactor(input.world_pos);
+  float lsh = LocalShadowFactor(input.world_pos);
+  sh = min(sh, lsh);
   float3 diffuse = base * (1.0 - metallic);
   float3 ambient = g_ambient * base;
   if (g_enable_ibl > 0.5) {

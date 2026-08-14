@@ -7,7 +7,7 @@
 | 清屏 / Swapchain | 有 | 有 | |
 | Lit + 深度 | 有 | 有 | |
 | CSM 阴影 | 有 | 有 | |
-| 点光 6-face 阴影 | 有 | **有（atlas LOAD + Feature）** | 与 CSM 共用 atlas；采样可继续加深 |
+| 点光 6-face 阴影 | 有 | **有（atlas LOAD + lit compare 采样）** | `enable_local_shadow` 写入 FrameCB；与 CSM 共用 atlas |
 | HDR scene + Post | 有 | **有（采样 `scene_color` → tonemap → swapchain）** | SSAO/TAA 开关接入 push；全栈可扩 |
 | IBL / 反射探针上传 | 有 | **真 cubemap 上传 + irradiance 采样** | BRDF LUT 接受；prefilter 可绑同一 cube |
 | UI / Debug lines | 有 | 部分 | |

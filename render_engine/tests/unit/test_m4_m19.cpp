@@ -21,10 +21,16 @@
 #include "engine/scene/world.h"
 #include "engine/ui/retained_ui.h"
 
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
+
+#if defined(ENGINE_WITH_HTTPLIB) && ENGINE_WITH_HTTPLIB
+#include <httplib.h>
+#endif
 
 TEST_CASE("Frustum rejects box behind camera", "[math]") {
   engine::render::Camera cam;
@@ -387,6 +393,64 @@ TEST_CASE("Net HTTPS with OpenSSL is not library-Unavailable", "[net][httplib][o
   REQUIRE(err.find("without OpenSSL") == std::string::npos);
 #else
   REQUIRE(true);  // SKIP: OpenSSL/cpp-httplib HTTPS not enabled
+#endif
+}
+
+TEST_CASE("Net HTTPS self-signed loopback", "[net][httplib][openssl][loopback]") {
+#if defined(ENGINE_WITH_HTTPLIB) && ENGINE_WITH_HTTPLIB && defined(ENGINE_WITH_OPENSSL) && \
+    ENGINE_WITH_OPENSSL && defined(CPPHTTPLIB_OPENSSL_SUPPORT)
+#if defined(ENGINE_TEST_CERTS_DIR_A)
+  const std::filesystem::path cert_dir(ENGINE_TEST_CERTS_DIR_A);
+  const auto crt = cert_dir / "loopback.crt";
+  const auto key = cert_dir / "loopback.key";
+  if (!std::filesystem::exists(crt) || !std::filesystem::exists(key)) {
+    SKIP_TEST("loopback certs missing under tests/certs");
+  }
+
+  httplib::SSLServer svr(crt.string().c_str(), key.string().c_str());
+  if (!svr.is_valid()) {
+    SKIP_TEST("SSLServer invalid (OpenSSL/runtime)");
+  }
+  svr.Get("/ping", [](const httplib::Request&, httplib::Response& res) {
+    res.set_content("pong", "text/plain");
+  });
+
+  const int port = svr.bind_to_any_port("127.0.0.1");
+  if (port <= 0) {
+    SKIP_TEST("SSLServer failed to bind");
+  }
+  std::thread th([&] { svr.listen_after_bind(); });
+  svr.wait_until_ready();
+
+  engine::net::NetSystem net;
+  bool done = false;
+  engine::Status st = engine::Status::Fail("unset");
+  int code = 0;
+  std::string body;
+  const std::string url = "https://127.0.0.1:" + std::to_string(port) + "/ping";
+  REQUIRE(net.http().Get(url, [&](engine::Status s, engine::net::HttpResponse resp) {
+    done = true;
+    st = s;
+    code = resp.status_code;
+    body = resp.body;
+  }));
+  for (int i = 0; i < 100 && !done; ++i) {
+    net.Pump();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  svr.stop();
+  if (th.joinable()) {
+    th.join();
+  }
+  REQUIRE(done);
+  REQUIRE(st);
+  REQUIRE(code == 200);
+  REQUIRE(body == "pong");
+#else
+  REQUIRE(true);  // SKIP: certs dir not defined
+#endif
+#else
+  REQUIRE(true);  // SKIP: OpenSSL HTTPS not enabled
 #endif
 }
 

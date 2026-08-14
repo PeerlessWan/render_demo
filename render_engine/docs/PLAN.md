@@ -318,9 +318,9 @@
 | --- | ------------------- | ----------------------------------------------- | ---------------------------------------- |
 | C1  | **Validation 进 CI** | Debug：D3D12/Vulkan 校验层报错 → FAIL                 | `ci_headless` 可选 `-Validation`；无校验层 SKIP |
 | C2  | **learn 小场景黄金图**    | `06_rhi_triangle`、`09_pbr_ibl` 各 1 条（确定性预设）     | 比再截一张满屏 Sandbox 更稳                       |
-| C3  | **矩阵格升级为比图**        | `run_matrix_smoke.py` 对抽样格 `capture` + 基线（命令已有） | 至少 D3D12：默认 / TAA off / 阴影 off 三格        |
+| C3  | **矩阵格升级为比图**        | `run_matrix_smoke.py` 对抽样格 `capture` + 基线（命令已有） | **已落地**：D3D12 默认 / TAA off / 阴影 off 三格        |
 | C4  | **双后端一致性**          | 同场景同预设 D3D12 vs VK 比 SSIM/RMSE（无「绝对正确」基线）       | Q2 之后；差超阈值 FAIL 或记对标回归                   |
-| C5  | **语义断言**            | 平均亮度区间；TAA on≠off；阴影 on 更暗                      | 进 `[gpu_headless]`；不替代黄金图                |
+| C5  | **语义断言**            | 平均亮度区间；TAA on≠off；阴影 on 更暗                      | **已落地**：`[gpu_headless][semantic]`；不替代黄金图                |
 | C6  | **着色器字节码哈希**        | DXIL/SPIR-V 无意变更可检出                             | 极便宜；不替代画面                                |
 | C7  | **加载 fuzz（可选）**     | glTF/序列化畸形输入不崩、路径不逃逸                            | unit/integration；与像素无关                   |
 
@@ -502,7 +502,7 @@ Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
 | **M25** 光追对齐            | **完成（加深）**：RT Resolve + **CanRunDxrDemo**                                                 |
 
 
-> 无 vendor 100% 口径见看板；测试门禁：`ci_headless.ps1 -Golden`（Q1+Q3+C2：sandbox/depth/learn）+ matrix；可选 `-Validation`（C1）。**Harness 冻结；MCP 不进门禁。** §3.1：**Q1–Q3 / C1–C2 已落地**；C3 矩阵比图仍后置。
+> 无 vendor 100% 口径见看板；测试门禁：`ci_headless.ps1 -Golden`（Q1+Q3+C2：sandbox/depth/learn）+ matrix **比图（C3）**；可选 `-Validation`（C1）。**Harness 冻结；MCP 不进门禁。** §3.1：**Q1–Q3 / C1–C3 / C5 已落地**；C4 双后端严比仍后置。
 
 
 

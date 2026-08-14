@@ -41,6 +41,8 @@ struct UiEvent {
 // Thin retained UI: layout + hit + draw rects (no ImGui; render via ScreenQuad).
 class RetainedUi {
  public:
+  virtual ~RetainedUi() = default;
+
   void Clear();
   void Panel(std::string_view id, float x, float y, float w, float h,
              ColorRgba color = {0.08f, 0.09f, 0.12f, 0.88f});
@@ -69,6 +71,10 @@ class RetainedUi {
   std::vector<UiEvent> Pump(float mouse_x, float mouse_y, bool mouse_down, bool mouse_pressed);
 
   [[nodiscard]] std::vector<UiDrawRect> BuildDrawList() const;
+
+  // RmlUi thin document hooks (default no-op).
+  virtual bool LoadRmlDocument(std::string_view /*rml*/) { return false; }
+  [[nodiscard]] virtual bool HasRmlDocument() const { return false; }
 
  private:
   Widget* Find(std::string_view id);

@@ -138,6 +138,21 @@ TEST_CASE("RetainedUi backend factory fallback", "[usable][ui]") {
   REQUIRE(backend->HitTest(10, 10));
 }
 
+TEST_CASE("RmlUi minimal document load", "[usable][ui][rml]") {
+  auto backend = engine::ui::CreateRetainedUiBackend();
+  REQUIRE(backend);
+  const bool loaded = engine::ui::LoadRmlDocumentFromMemory(
+      *backend, "<rml><body><p>hello</p></body></rml>");
+#if defined(ENGINE_WITH_RMLUI) && ENGINE_WITH_RMLUI
+  REQUIRE(loaded);
+  REQUIRE(engine::ui::RetainedUiHasRmlDocument(*backend));
+  REQUIRE(backend->HitTest(10, 10));  // rml.doc label
+#else
+  REQUIRE_FALSE(loaded);
+  REQUIRE_FALSE(engine::ui::RetainedUiHasRmlDocument(*backend));
+#endif
+}
+
 TEST_CASE("ImmediateUi available with ImGui", "[usable][ui]") {
 #if defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI
   engine::ui::ImmediateUi ui;

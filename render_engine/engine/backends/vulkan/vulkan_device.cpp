@@ -65,7 +65,11 @@ struct FrameGpu {
   float tiles_per_row;
   float enable_ibl;
   float ibl_intensity;
-  float pad;
+  float enable_local_shadow;
+  float local_shadow_bias;
+  float local_shadow_tiles;
+  float local_shadow_pad;
+  float local_shadow_vp[16];
 };
 
 struct ShadowFrameGpu {
@@ -443,7 +447,14 @@ class VulkanDevice final : public IDevice {
     data.tiles_per_row = static_cast<float>(lighting_.cascade_tiles_per_row);
     data.enable_ibl = lighting_.enable_ibl ? 1.f : 0.f;
     data.ibl_intensity = lighting_.ibl_intensity;
-    data.pad = 0.f;
+    data.enable_local_shadow = lighting_.enable_local_shadow ? 1.f : 0.f;
+    data.local_shadow_bias = lighting_.local_shadow_bias > 0.f ? lighting_.local_shadow_bias
+                                                              : lighting_.shadow_bias;
+    data.local_shadow_tiles =
+        static_cast<float>((std::max)(1, lighting_.local_shadow_tiles_per_row));
+    data.local_shadow_pad = 0.f;
+    std::memcpy(data.local_shadow_vp, lighting_.local_shadow_vp.m.data(),
+                sizeof(data.local_shadow_vp));
 
     void* mapped = nullptr;
     if (vkMapMemory(device_, frame_ub_mem_, 0, sizeof(data), 0, &mapped) != VK_SUCCESS) {
@@ -665,6 +676,13 @@ class VulkanDevice final : public IDevice {
       return Status::Ok();
     }
     local_shadow_stub_active_ = false;
+    // After local tiles are written, atlas is sampled in lit PS via enable_local_shadow.
+    lighting_.enable_local_shadow = true;
+    engine::SetFeatureOverride("local_shadow", true);
+    if (!local_shadow_sample_warned_) {
+      LogInfo("Vulkan local shadow sample path armed (atlas compare + local VP)");
+      local_shadow_sample_warned_ = true;
+    }
     return EndShadowPass();
   }
 
@@ -2902,6 +2920,7 @@ class VulkanDevice final : public IDevice {
   bool post_resolve_warned_ = false;
   bool ibl_upload_logged_ = false;
   bool local_shadow_warned_ = false;
+  bool local_shadow_sample_warned_ = false;
   bool local_shadow_stub_active_ = false;
   float post_exposure_ = 1.f;
   int post_tonemap_mode_ = 2;
