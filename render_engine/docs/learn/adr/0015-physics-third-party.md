@@ -12,8 +12,8 @@
 
 1. 集成 **Jolt Physics**（或等价 PhysX）为**实现**；引擎侧仅 `IPhysicsWorld` 等抽象 API。  
 2. 业务与其它子系统只依赖抽象；Jolt 头文件不得泄漏到公开 include。  
-3. 能力：刚体、形状、触发器、Raycast/ShapeCast、Character Controller、DebugDraw。  
-4. **不自研** 约束求解器；布料/软体/载具专用后置。
+3. 能力：刚体、形状、触发器、Raycast/ShapeCast、Character Controller、DebugDraw；**薄 SoftBody/Cloth** 见 **ADR 0029** / C22。  
+4. **不自研** 约束求解器；**不做**服装管线、破坏专用求解器、载具轮胎产品化。
 
 ## 后果
 

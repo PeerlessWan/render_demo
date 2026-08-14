@@ -50,7 +50,7 @@
 
 | 子系统 | 推荐库 | 用途 | 备注 |
 |---|---|---|---|
-| **物理** | [Jolt Physics](https://github.com/jrouwe/JoltPhysics) | 刚体、查询、角色控制器 | PhysX 可替代；见 ADR 0015 |
+| **物理** | [Jolt Physics](https://github.com/jrouwe/JoltPhysics) | 刚体、查询、角色控制器；薄 SoftBody 见 C22 | PhysX 可替代；见 ADR 0015 / **0029** |
 | **调试 UI** | [Dear ImGui](https://github.com/ocornut/imgui) | 控制台、Profiler、工具面板 | D3D12 + Vulkan backend |
 | **超分（NVIDIA）** | NVIDIA **DLSS / Streamline（NGX）** | `IUpscaler` 的 DLSS 实现 | 许可与再分发单独合规；无卡走 FSR |
 | **着色器编译** | **DirectXShaderCompiler (DXC)** | HLSL → DXIL；HLSL → SPIR-V（Vulkan） | Windows SDK / NuGet / 官方包；构建时调用 |
@@ -169,6 +169,7 @@
 - [POSITIONING.md](POSITIONING.md)  
 - [TESTING.md](TESTING.md) — 单测 / 集成 / 自动化  
 - [learn/adr/0015-physics-third-party.md](learn/adr/0015-physics-third-party.md)  
+- [learn/adr/0029-physics-softbody-boundary.md](learn/adr/0029-physics-softbody-boundary.md)  
 - [learn/adr/0016-ui-imgui-retained.md](learn/adr/0016-ui-imgui-retained.md)  
 - [learn/adr/0012-video-decode-follows-backend.md](learn/adr/0012-video-decode-follows-backend.md)  
 - [learn/adr/0021-network-http-ws-quic.md](learn/adr/0021-network-http-ws-quic.md)  

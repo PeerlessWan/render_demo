@@ -23,7 +23,7 @@
 | G19 | Linux | **文档占位 / 外置** | M18 |
 | G02–G04、G11 | 混合打磨 / 拣选 / 多 DPI | **可用加深** | M20 |
 | G05–G10、G12 | 2D 深度 | **可用加深** | M21 |
-| G14 | 动态 GI | **可用加深**（ProbeVolume） | M22 |
+| G14 | 动态 GI | **可用加深**（ProbeVolume）；下一加深波 **W-gi-deepen**（看板） | M22 |
 | G15 | 地形/水体/植被（基础） | **可用加深** | M23 |
 | G16 | 光追 API 对齐 | **完成（加深）** Feature 门控 | M25（内容管线仍非 UE 级） |
 | T01 | 最小工具链（shader/IBL/纹理/cook/黄金图） | 已排期 | M2–M9；见 [TOOLING.md](TOOLING.md) |
@@ -75,6 +75,12 @@
 | C11 | IK | 足部/瞄准等 | 中 |
 | C12 | GPU 蒙皮产品化打磨 | 蒙皮已有；算力路径可加深 | 低 |
 
+### 4.3b 物理加深
+
+| ID | 候选 | 说明 | 优先级建议 |
+|---|---|---|---|
+| **C22** | **薄 SoftBody / Cloth** | 经 `IPhysicsWorld` + Jolt；读回顶点 + Demo；**非**服装管线/破坏/轮胎；[ADR 0029](learn/adr/0029-physics-softbody-boundary.md) | 中（看板 **W-phys-soft**） |
+
 ### 4.4 2D / 文本 / 矢量
 
 | ID | 候选 | 说明 | 优先级建议 |
@@ -106,8 +112,9 @@
 
 1. 单项进入计划前必须：**验收标准 + Feature/L0–L2 归属 + 双后端策略**（宿主类可标「引擎外」）。  
 2. 默认仍遵守：不做 mac/移动、不做完整编辑器进 `engine/`、不做玩法/同步进引擎、不做音频 DSP。  
-3. C01/C02/C10/G13 若要做，建议优先于 C06/C18。  
-4. 脚本/编辑器优先走 **HOSTING 外挂**；C19–C21 立项不得默认同步改 POSITIONING。
+3. C01/C02/C10/G13 若要做，建议优先于 C06/C18；**C22 薄 SoftBody** 可与 GI 加深穿插，但次于近端 VK 债。  
+4. 脚本/编辑器优先走 **HOSTING 外挂**；C19–C21 立项不得默认同步改 POSITIONING。  
+5. **服装级**布料编辑/穿戴/撕裂资产流 **不进** `engine/`（与 C22 区分）。
 
 ## 5. 明确范围外（不做）
 
@@ -120,7 +127,8 @@
 | G17 / T03 | **引擎内**材质节点图 / 完整可视化编辑器；FBX·USD 一站式（独立 editor 见 C21） |
 | — | 音频特效（DSP / 完整空间音频） |
 | — | Frame Generation；商业资产生态 |
-| — | 布料/软体/载具轮胎等物理产品化 |
+| — | **完整**载具轮胎 / 破坏专用求解器产品化（薄 SoftBody/Cloth 见 **C22**） |
+| — | 服装级布料编辑、穿戴绑定、撕裂内容管线（引擎外） |
 
 ## 6. 相关文档
 
@@ -137,4 +145,5 @@
 - [learn/adr/0026-runtime-foundations-assets-threads-profiling.md](learn/adr/0026-runtime-foundations-assets-threads-profiling.md)  
 - [learn/adr/0027-hosting-script-editor-boundary.md](learn/adr/0027-hosting-script-editor-boundary.md)  
 - [learn/adr/0028-genre-kits-layering.md](learn/adr/0028-genre-kits-layering.md)  
+- [learn/adr/0029-physics-softbody-boundary.md](learn/adr/0029-physics-softbody-boundary.md)  
 - [README.md](README.md)  

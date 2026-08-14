@@ -41,6 +41,7 @@ ADR 记录 **为什么这样设计**，是学习封装的核心（比 API 列表
 | 0026 | 运行时基础：Cook/依赖、异步、逻辑渲染分离、寿命、**数据依赖与生命周期**、GPU Profiling | [0026-…](adr/0026-runtime-foundations-assets-threads-profiling.md) | CH20、CH27 | Accepted |
 | 0027 | 宿主分层：脚本与编辑器在引擎外（或可选插件） | [0027-…](adr/0027-hosting-script-editor-boundary.md) | — | Accepted |
 | 0028 | 多品类：薄 game_kit + genre_kits + games | [0028-…](adr/0028-genre-kits-layering.md) | — | Accepted |
+| 0029 | 物理加深边界：薄 SoftBody/Cloth 进引擎；服装管线外置 | [0029-…](adr/0029-physics-softbody-boundary.md) | CH25 | Accepted |
 
 ## 模板
 
