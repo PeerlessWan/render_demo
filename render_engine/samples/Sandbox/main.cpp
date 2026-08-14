@@ -577,7 +577,6 @@ int main(int argc, char** argv) {
   engine::LogInfo(std::string("Physics backend: ") + physics->backend_name());
   engine::LogInfo(std::string("Retained UI backend: ") +
                   engine::ui::QueryRetainedUiBackend().name);
-  auto retained = engine::ui::CreateRetainedUiBackend();
   bool mouse_left_was = false;
   float pick_press_x = 0.f;
   float pick_press_y = 0.f;
@@ -1108,38 +1107,7 @@ int main(int argc, char** argv) {
       pick_press_x = snap.mouse_x;
       pick_press_y = snap.mouse_y;
     }
-    {
-      const float hx = 16.f;
-      const float hy = (std::max)(16.f, dh - 130.f);
-      retained->Clear();
-      retained->Panel("hud", hx, hy, 220.f, 110.f, {0.06f, 0.07f, 0.1f, 0.82f});
-      retained->Label("hud_title", "Retained HUD", hx + 12.f, hy + 12.f);
-      retained->Toggle("hud_fog", "Fog", hx + 12.f, hy + 40.f, 180.f, 26.f, fx.enable_fog);
-      retained->Toggle("hud_bloom", "Bloom", hx + 12.f, hy + 72.f, 180.f, 26.f, fx.enable_bloom);
-    }
-    const auto retained_events =
-        retained->Pump(snap.mouse_x, snap.mouse_y, snap.mouse_left, mouse_pressed);
-    for (const auto& ev : retained_events) {
-      if (ev.id == "hud_fog" && ev.type == engine::ui::UiEventType::Toggle) {
-        fx.enable_fog = ev.bool_value;
-      } else if (ev.id == "hud_bloom" && ev.type == engine::ui::UiEventType::Toggle) {
-        fx.enable_bloom = ev.bool_value;
-      }
-    }
-    retained->set_bool("hud_fog", fx.enable_fog);
-    retained->set_bool("hud_bloom", fx.enable_bloom);
     render.set_effect_tuning(fx);
-
-    std::vector<engine::rhi::ScreenQuad> retained_quads;
-    for (const auto& r : retained->BuildDrawList()) {
-      engine::rhi::ScreenQuad q;
-      q.x0 = r.x0;
-      q.y0 = r.y0;
-      q.x1 = r.x1;
-      q.y1 = r.y1;
-      q.color = r.color;
-      retained_quads.push_back(q);
-    }
 
     // M16 sprites + M7 particle screen proxies
     sprites.clear();
@@ -1188,8 +1156,7 @@ int main(int argc, char** argv) {
         app_ref.world(), app_ref.camera(), aspect);
 
     // M20 pick on click-release without drag (LMB look must not fight pick).
-    if (mouse_released && pick_tracking && !app_ref.ui_want_capture() &&
-        !retained->want_capture()) {
+    if (mouse_released && pick_tracking && !app_ref.ui_want_capture()) {
       const float dx = snap.mouse_x - pick_press_x;
       const float dy = snap.mouse_y - pick_press_y;
       if (dx * dx + dy * dy < 16.f * 16.f) {
@@ -1275,8 +1242,7 @@ int main(int argc, char** argv) {
       }
       reflection_probe.ClearDirty();
     }
-    if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites,
-                                   retained_quads.empty() ? nullptr : &retained_quads,
+    if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites, nullptr,
                                    use_vulkan ? nullptr : &dbg);
         !st) {
       engine::LogError(st.message());
@@ -1461,7 +1427,6 @@ int main(int argc, char** argv) {
       }
       profiler.End("ImGui");
     }
-    app_ref.set_ui_want_capture(app_ref.ui_want_capture() || retained->want_capture());
     profiler.End("Frame");
   });
   if (!status || headless_assert_failed) {
