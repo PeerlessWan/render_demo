@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "note": "C6 bytecode hash; update with --approve after intentional shader rebuild",
+  "files": {
+    "lit_cube.vs.cso": "23bbffcc6d1735d456540856699d847f29a27a7314abd074fe32c6c4aa652129",
+    "lit_cube.ps.cso": "755ebf81266f545ad6097c3210f2937aaee1363152f302b84599124761b90d73",
+    "shadow.vs.cso": "691b0814afe32829d70206416f05ad1b6d7678d479d47f92ff35ee595f536629",
+    "shadow.ps.cso": "d6fec17dcb094725c8bcb328dd948351f7c586760be5ba00a5dbe963eb346206",
+    "post_ssao_taa.vs.cso": "bc8b333937aadd99019601a9615a4c02b296593ecbae2f87f0444465d9a00203",
+    "post_ssao_taa.ps.cso": "486bfc442639b3834148270f0a81c365c8a5436521cd4f35defd7c1409db4b3f",
+    "instance_cull_cs.cso": "9372de968ef1b46033b9a403b2c2a6950102076708defcac689dad86e1055f7a",
+    "skybox.vs.cso": "83ac856df9bb3c4dece617c919f7897d34bacfc55d14b8d87d403adb5005ce54",
+    "skybox.ps.cso": "cfd87004c219c3825d60c4eab6ea8c927b500ce5bc4ee2662be1065c69557e7e",
+    "lit_cube_vk.vs.spv": "caf4be67acd9280c72e2325fc8e4c1e74bb373a4461d6c8b05d09721c3227350",
+    "lit_cube_vk.ps.spv": "fe1633f1c83dd4a5b5e5f3ccc008dc16764ca9ae58843ce650d81211e5b6896d"
+  }
+}

@@ -55,6 +55,17 @@ void RenderSystem::set_effect_tuning(const EffectTuning& t) {
   ApplyEffectToQuality();
 }
 
+void RenderSystem::ApplyEnvironmentDefaults(const Environment& env) {
+  effect_.sun_intensity = env.sun_intensity;
+  effect_.exposure = env.exposure;
+  effect_.enable_fog = env.fog_enabled;
+  effect_.fog_density = env.fog_density;
+  effect_.fog_start = env.fog_start;
+  effect_.fog_color = {env.fog_color.r, env.fog_color.g, env.fog_color.b};
+  effect_.enable_skybox = env.skybox_enabled;
+  ApplyEffectToQuality();
+}
+
 void RenderSystem::set_local_lights(const std::vector<LocalLight>& lights) {
   local_lights_ = lights;
 }
@@ -112,6 +123,14 @@ Status RenderSystem::Init(rhi::IDevice& device, const RenderSystemDesc& desc) {
     LogInfo("Post mesh ready (SSAO/TAA/tonemap/bloom/fog)");
   } else {
     post_ready_ = false;
+  }
+  if (!desc.sky_vs.empty() && !desc.sky_ps.empty()) {
+    if (auto st = device.SetupSkybox(desc.sky_vs, desc.sky_ps); !st) {
+      LogWarn("SetupSkybox SKIP: " + st.message());
+    } else {
+      sky_ready_ = true;
+      LogInfo("Skybox path ready");
+    }
   }
   max_shadow_distance_ = desc.max_shadow_distance;
   effect_.enable_shadows = desc.enable_shadows;
@@ -395,6 +414,20 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
         return;
       }
       if (auto st = device.DrawTransparentLitCubes(transparent); !st) {
+        LogError(st.message());
+      }
+      device.GpuPassEnd();
+    });
+  }
+  if (sky_ready_ && effect_.enable_skybox) {
+    graph_.AddPass("Skybox", {"Color", "Depth"}, {"Color"}, [&] {
+      device.GpuPassBegin("Skybox");
+      Mat4 view_rot = scene.camera.view_matrix();
+      view_rot.m[12] = 0.f;
+      view_rot.m[13] = 0.f;
+      view_rot.m[14] = 0.f;
+      const Mat4 sky_vp = scene.camera.proj_matrix(aspect) * view_rot;
+      if (auto st = device.DrawSkybox(sky_vp); !st) {
         LogError(st.message());
       }
       device.GpuPassEnd();

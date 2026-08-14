@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -53,6 +54,109 @@ std::uint8_t ToByte(float x) {
   return static_cast<std::uint8_t>(std::clamp(x / (1.f + x), 0.f, 1.f) * 255.f + 0.5f);
 }
 
+// Minimal Radiance RGBE (.hdr) equirect loader.
+struct HdrImage {
+  int w = 0;
+  int h = 0;
+  std::vector<Vec3> rgb;
+};
+
+bool LoadHdrEquirect(const std::string& path, HdrImage& out) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    return false;
+  }
+  std::string line;
+  bool is_rgbe = false;
+  while (std::getline(in, line)) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    if (line.find("FORMAT=32-bit_rle_rgbe") != std::string::npos) {
+      is_rgbe = true;
+    }
+    if (line.empty()) {
+      break;
+    }
+  }
+  if (!is_rgbe || !std::getline(in, line)) {
+    return false;
+  }
+  if (!line.empty() && line.back() == '\r') {
+    line.pop_back();
+  }
+  // -Y height +X width
+  int height = 0;
+  int width = 0;
+  if (std::sscanf(line.c_str(), "-Y %d +X %d", &height, &width) != 2 || width <= 0 || height <= 0) {
+    return false;
+  }
+  out.w = width;
+  out.h = height;
+  out.rgb.assign(static_cast<std::size_t>(width * height), {});
+  std::vector<std::uint8_t> scan(static_cast<std::size_t>(width * 4));
+  for (int y = 0; y < height; ++y) {
+    unsigned char rgbe[4];
+    in.read(reinterpret_cast<char*>(rgbe), 4);
+    if (!in || rgbe[0] != 2 || rgbe[1] != 2 || (static_cast<int>(rgbe[2]) << 8 | rgbe[3]) != width) {
+      // Flat RGBE (non-RLE) fallback: first pixel already read.
+      for (int x = 0; x < width; ++x) {
+        if (x > 0) {
+          in.read(reinterpret_cast<char*>(rgbe), 4);
+        }
+        if (!in) {
+          return false;
+        }
+        const float f = std::ldexp(1.f, static_cast<int>(rgbe[3]) - 128 - 8);
+        out.rgb[static_cast<std::size_t>(y * width + x)] = {rgbe[0] * f, rgbe[1] * f, rgbe[2] * f};
+      }
+      continue;
+    }
+    for (int ch = 0; ch < 4; ++ch) {
+      int x = 0;
+      while (x < width) {
+        unsigned char code = 0;
+        in.read(reinterpret_cast<char*>(&code), 1);
+        if (!in) {
+          return false;
+        }
+        if (code > 128) {
+          const int count = code - 128;
+          unsigned char val = 0;
+          in.read(reinterpret_cast<char*>(&val), 1);
+          for (int i = 0; i < count && x < width; ++i, ++x) {
+            scan[static_cast<std::size_t>(x * 4 + ch)] = val;
+          }
+        } else {
+          const int count = code;
+          for (int i = 0; i < count && x < width; ++i, ++x) {
+            unsigned char val = 0;
+            in.read(reinterpret_cast<char*>(&val), 1);
+            scan[static_cast<std::size_t>(x * 4 + ch)] = val;
+          }
+        }
+      }
+    }
+    for (int x = 0; x < width; ++x) {
+      const auto* p = &scan[static_cast<std::size_t>(x * 4)];
+      const float f = std::ldexp(1.f, static_cast<int>(p[3]) - 128 - 8);
+      out.rgb[static_cast<std::size_t>(y * width + x)] = {p[0] * f, p[1] * f, p[2] * f};
+    }
+  }
+  return true;
+}
+
+Vec3 SampleEquirect(const HdrImage& img, Vec3 dir) {
+  dir = Normalize(dir);
+  const float u = 0.5f + std::atan2(dir.z, dir.x) / (2.f * kPi);
+  const float v = 0.5f - std::asin(std::clamp(dir.y, -1.f, 1.f)) / kPi;
+  const float x = std::fmod(u + 1.f, 1.f) * (img.w - 1);
+  const float y = std::clamp(v, 0.f, 1.f) * (img.h - 1);
+  const int x0 = static_cast<int>(x);
+  const int y0 = static_cast<int>(y);
+  return img.rgb[static_cast<std::size_t>(y0 * img.w + x0)];
+}
+
 void WriteFace(std::vector<std::uint8_t>& out, int face_size, int face,
                const std::vector<Vec3>& hdr) {
   for (int y = 0; y < face_size; ++y) {
@@ -89,17 +193,39 @@ int main(int argc, char** argv) {
   const std::string input = argv[1];
   const std::string out_dir = argv[2];
   const int face_size = argc >= 4 ? std::max(8, std::atoi(argv[3])) : 32;
+  const int sky_face = argc >= 5 ? std::max(16, std::atoi(argv[4])) : 128;
   const int lut_size = 128;
 
-  // Build environment cube (procedural; HDR file path recorded in meta only for v1).
+  HdrImage hdr_img;
+  const bool from_hdr = (input != "procedural") && LoadHdrEquirect(input, hdr_img);
+  if (input != "procedural" && !from_hdr) {
+    std::cerr << "WARN: failed to load HDR '" << input << "', falling back to procedural\n";
+  }
+
+  // Build environment cube.
   std::vector<Vec3> env(static_cast<std::size_t>(6 * face_size * face_size));
   for (int face = 0; face < 6; ++face) {
     for (int y = 0; y < face_size; ++y) {
       for (int x = 0; x < face_size; ++x) {
         const float u = (x + 0.5f) / face_size * 2.f - 1.f;
         const float v = (y + 0.5f) / face_size * 2.f - 1.f;
+        const Vec3 dir = FaceDir(face, u, v);
         env[static_cast<std::size_t>((face * face_size + y) * face_size + x)] =
-            SampleSky(FaceDir(face, u, v));
+            from_hdr ? SampleEquirect(hdr_img, dir) : SampleSky(dir);
+      }
+    }
+  }
+
+  // Higher-res sky display cube (LDR).
+  std::vector<Vec3> sky_env(static_cast<std::size_t>(6 * sky_face * sky_face));
+  for (int face = 0; face < 6; ++face) {
+    for (int y = 0; y < sky_face; ++y) {
+      for (int x = 0; x < sky_face; ++x) {
+        const float u = (x + 0.5f) / sky_face * 2.f - 1.f;
+        const float v = (y + 0.5f) / sky_face * 2.f - 1.f;
+        const Vec3 dir = FaceDir(face, u, v);
+        sky_env[static_cast<std::size_t>((face * sky_face + y) * sky_face + x)] =
+            from_hdr ? SampleEquirect(hdr_img, dir) : SampleSky(dir);
       }
     }
   }
@@ -260,11 +386,38 @@ int main(int argc, char** argv) {
 
   std::ofstream meta(out_dir + "/ibl_meta.txt");
   meta << "input=" << input << "\nface_size=" << face_size << "\nlut=" << lut_size
-       << "\npack=ibl_pack.ibl1\n";
+       << "\npack=ibl_pack.ibl1\nsky=sky_kloppenheim06.sky1\nsky_face=" << sky_face
+       << "\nsource=https://polyhaven.com/a/kloppenheim_06_puresky\nlicense=CC0\n"
+       << "hdr_loaded=" << (from_hdr ? "1" : "0") << "\n";
   // Compatibility markers for older docs/tests.
   std::ofstream(out_dir + "/ibl_irradiance.marker") << "ibl_pack.ibl1\n";
   std::ofstream(out_dir + "/ibl_prefilter.marker") << "ibl_pack.ibl1\n";
   std::ofstream(out_dir + "/ibl_brdf_lut.marker") << "ibl_pack.ibl1\n";
+
+  // SKY1 display cubemap.
+  std::vector<std::uint8_t> sky_pack;
+  sky_pack.reserve(8 + static_cast<std::size_t>(6 * sky_face * sky_face * 4));
+  const char sky_magic[4] = {'S', 'K', 'Y', '1'};
+  sky_pack.insert(sky_pack.end(), sky_magic, sky_magic + 4);
+  auto put_sky_u32 = [&](std::uint32_t v) {
+    sky_pack.push_back(static_cast<std::uint8_t>(v & 255));
+    sky_pack.push_back(static_cast<std::uint8_t>((v >> 8) & 255));
+    sky_pack.push_back(static_cast<std::uint8_t>((v >> 16) & 255));
+    sky_pack.push_back(static_cast<std::uint8_t>((v >> 24) & 255));
+  };
+  put_sky_u32(static_cast<std::uint32_t>(sky_face));
+  for (int f = 0; f < 6; ++f) {
+    WriteFace(sky_pack, sky_face, f, sky_env);
+  }
+  const std::string sky_path = out_dir + "/sky_kloppenheim06.sky1";
+  std::ofstream sky_out(sky_path, std::ios::binary);
+  if (!sky_out) {
+    std::cerr << "cannot write " << sky_path << "\n";
+    return 1;
+  }
+  sky_out.write(reinterpret_cast<const char*>(sky_pack.data()),
+                static_cast<std::streamsize>(sky_pack.size()));
   std::cout << "wrote " << out_path << "\n";
+  std::cout << "wrote " << sky_path << "\n";
   return 0;
 }

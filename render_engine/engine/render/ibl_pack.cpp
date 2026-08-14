@@ -58,4 +58,36 @@ Result<IblPack> LoadIblPack(const std::filesystem::path& path) {
   return Result<IblPack>::Ok(std::move(pack));
 }
 
+Result<SkyCubemap> LoadSkyCubemap(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary | std::ios::ate);
+  if (!in) {
+    return Result<SkyCubemap>::Fail("Cannot open sky cubemap: " + path.string());
+  }
+  const auto sz = in.tellg();
+  if (sz < 8) {
+    return Result<SkyCubemap>::Fail("Sky cubemap too small");
+  }
+  std::vector<std::uint8_t> bytes(static_cast<std::size_t>(sz));
+  in.seekg(0);
+  in.read(reinterpret_cast<char*>(bytes.data()), sz);
+  const std::uint8_t* p = bytes.data();
+  const std::uint8_t* end = bytes.data() + bytes.size();
+  if (p[0] != 'S' || p[1] != 'K' || p[2] != 'Y' || p[3] != '1') {
+    return Result<SkyCubemap>::Fail("Bad SKY1 magic");
+  }
+  p += 4;
+  SkyCubemap sky;
+  sky.face_size = static_cast<int>(ReadU32(p, end));
+  if (sky.face_size <= 0) {
+    return Result<SkyCubemap>::Fail("Invalid sky face size");
+  }
+  const std::size_t face_bytes =
+      static_cast<std::size_t>(6) * sky.face_size * sky.face_size * 4;
+  if (static_cast<std::size_t>(end - p) < face_bytes) {
+    return Result<SkyCubemap>::Fail("Sky cubemap truncated");
+  }
+  sky.rgba_faces.assign(p, p + face_bytes);
+  return Result<SkyCubemap>::Ok(std::move(sky));
+}
+
 }  // namespace engine::render

@@ -152,6 +152,12 @@
 | IXWebSocket | TBD | BSD | 静态/动态 | |
 | MsQuic | TBD | MIT | 通常动态 | 注意平台构建 |
 
+### 7.1 内容素材（非代码库）
+
+| 素材 | 来源 | 许可 | 仓库位置 | 备注 |
+|---|---|---|---|---|
+| Kloppenheim 06 Pure Sky（1K HDR） | [Poly Haven](https://polyhaven.com/a/kloppenheim_06_puresky) | **CC0** | `content/ibl/src/`（源）→ `ibl_pack.ibl1` / `sky_kloppenheim06.sky1`（烘焙产物） | 经 `ibl_baker`；见 `content/ibl/README.md` |
+
 ---
 
 ## 8. 相关文档

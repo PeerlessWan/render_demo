@@ -9,6 +9,7 @@ set(_src "${CMAKE_SOURCE_DIR}/shaders/hlsl/lit_cube.hlsl")
 set(_ui_src "${CMAKE_SOURCE_DIR}/shaders/hlsl/ui_imgui.hlsl")
 set(_post_src "${CMAKE_SOURCE_DIR}/shaders/hlsl/post_ssao_taa.hlsl")
 set(_dbg_src "${CMAKE_SOURCE_DIR}/shaders/hlsl/debug_line.hlsl")
+set(_sky_src "${CMAKE_SOURCE_DIR}/shaders/hlsl/skybox.hlsl")
 
 set(_lit_vs "${_shader_out}/lit_cube.vs.cso")
 set(_lit_ps "${_shader_out}/lit_cube.ps.cso")
@@ -22,10 +23,13 @@ set(_post_vs "${_shader_out}/post_ssao_taa.vs.cso")
 set(_post_ps "${_shader_out}/post_ssao_taa.ps.cso")
 set(_dbg_vs "${_shader_out}/debug_line.vs.cso")
 set(_dbg_ps "${_shader_out}/debug_line.ps.cso")
+set(_sky_vs "${_shader_out}/skybox.vs.cso")
+set(_sky_ps "${_shader_out}/skybox.ps.cso")
 
   add_custom_command(
     OUTPUT "${_lit_vs}" "${_lit_ps}" "${_sh_vs}" "${_sh_ps}" "${_qd_vs}" "${_qd_ps}"
            "${_ui_vs}" "${_ui_ps}" "${_post_vs}" "${_post_ps}" "${_dbg_vs}" "${_dbg_ps}"
+           "${_sky_vs}" "${_sky_ps}"
            "${_shader_out}/instance_cull_cs.cso"
   COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E VSMain -Fo "${_lit_vs}" "${_src}"
   COMMAND "${DXC_EXECUTABLE}" -T ps_6_6 -E PSMain -Fo "${_lit_ps}" "${_src}"
@@ -39,16 +43,19 @@ set(_dbg_ps "${_shader_out}/debug_line.ps.cso")
   COMMAND "${DXC_EXECUTABLE}" -T ps_6_0 -E PSMain -Fo "${_post_ps}" "${_post_src}"
   COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E VSMain -Fo "${_dbg_vs}" "${_dbg_src}"
   COMMAND "${DXC_EXECUTABLE}" -T ps_6_0 -E PSMain -Fo "${_dbg_ps}" "${_dbg_src}"
+  COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E VSMain -Fo "${_sky_vs}" "${_sky_src}"
+  COMMAND "${DXC_EXECUTABLE}" -T ps_6_0 -E PSMain -Fo "${_sky_ps}" "${_sky_src}"
   COMMAND "${DXC_EXECUTABLE}" -T cs_6_0 -E CSMain -Fo "${_shader_out}/instance_cull_cs.cso"
           "${CMAKE_SOURCE_DIR}/shaders/hlsl/instance_cull_cs.hlsl"
-  DEPENDS "${_src}" "${_ui_src}" "${_post_src}" "${_dbg_src}"
+  DEPENDS "${_src}" "${_ui_src}" "${_post_src}" "${_dbg_src}" "${_sky_src}"
           "${CMAKE_SOURCE_DIR}/shaders/hlsl/instance_cull_cs.hlsl"
-  COMMENT "DXC compile lit/shadow/quad/ui/post/debug/cull shaders"
+  COMMENT "DXC compile lit/shadow/quad/ui/post/debug/sky/cull shaders"
   VERBATIM
 )
 add_custom_target(sample_sandbox_shaders DEPENDS
   "${_lit_vs}" "${_lit_ps}" "${_sh_vs}" "${_sh_ps}" "${_qd_vs}" "${_qd_ps}"
   "${_ui_vs}" "${_ui_ps}" "${_post_vs}" "${_post_ps}" "${_dbg_vs}" "${_dbg_ps}"
+  "${_sky_vs}" "${_sky_ps}"
   "${_shader_out}/instance_cull_cs.cso"
 )
 

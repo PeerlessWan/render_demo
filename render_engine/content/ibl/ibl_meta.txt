@@ -1,4 +1,9 @@
-input=procedural
+input=d:\workspace\media\render_demo\render_engine\content\ibl\src\kloppenheim_06_puresky_1k.hdr
 face_size=32
 lut=128
 pack=ibl_pack.ibl1
+sky=sky_kloppenheim06.sky1
+sky_face=128
+source=https://polyhaven.com/a/kloppenheim_06_puresky
+license=CC0
+hdr_loaded=1

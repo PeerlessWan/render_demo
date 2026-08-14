@@ -279,7 +279,7 @@ Visibility.Cull(camera) → RenderScene
 
 ### 4.6 Environment / Camera / Material
 
-- **Environment**：Skybox、IBL、雾、清除色、曝光与后期默认、环境光强度。
+- **Environment**：Skybox（独立 cubemap SRV + `enable_skybox`）、IBL pack、雾、清除色、曝光与后期默认、环境光强度；Sandbox 启动可 `ApplyEnvironmentDefaults` 灌入 EffectTuning。
 - **Camera**：透视/正交、Jitter、层掩码、输出目标、控制器（Orbit/Fly）。
 - **Material / Instance**：参数与纹理覆写；Keyword 变体 → PSO 缓存。
 - **队列**：Opaque / Masked / Transparent / Additive（排序规则固定，见实现文档）。

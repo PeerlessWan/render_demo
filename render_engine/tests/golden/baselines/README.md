@@ -11,12 +11,16 @@ Store `.rgba` dumps (`u32 width`, `u32 height`, then `width*height*4` RGBA8).
 | `matrix default` | `matrix_d3d12_default.rgba` | C3 harness capture |
 | `matrix taa_off` | `matrix_d3d12_taa_off.rgba` | C3 |
 | `matrix shadows_off` | `matrix_d3d12_shadows_off.rgba` | C3 |
+| (C6) | `../shader_hashes.json` | DXIL/SPIR-V sha256；`check_shader_hashes.py --approve` |
 
 ```bat
 python tests/scripts/run_golden.py --approve
 python tests/scripts/run_golden.py --targets sandbox,sandbox_depth,learn06,learn09
 python tests/scripts/run_matrix_smoke.py --approve
 python tests/scripts/run_matrix_smoke.py
+python tests/scripts/check_shader_hashes.py --approve
+python tests/scripts/run_backend_parity.py
 ```
 
 CI: `scripts/ci_headless.ps1 -Golden`. Missing baseline → SKIP (not fail).
+C4 默认超阈记 `[REGRESSION-NOTED]`；加 `--strict` 才 FAIL。

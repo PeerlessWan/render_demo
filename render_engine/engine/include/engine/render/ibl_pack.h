@@ -20,4 +20,12 @@ struct IblPack {
 
 Result<IblPack> LoadIblPack(const std::filesystem::path& path);
 
+// Sky display cubemap from ibl_baker (magic SKY1): u32 face_size + 6*face^2*4 RGBA8.
+struct SkyCubemap {
+  int face_size = 0;
+  std::vector<std::uint8_t> rgba_faces;
+};
+
+Result<SkyCubemap> LoadSkyCubemap(const std::filesystem::path& path);
+
 }  // namespace engine::render

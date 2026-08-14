@@ -272,6 +272,18 @@ class IDevice {
     return Status::Ok();
   }
 
+  // Skybox background cubemap (RGBA8 face-major) + draw at far plane.
+  virtual Status SetupSkybox(const std::filesystem::path& /*vs_dxil*/,
+                             const std::filesystem::path& /*ps_dxil*/) {
+    return Status::Ok();
+  }
+  virtual Status UploadSkyCubemap(const std::uint8_t* /*rgba_faces*/, int /*face_size*/) {
+    return Status::Ok();
+  }
+  virtual Status DrawSkybox(const Mat4& /*view_rot_proj*/) {
+    return Status::Ok();
+  }
+
   // GPU instancing: upload Mat4 worlds, then one DrawIndexedInstanced(instance_count).
   // Default falls back to expanding DrawLitCubes when worlds were uploaded.
   virtual Status UploadInstanceTransforms(std::span<const Mat4> worlds) {

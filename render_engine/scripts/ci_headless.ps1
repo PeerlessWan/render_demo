@@ -83,6 +83,16 @@ if ($Golden) {
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }
+  Write-Host "== check_shader_hashes.py (C6) =="
+  & python (Join-Path $root "tests\scripts\check_shader_hashes.py") --build-dir $BuildDir
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
+  Write-Host "== run_backend_parity.py (C4 thin) =="
+  & python (Join-Path $root "tests\scripts\run_backend_parity.py") --config $Config --build-dir $BuildDir
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
 }
 
 if ($Validation) {

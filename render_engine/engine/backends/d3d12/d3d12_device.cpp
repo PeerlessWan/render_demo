@@ -3405,6 +3405,154 @@ class D3D12Device final : public IDevice {
     return UploadRgbaTexture(ibl_brdf_lut_, 8, rgba, w, h);
   }
 
+  Status SetupSkybox(const std::filesystem::path& vs_dxil,
+                     const std::filesystem::path& ps_dxil) override {
+    if (!device_ || vs_dxil.empty() || ps_dxil.empty()) {
+      return Status::Fail("SetupSkybox: invalid");
+    }
+    std::ifstream vs_in(vs_dxil, std::ios::binary);
+    std::ifstream ps_in(ps_dxil, std::ios::binary);
+    if (!vs_in || !ps_in) {
+      return Status::Fail("Skybox shaders missing");
+    }
+    std::vector<char> vs((std::istreambuf_iterator<char>(vs_in)), std::istreambuf_iterator<char>());
+    std::vector<char> ps((std::istreambuf_iterator<char>(ps_in)), std::istreambuf_iterator<char>());
+    if (vs.empty() || ps.empty()) {
+      return Status::Fail("Skybox shaders empty");
+    }
+
+    D3D12_DESCRIPTOR_RANGE range{};
+    range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    range.NumDescriptors = 1;
+    range.BaseShaderRegister = 0;
+    range.OffsetInDescriptorsFromTableStart = 0;
+
+    D3D12_ROOT_PARAMETER params[2]{};
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[0].Descriptor.ShaderRegister = 0;
+    params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[1].DescriptorTable.NumDescriptorRanges = 1;
+    params[1].DescriptorTable.pDescriptorRanges = &range;
+    params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+    D3D12_STATIC_SAMPLER_DESC samp{};
+    samp.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    samp.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    samp.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    samp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    samp.ShaderRegister = 0;
+    samp.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+    D3D12_ROOT_SIGNATURE_DESC rs{};
+    rs.NumParameters = 2;
+    rs.pParameters = params;
+    rs.NumStaticSamplers = 1;
+    rs.pStaticSamplers = &samp;
+    ComPtr<ID3DBlob> sig;
+    ComPtr<ID3DBlob> err;
+    if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err))) {
+      return Status::Fail("Serialize sky root failed");
+    }
+    if (FAILED(device_->CreateRootSignature(0, sig->GetBufferPointer(), sig->GetBufferSize(),
+                                            IID_PPV_ARGS(&sky_root_)))) {
+      return Status::Fail("Create sky root failed");
+    }
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
+    pso.pRootSignature = sky_root_.Get();
+    pso.VS = {vs.data(), vs.size()};
+    pso.PS = {ps.data(), ps.size()};
+    pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    pso.SampleMask = UINT_MAX;
+    pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    pso.RasterizerState.DepthClipEnable = TRUE;
+    pso.DepthStencilState.DepthEnable = TRUE;
+    pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    pso.NumRenderTargets = 1;
+    pso.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    pso.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+    pso.SampleDesc.Count = 1;
+    if (FAILED(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&sky_pso_)))) {
+      // Fallback LDR swapchain format if HDR RT not used in this build path.
+      pso.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+      if (FAILED(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&sky_pso_)))) {
+        return Status::Fail("Create sky PSO failed");
+      }
+    }
+
+    D3D12_DESCRIPTOR_HEAP_DESC heap{};
+    heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    heap.NumDescriptors = 1;
+    heap.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    if (FAILED(device_->CreateDescriptorHeap(&heap, IID_PPV_ARGS(&sky_srv_heap_)))) {
+      return Status::Fail("Create sky SRV heap failed");
+    }
+
+    D3D12_HEAP_PROPERTIES upload{};
+    upload.Type = D3D12_HEAP_TYPE_UPLOAD;
+    D3D12_RESOURCE_DESC cb{};
+    cb.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    cb.Width = 256;
+    cb.Height = 1;
+    cb.DepthOrArraySize = 1;
+    cb.MipLevels = 1;
+    cb.SampleDesc.Count = 1;
+    cb.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    if (FAILED(device_->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &cb,
+                                                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                IID_PPV_ARGS(&sky_cb_)))) {
+      return Status::Fail("Create sky CB failed");
+    }
+    sky_ready_ = true;
+    return Status::Ok();
+  }
+
+  Status UploadSkyCubemap(const std::uint8_t* rgba_faces, int face_size) override {
+    if (!sky_ready_) {
+      return Status::Fail("SetupSkybox first");
+    }
+    if (auto st = UploadCubemapResource(sky_cube_, rgba_faces, face_size); !st) {
+      return st;
+    }
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.TextureCube.MipLevels = 1;
+    device_->CreateShaderResourceView(sky_cube_.Get(), &srv,
+                                      sky_srv_heap_->GetCPUDescriptorHandleForHeapStart());
+    sky_uploaded_ = true;
+    engine::SetFeatureOverride("skybox", true);
+    return Status::Ok();
+  }
+
+  Status DrawSkybox(const Mat4& view_rot_proj) override {
+    if (!sky_ready_ || !sky_uploaded_ || !command_list_) {
+      return Status::Ok();
+    }
+    void* mapped = nullptr;
+    if (FAILED(sky_cb_->Map(0, nullptr, &mapped)) || !mapped) {
+      return Status::Fail("Map sky CB failed");
+    }
+    std::memcpy(mapped, view_rot_proj.m.data(), sizeof(float) * 16);
+    sky_cb_->Unmap(0, nullptr);
+
+    command_list_->SetPipelineState(sky_pso_.Get());
+    command_list_->SetGraphicsRootSignature(sky_root_.Get());
+    ID3D12DescriptorHeap* heaps[] = {sky_srv_heap_.Get()};
+    command_list_->SetDescriptorHeaps(1, heaps);
+    command_list_->SetGraphicsRootConstantBufferView(0, sky_cb_->GetGPUVirtualAddress());
+    command_list_->SetGraphicsRootDescriptorTable(
+        1, sky_srv_heap_->GetGPUDescriptorHandleForHeapStart());
+    command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    command_list_->DrawInstanced(36, 1, 0, 0);
+    return Status::Ok();
+  }
+
   Status UploadCubemapResource(ComPtr<ID3D12Resource>& cube, const std::uint8_t* rgba_faces,
                                int face_size) {
     if (!rgba_faces || face_size <= 0 || !device_) {
@@ -4480,6 +4628,13 @@ class D3D12Device final : public IDevice {
   ComPtr<ID3D12Resource> lit_orm2_;
   ComPtr<ID3D12Resource> reflection_cube_;
   ComPtr<ID3D12Resource> ibl_irradiance_;
+  ComPtr<ID3D12RootSignature> sky_root_;
+  ComPtr<ID3D12PipelineState> sky_pso_;
+  ComPtr<ID3D12DescriptorHeap> sky_srv_heap_;
+  ComPtr<ID3D12Resource> sky_cb_;
+  ComPtr<ID3D12Resource> sky_cube_;
+  bool sky_ready_ = false;
+  bool sky_uploaded_ = false;
   ComPtr<ID3D12Resource> ibl_brdf_lut_;
   std::array<MeshSlotGpu, kMaxMeshSlots> mesh_slots_{};
   ComPtr<ID3D12Resource> scene_color_;

@@ -274,9 +274,16 @@ int main(int argc, char** argv) {
 
   engine::render::Environment env;
   env.ambient = {0.20f, 0.21f, 0.24f, 1.f};
+  env.clear_color = {0.10f, 0.12f, 0.18f, 1.f};
   env.sun_direction = {0.45f, -1.f, 0.35f};
   env.sun_intensity = 1.85f;
   env.sun_color = {1.f, 0.97f, 0.92f, 1.f};
+  env.skybox_enabled = true;
+  env.fog_enabled = false;
+  env.fog_density = 0.018f;
+  env.fog_start = 14.f;
+  env.fog_color = {0.55f, 0.62f, 0.78f, 1.f};
+  env.exposure = 1.15f;
 
   engine::render::RenderSystem render;
   engine::render::RenderSystemDesc rdesc;
@@ -302,6 +309,8 @@ int main(int argc, char** argv) {
     rdesc.post_ps = shader_dir / "post_ssao_taa.ps.cso";
     rdesc.debug_vs = shader_dir / "debug_line.vs.cso";
     rdesc.debug_ps = shader_dir / "debug_line.ps.cso";
+    rdesc.sky_vs = shader_dir / "skybox.vs.cso";
+    rdesc.sky_ps = shader_dir / "skybox.ps.cso";
     rdesc.enable_shadows = true;
     rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
     // Halton clip jitter without a rock-solid history resolve crawls on large floors /
@@ -312,6 +321,7 @@ int main(int argc, char** argv) {
     engine::LogError(st.message());
     return 1;
   }
+  render.ApplyEnvironmentDefaults(env);
   if (!use_vulkan) {
     const auto cull_cs = shader_dir / "instance_cull_cs.cso";
     if (auto st = a.device().SetupInstanceCullCompute(cull_cs); !st) {
@@ -739,6 +749,36 @@ int main(int argc, char** argv) {
     }
   }
 
+  // Skybox cubemap (CC0 Poly Haven Kloppenheim 06 Pure Sky via ibl_baker).
+  {
+    namespace fs = std::filesystem;
+    const fs::path sky_candidates[] = {
+        fs::path(ENGINE_CONTENT_DIR_A) / "ibl" / "sky_kloppenheim06.sky1",
+        fs::path("content") / "ibl" / "sky_kloppenheim06.sky1",
+    };
+    for (const auto& p : sky_candidates) {
+      if (!fs::exists(p)) {
+        continue;
+      }
+      auto sky = engine::render::LoadSkyCubemap(p);
+      if (!sky) {
+        engine::LogWarn(sky.status().message());
+        break;
+      }
+      if (auto st = a.device().UploadSkyCubemap(sky.value().rgba_faces.data(), sky.value().face_size);
+          !st) {
+        engine::LogWarn(std::string("UploadSkyCubemap: ") + st.message());
+        break;
+      }
+      env.skybox_cubemap = p.string();
+      fx = render.effect_tuning();
+      fx.enable_skybox = true;
+      render.set_effect_tuning(fx);
+      engine::LogInfo("Skybox loaded: " + p.string());
+      break;
+    }
+  }
+
   engine::vfx::ParticleEmitter particles;
   particles.Configure({1.8f, 2.6f, 1.0f}, 28.f, 1.1f);
 
@@ -888,6 +928,7 @@ int main(int argc, char** argv) {
           imgui.Checkbox("SSAO", &fx.enable_ssao);
           imgui.Checkbox("TAA", &fx.enable_taa);
           imgui.Checkbox("IBL", &fx.enable_ibl);
+          imgui.Checkbox("Skybox", &fx.enable_skybox);
           imgui.Checkbox("Reflection probe", &fx.enable_reflection_probe);
           imgui.Checkbox("SSR", &fx.enable_ssr);
           imgui.Checkbox("DoF", &fx.enable_dof);

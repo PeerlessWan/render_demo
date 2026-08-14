@@ -27,7 +27,7 @@
 | G15 | 地形/水体/植被（基础） | **可用加深** | M23 |
 | G16 | 光追 API 对齐 | **完成（加深）** Feature 门控 | M25（内容管线仍非 UE 级） |
 | T01 | 最小工具链（shader/IBL/纹理/cook/黄金图） | 已排期 | M2–M9；见 [TOOLING.md](TOOLING.md) |
-| T03 | 自动化测试加深（准/广） | **Q1–Q3 + C1–C3 + C5 已落地**（矩阵三格比图 + 语义断言）；C4/Q4/Q5 仍后置 | [PLAN.md](PLAN.md) **§3.1**；不扩 MCP/Harness 命令 |
+| T03 | 自动化测试加深（准/广） | **Q1–Q3 + C1–C3 + C5–C6 已落地**；C4 双后端比图已跑通并**记对标**（RMSE≈120，默认不堵 CI；`--strict` 可严） | [PLAN.md](PLAN.md) **§3.1**；不扩 MCP/Harness 命令 |
 | T02 | 图集约定 + Tiled 导入 | 已排期 | M16 |
 | R01 | Cook 依赖图 / 异步回调 / Handle 寿命 / **数据依赖与生命周期** / 逻辑渲染分离 / GPU Profiling | 已排期 | M1–M14；见 [RUNTIME_FOUNDATIONS.md](RUNTIME_FOUNDATIONS.md) |
 

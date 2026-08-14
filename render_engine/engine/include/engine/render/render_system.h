@@ -31,6 +31,8 @@ struct RenderSystemDesc {
   std::filesystem::path post_ps;
   std::filesystem::path debug_vs;
   std::filesystem::path debug_ps;
+  std::filesystem::path sky_vs;
+  std::filesystem::path sky_ps;
   bool enable_shadows = true;
   float max_shadow_distance = 80.f;
   QualitySettings quality = QualitySettings::FromTier(QualityTier::Medium);
@@ -71,6 +73,7 @@ struct EffectTuning {
   float reflection_intensity = 0.45f;
   bool enable_ibl = false;
   float ibl_intensity = 1.f;
+  bool enable_skybox = true;
 };
 
 class RenderSystem {
@@ -91,6 +94,8 @@ class RenderSystem {
 
   void set_quality(const QualitySettings& q);
   void set_effect_tuning(const EffectTuning& t);
+  // Copy Environment defaults (fog/exposure/skybox flag/sun) into EffectTuning once.
+  void ApplyEnvironmentDefaults(const Environment& env);
   void set_local_lights(const std::vector<LocalLight>& lights);
   void set_shadows_enabled(bool on);
   void set_post_enabled(std::string_view name, bool on);
@@ -107,6 +112,7 @@ class RenderSystem {
 
   bool ready_ = false;
   bool post_ready_ = false;
+  bool sky_ready_ = false;
   float max_shadow_distance_ = 80.f;
   std::uint32_t frame_index_ = 0;
   QualitySettings quality_{};
