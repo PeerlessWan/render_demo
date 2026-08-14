@@ -30,6 +30,8 @@ cbuffer FrameCB : register(b0) {
   float g_jitter_y;
   float g_enable_reflection;
   float g_reflection_intensity;
+  float g_enable_ibl;
+  float g_ibl_intensity;
 };
 
 cbuffer ObjectCB : register(b1) {
@@ -50,7 +52,9 @@ Texture2D g_local_shadow_map : register(t2);
 Texture2D g_orm_map : register(t3);
 Texture2D g_albedo_map2 : register(t4);
 Texture2D g_orm_map2 : register(t5);
-TextureCube g_reflection_map : register(t6);
+TextureCube g_reflection_map : register(t6);  // specular prefilter / probe
+TextureCube g_ibl_irradiance : register(t7);
+Texture2D g_brdf_lut : register(t8);
 SamplerComparisonState g_shadow_samp : register(s0);
 SamplerState g_linear_samp : register(s1);
 
@@ -290,6 +294,17 @@ float4 PSMain(VSOutput input) : SV_Target {
     float fres = lerp(0.04, 1.0, metallic);
     fres *= pow(1.0 - ndotv, 5.0) * (1.0 - metallic) + metallic;
     lit += env * fres * g_reflection_intensity * ao;
+  }
+
+  if (g_enable_ibl > 0.5) {
+    float3 irradiance = g_ibl_irradiance.Sample(g_linear_samp, n).rgb;
+    lit += diffuse * irradiance * g_ibl_intensity * ao;
+    float3 R = reflect(-v, n);
+    float lod = saturate(roughness) * 4.0;
+    float3 prefiltered = g_reflection_map.SampleLevel(g_linear_samp, R, lod).rgb;
+    float2 brdf = g_brdf_lut.Sample(g_linear_samp, float2(ndotv, saturate(roughness))).rg;
+    float3 f0 = lerp(float3(0.04, 0.04, 0.04), base, metallic);
+    lit += prefiltered * (f0 * brdf.x + brdf.y) * g_ibl_intensity * ao;
   }
 
   int lc = (int)g_local_count;

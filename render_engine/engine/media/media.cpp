@@ -1,5 +1,7 @@
 #include "engine/media/media.h"
 
+#include "engine/core/feature.h"
+
 #include <fstream>
 
 namespace engine::media {
@@ -37,10 +39,14 @@ class D3D12VaStub final : public IVideoDecoder {
     }
     // Feature probe stub: report unavailable until real D3D12VA adapter lands.
     available_ = false;
-    return Status::Fail(ErrorCode::Unavailable, "D3D12VA not available on this build (diagnosed)");
+    return Status::Fail(ErrorCode::Unavailable,
+                        "D3D12 Video Acceleration unavailable: stub build has no VA device "
+                        "(enable future D3D12VA adapter; path=" +
+                            path + ")");
   }
   Status DecodeNextFrame(std::vector<std::uint8_t>&, int&, int&) override {
-    return Status::Fail(ErrorCode::Unavailable, "D3D12VA not available");
+    return Status::Fail(ErrorCode::Unavailable,
+                        "D3D12 Video Acceleration unavailable: DecodeNextFrame requires VA device");
   }
   bool feature_available() const override { return available_; }
   const char* backend_name() const override { return "d3d12va_stub"; }
@@ -159,6 +165,15 @@ Status PlayWavFile(const std::filesystem::path&) {
 
 std::unique_ptr<IVideoDecoder> CreateD3D12VaDecoderOrStub() {
   return std::make_unique<D3D12VaStub>();
+}
+
+bool QueryVideoDecodeAvailable() {
+  const auto features = QueryFeatures();
+  if (!features.video_decode) {
+    return false;
+  }
+  auto decoder = CreateD3D12VaDecoderOrStub();
+  return decoder && decoder->feature_available();
 }
 
 }  // namespace engine::media

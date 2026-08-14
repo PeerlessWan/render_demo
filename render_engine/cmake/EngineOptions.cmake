@@ -1,5 +1,6 @@
 option(ENGINE_BUILD_TESTS "Build Catch2 unit tests" ON)
 option(ENGINE_BUILD_SAMPLES "Build samples (01_clear, …)" ON)
+option(ENGINE_BUILD_LEARN_SAMPLES "Build learn ladder samples 03-11" ON)
 
 # Dear ImGui (vendored). Prefer tagged checkout path.
 set(ENGINE_IMGUI_DIR "${CMAKE_SOURCE_DIR}/third_party/imgui-v1.91.8" CACHE PATH "Dear ImGui root")

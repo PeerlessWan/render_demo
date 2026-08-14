@@ -11,6 +11,12 @@ struct RaytracingConfig {
   bool allow_fallback = true;
 };
 
+struct DxrDemoConfig {
+  bool enable_reflections = false;
+  bool enable_shadows = false;
+  int max_bounces = 1;
+};
+
 enum class RtStatus {
   Disabled,
   Supported,
@@ -20,5 +26,8 @@ enum class RtStatus {
 
 RtStatus Resolve(rhi::Backend backend, const FeatureSet& features, const RaytracingConfig& cfg);
 Status EnsureSafe(rhi::Backend backend, const FeatureSet& features, const RaytracingConfig& cfg);
+
+// True when DXR demo can run on D3D12 with raytracing feature and non-empty config.
+bool CanRunDxrDemo(const FeatureSet& features, const DxrDemoConfig& demo);
 
 }  // namespace engine::rt

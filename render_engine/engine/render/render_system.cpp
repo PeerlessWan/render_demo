@@ -271,6 +271,8 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   lighting.enable_taa = want_taa;  // mild lit hint only when TAA on
   lighting.enable_reflection_probe = effect_.enable_reflection_probe;
   lighting.reflection_intensity = effect_.reflection_intensity;
+  lighting.enable_ibl = effect_.enable_ibl && env.has_ibl();
+  lighting.ibl_intensity = effect_.ibl_intensity;
 
   if (quality_.multithread_submit) {
     rhi::SubmitConfig cfg;

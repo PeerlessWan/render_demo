@@ -2,6 +2,7 @@
 
 #include "engine/core/math.h"
 
+#include <span>
 #include <vector>
 
 namespace engine::gi {
@@ -12,11 +13,21 @@ struct Probe {
   ColorRgba irradiance{0.1f, 0.1f, 0.12f, 1.f};
 };
 
+struct ProbeLight {
+  Vec3 position{};
+  ColorRgba color{1.f, 1.f, 1.f, 1.f};
+  float intensity = 1.f;
+  float range = 5.f;
+};
+
 class ProbeVolume {
  public:
   void Configure(const Vec3& origin, const Vec3& spacing, int nx, int ny, int nz);
   void set_enabled(bool on) { enabled_ = on; }
   [[nodiscard]] bool enabled() const { return enabled_; }
+
+  // Recompute probe irradiance from dynamic lights (CPU stub).
+  void UpdateFromLights(std::span<const ProbeLight> lights);
 
   // Sample trilinear-ish nearest probe irradiance.
   [[nodiscard]] ColorRgba Sample(const Vec3& world_pos) const;

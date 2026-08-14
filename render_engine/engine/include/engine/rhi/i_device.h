@@ -121,6 +121,8 @@ struct FrameLighting {
   bool enable_taa = false;
   bool enable_reflection_probe = false;
   float reflection_intensity = 0.45f;
+  bool enable_ibl = false;
+  float ibl_intensity = 1.f;
   // Up to 4 local (point) lights.
   int local_light_count = 0;
   std::array<Vec3, 4> local_pos{};
@@ -249,6 +251,17 @@ class IDevice {
 
   // M13: upload 6 RGBA8 faces (face-major, each face = size*size*4) for specular reflections.
   virtual Status UploadReflectionCubemap(const std::uint8_t* /*rgba_faces*/, int /*face_size*/) {
+    return Status::Ok();
+  }
+
+  // IBL: irradiance cube + specular prefilter cube + BRDF LUT (RGBA8).
+  virtual Status UploadIblIrradianceCubemap(const std::uint8_t* rgba_faces, int face_size) {
+    return UploadReflectionCubemap(rgba_faces, face_size);
+  }
+  virtual Status UploadIblPrefilterCubemap(const std::uint8_t* rgba_faces, int face_size) {
+    return UploadReflectionCubemap(rgba_faces, face_size);
+  }
+  virtual Status UploadIblBrdfLut(const std::uint8_t* /*rgba*/, int /*w*/, int /*h*/) {
     return Status::Ok();
   }
 };

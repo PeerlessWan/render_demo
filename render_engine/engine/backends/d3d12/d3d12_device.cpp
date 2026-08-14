@@ -603,10 +603,10 @@ class D3D12Device final : public IDevice {
       return shadow_ps.status();
     }
 
-    // Lit root: CBV b0, CBV b1, table t0..t6 (incl. reflection cube), static samplers.
+    // Lit root: CBV b0, CBV b1, table t0..t8 (shadow..brdf lut), static samplers.
     D3D12_DESCRIPTOR_RANGE srv_range{};
     srv_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    srv_range.NumDescriptors = 7;
+    srv_range.NumDescriptors = 9;
     srv_range.BaseShaderRegister = 0;
     srv_range.RegisterSpace = 0;
     srv_range.OffsetInDescriptorsFromTableStart = 0;
@@ -864,6 +864,8 @@ class D3D12Device final : public IDevice {
       float jitter_y;
       float enable_reflection;
       float reflection_intensity;
+      float enable_ibl;
+      float ibl_intensity;
     } data{};
     std::memcpy(data.view_proj, lighting.view_proj.m.data(), sizeof(data.view_proj));
     for (int i = 0; i < 4; ++i) {
@@ -924,6 +926,8 @@ class D3D12Device final : public IDevice {
     data.jitter_y = lighting.jitter_y;
     data.enable_reflection = lighting.enable_reflection_probe ? 1.f : 0.f;
     data.reflection_intensity = lighting.reflection_intensity;
+    data.enable_ibl = lighting.enable_ibl ? 1.f : 0.f;
+    data.ibl_intensity = lighting.ibl_intensity;
 
     void* ptr = nullptr;
     if (FAILED(frame_cb_->Map(0, nullptr, &ptr))) {
@@ -2192,7 +2196,7 @@ class D3D12Device final : public IDevice {
     }
 
     D3D12_DESCRIPTOR_HEAP_DESC srv_heap{};
-    srv_heap.NumDescriptors = 8;  // t0..t6 + spare (bindless-friendly room)
+    srv_heap.NumDescriptors = 16;  // t0..t8 + bindless-friendly room
     srv_heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     srv_heap.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     hr = device_->CreateDescriptorHeap(&srv_heap, IID_PPV_ARGS(&shadow_srv_heap_));
@@ -2452,18 +2456,7 @@ class D3D12Device final : public IDevice {
   }
 
   Status BindReflectionCubeSrv() {
-    if (!shadow_srv_heap_ || !reflection_cube_) {
-      return Status::Fail("Reflection cube missing");
-    }
-    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
-    srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srv.TextureCube.MipLevels = 1;
-    D3D12_CPU_DESCRIPTOR_HANDLE handle = shadow_srv_heap_->GetCPUDescriptorHandleForHeapStart();
-    handle.ptr += static_cast<SIZE_T>(6) * cbv_srv_uav_descriptor_size_;
-    device_->CreateShaderResourceView(reflection_cube_.Get(), &srv, handle);
-    return Status::Ok();
+    return BindCubeSrv(6, reflection_cube_.Get());
   }
 
   Status EnsureDefaultReflectionCubemap() {
@@ -2482,19 +2475,73 @@ class D3D12Device final : public IDevice {
         }
       }
     }
-    return UploadReflectionCubemap(faces.data(), kFace);
+    if (auto st = UploadReflectionCubemap(faces.data(), kFace); !st) {
+      return st;
+    }
+    if (auto st = UploadIblIrradianceCubemap(faces.data(), kFace); !st) {
+      return st;
+    }
+    std::vector<std::uint8_t> lut(128 * 128 * 4);
+    for (std::size_t i = 0; i < lut.size(); i += 4) {
+      lut[i + 0] = 200;
+      lut[i + 1] = 40;
+      lut[i + 2] = 0;
+      lut[i + 3] = 255;
+    }
+    return UploadIblBrdfLut(lut.data(), 128, 128);
   }
 
   Status UploadReflectionCubemap(const std::uint8_t* rgba_faces, int face_size) override {
-    if (!rgba_faces || face_size <= 0) {
-      return Status::Fail("Invalid reflection cubemap");
+    if (auto st = UploadCubemapResource(reflection_cube_, rgba_faces, face_size); !st) {
+      return st;
     }
-    if (!shadow_srv_heap_ || !device_) {
-      return Status::Fail("Device not ready for cubemap upload");
+    return BindCubeSrv(6, reflection_cube_.Get());
+  }
+
+  Status BindCubeSrv(UINT slot, ID3D12Resource* cube) {
+    if (!shadow_srv_heap_ || !cube) {
+      return Status::Fail("Cube SRV bind missing");
+    }
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.TextureCube.MipLevels = 1;
+    D3D12_CPU_DESCRIPTOR_HANDLE handle = shadow_srv_heap_->GetCPUDescriptorHandleForHeapStart();
+    handle.ptr += static_cast<SIZE_T>(slot) * cbv_srv_uav_descriptor_size_;
+    device_->CreateShaderResourceView(cube, &srv, handle);
+    return Status::Ok();
+  }
+
+  Status UploadIblIrradianceCubemap(const std::uint8_t* rgba_faces, int face_size) override {
+    // Store as dedicated irradiance cube at t7; also keep reflection default.
+    if (auto st = UploadCubemapResource(ibl_irradiance_, rgba_faces, face_size); !st) {
+      return st;
+    }
+    return BindCubeSrv(7, ibl_irradiance_.Get());
+  }
+
+  Status UploadIblPrefilterCubemap(const std::uint8_t* rgba_faces, int face_size) override {
+    if (auto st = UploadCubemapResource(reflection_cube_, rgba_faces, face_size); !st) {
+      return st;
+    }
+    return BindCubeSrv(6, reflection_cube_.Get());
+  }
+
+  Status UploadIblBrdfLut(const std::uint8_t* rgba, int w, int h) override {
+    if (!rgba || w <= 0 || h <= 0) {
+      return Status::Fail("Invalid BRDF LUT");
+    }
+    return UploadRgbaTexture(ibl_brdf_lut_, 8, rgba, w, h);
+  }
+
+  Status UploadCubemapResource(ComPtr<ID3D12Resource>& cube, const std::uint8_t* rgba_faces,
+                               int face_size) {
+    if (!rgba_faces || face_size <= 0 || !device_) {
+      return Status::Fail("Invalid cubemap upload");
     }
     WaitGpu();
-    reflection_cube_.Reset();
-
+    cube.Reset();
     const UINT size = static_cast<UINT>(face_size);
     D3D12_RESOURCE_DESC desc{};
     desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -2504,24 +2551,20 @@ class D3D12Device final : public IDevice {
     desc.MipLevels = 1;
     desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     desc.SampleDesc.Count = 1;
-    desc.Flags = D3D12_RESOURCE_FLAG_NONE;
-
     D3D12_HEAP_PROPERTIES default_heap{};
     default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
     HRESULT hr = device_->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
                                                   D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                                  IID_PPV_ARGS(&reflection_cube_));
+                                                  IID_PPV_ARGS(&cube));
     if (FAILED(hr)) {
-      return Status::Fail("Create reflection cube failed: " + HrToString(hr));
+      return Status::Fail("Create cubemap failed: " + HrToString(hr));
     }
-
     UINT64 total_bytes = 0;
     std::array<D3D12_PLACED_SUBRESOURCE_FOOTPRINT, 6> layouts{};
     std::array<UINT, 6> num_rows{};
     std::array<UINT64, 6> row_sizes{};
     device_->GetCopyableFootprints(&desc, 0, 6, 0, layouts.data(), num_rows.data(),
                                    row_sizes.data(), &total_bytes);
-
     D3D12_HEAP_PROPERTIES upload_heap{};
     upload_heap.Type = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_RESOURCE_DESC buf{};
@@ -2539,32 +2582,27 @@ class D3D12Device final : public IDevice {
     if (FAILED(hr)) {
       return Status::Fail("Create cubemap upload failed");
     }
-
     void* mapped = nullptr;
     if (FAILED(upload->Map(0, nullptr, &mapped)) || !mapped) {
       return Status::Fail("Map cubemap upload failed");
     }
     auto* dst = static_cast<std::uint8_t*>(mapped);
     for (UINT face = 0; face < 6; ++face) {
-      const auto* src_face =
-          rgba_faces + static_cast<std::size_t>(face) * size * size * 4;
+      const auto* src_face = rgba_faces + static_cast<std::size_t>(face) * size * size * 4;
       for (UINT row = 0; row < size; ++row) {
         std::memcpy(dst + layouts[face].Offset + row * layouts[face].Footprint.RowPitch,
                     src_face + row * size * 4, size * 4);
       }
     }
     upload->Unmap(0, nullptr);
-
     const auto frame = frame_index_;
-    if (FAILED(allocators_[frame]->Reset())) {
-      return Status::Fail("Cubemap allocator Reset failed");
-    }
-    if (FAILED(command_list_->Reset(allocators_[frame].Get(), nullptr))) {
-      return Status::Fail("Cubemap command list Reset failed");
+    if (FAILED(allocators_[frame]->Reset()) ||
+        FAILED(command_list_->Reset(allocators_[frame].Get(), nullptr))) {
+      return Status::Fail("Cubemap command list reset failed");
     }
     for (UINT face = 0; face < 6; ++face) {
       D3D12_TEXTURE_COPY_LOCATION dst_loc{};
-      dst_loc.pResource = reflection_cube_.Get();
+      dst_loc.pResource = cube.Get();
       dst_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
       dst_loc.SubresourceIndex = face;
       D3D12_TEXTURE_COPY_LOCATION src_loc{};
@@ -2573,7 +2611,7 @@ class D3D12Device final : public IDevice {
       src_loc.PlacedFootprint = layouts[face];
       command_list_->CopyTextureRegion(&dst_loc, 0, 0, 0, &src_loc, nullptr);
     }
-    Transition(reflection_cube_.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+    Transition(cube.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     if (FAILED(command_list_->Close())) {
       return Status::Fail("Cubemap Close failed");
@@ -2581,8 +2619,7 @@ class D3D12Device final : public IDevice {
     ID3D12CommandList* lists[] = {command_list_.Get()};
     queue_->ExecuteCommandLists(1, lists);
     WaitGpu();
-
-    return BindReflectionCubeSrv();
+    return Status::Ok();
   }
 
   Status UploadLitAlbedoRgba(const std::uint8_t* rgba, int width, int height, int slot) override {
@@ -3523,6 +3560,8 @@ class D3D12Device final : public IDevice {
   ComPtr<ID3D12Resource> lit_albedo2_;
   ComPtr<ID3D12Resource> lit_orm2_;
   ComPtr<ID3D12Resource> reflection_cube_;
+  ComPtr<ID3D12Resource> ibl_irradiance_;
+  ComPtr<ID3D12Resource> ibl_brdf_lut_;
   std::array<MeshSlotGpu, kMaxMeshSlots> mesh_slots_{};
   ComPtr<ID3D12Resource> scene_color_;
   ComPtr<ID3D12Resource> history_;

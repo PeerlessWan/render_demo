@@ -21,10 +21,16 @@ class StreamingBudget {
 
   // Resident entry. Refcount>0 entries are never evicted.
   Status Resident(const AssetId& id, std::size_t size_bytes, const AssetHandle& keep_alive);
+  // Documented alias: mark asset resident under budget tracking.
+  Status MarkResident(const AssetId& id, std::size_t size_bytes, const AssetHandle& keep_alive) {
+    return Resident(id, size_bytes, keep_alive);
+  }
   void Release(const AssetId& id);
 
   // Evict zero-refcount residents until used <= budget. Returns evicted ids.
   std::vector<AssetId> EvictIfNeeded();
+  // Documented alias: evict LRU/zero-ref entries when over budget.
+  std::vector<AssetId> EvictIfOverBudget() { return EvictIfNeeded(); }
 
  private:
   struct Entry {

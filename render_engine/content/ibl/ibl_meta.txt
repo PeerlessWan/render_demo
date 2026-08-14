@@ -1,0 +1,4 @@
+input=procedural
+face_size=32
+lut=128
+pack=ibl_pack.ibl1

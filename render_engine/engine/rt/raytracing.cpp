@@ -26,4 +26,11 @@ Status EnsureSafe(rhi::Backend backend, const FeatureSet& features, const Raytra
   return Status::Ok();
 }
 
+bool CanRunDxrDemo(const FeatureSet& features, const DxrDemoConfig& demo) {
+  if (!features.raytracing || !features.d3d12) {
+    return false;
+  }
+  return demo.enable_reflections || demo.enable_shadows;
+}
+
 }  // namespace engine::rt

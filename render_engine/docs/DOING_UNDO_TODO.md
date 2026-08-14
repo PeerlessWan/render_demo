@@ -6,7 +6,7 @@
 
 | ID | 项 | 目标 | 验收 |
 |---|---|---|---|
-| — | （空）P2 可测切片已落地，待选下一档 |  |  |
+| — | （空）D3D12 产品波次 + Learn + Vulkan 对标骨架已收口 |  |  |
 
 ---
 
@@ -16,9 +16,10 @@
 |---|---|---|---|
 | P2 | T-rmlui-real | 真 RmlUi | **阻塞**：需 vendor |
 | P2 | T-http-tls | OpenSSL HTTPS | **阻塞**：缺 SDK |
-| P3 | T-vk-parity | Vulkan 追平 | 暂缓 |
+| P3 | T-linux-m18 | Linux + Vulkan | 外置（见 LINUX_VULKAN.md） |
 | P3 | T-ground-slab | 悬浮浅色层切物体 | **搁置** |
-| P3 | T-m14-full | 真多线程 Execute / 全 Bindless 迁移 | 本轮仅骨架 |
+| P3 | T-vk-post-full | Vulkan 完整 post/点光影采样 | 矩阵见 [VULKAN_PARITY.md](VULKAN_PARITY.md) |
+| P3 | T-m14-bindless-full | 全 Bindless 迁移 | 非本口径必须 |
 
 ---
 
@@ -26,11 +27,10 @@
 
 | 标签 | 值 |
 |---|---|
-| 安全基线 | `9db8df0`（含 HDR lit + 地板缓解） |
-| 上一基线 | `8d27fab`（Perspective Z∈[0,1]） |
-| 本档回退 | 还原 gpu_headless / TAA jitter / ReflectionProbe / Feature override |
+| 安全基线 | `fb5c53a`（GPU headless / TAA / 探针门控） |
+| 本档回退 | 还原 IBL pack / scene_capture / learn samples / wave stubs |
 
-验证：`scripts/ci_headless.ps1`；`engine_unit_tests`（含 GPU 回归）；Sandbox `--gpu-headless --headless_frames=4`
+验证：`scripts/ci_headless.ps1`；`content/ibl/ibl_pack.ibl1`；Sandbox `--gpu-headless`；`--backend=vulkan` 冒烟
 
 ---
 
@@ -38,11 +38,14 @@
 
 | 项 | 说明 |
 |---|---|
-| T-gpu-headless | D3D12 offscreen + 读回断言 + `ci_headless.ps1` |
-| T-taa-mv | prev VP + 深度重投影 TAA + Halton jitter；Medium/High 默认开 |
-| T-m13-dynref | `ReflectionProbe` Cubemap 上传 + lit 采样 |
-| T-m14-gates | Feature override、SubmitConfig、HDR10 尝试、bindless heap 余量 |
-| T-hdr-scene | Lit → `R16G16B16A16` + tonemap 回 LDR（`9db8df0`） |
-| T-ground-mitigate | 细分地面 / 单级联 / 局部灯收敛 / ClipDistance（假层仍在） |
-| T-ground-z | Perspective → D3D Z[0,1]（`8d27fab`） |
-| T-wheel-crash | D3D12 帧中 VB / WantCapture（`a638fdc`） |
+| T-ibl-real | ibl_baker → `ibl_pack.ibl1` + lit 分裂和采样 |
+| T-probe-capture | `CaptureApproximateSceneFaces` 动态反射近似 |
+| T-lightmap-baker | `tools/lightmap_baker` |
+| T-learn-core | learn 必修 03–11 |
+| T-learn-electives | 12/15/16/18/19/22/24/25/26/27/29/30/32 |
+| T-wave2-4-stubs | 实例化/遮挡/indirect/upscaler/ProbeVolume/水面/图集 |
+| T-vk-parity-win | Windows Vulkan 对标骨架 + [VULKAN_PARITY.md](VULKAN_PARITY.md) |
+| T-gpu-headless | D3D12 offscreen + 读回断言 |
+| T-taa-mv | TAA + 深度重投影 |
+| T-m13-dynref | ReflectionProbe Cubemap |
+| T-m14-gates | Feature / SubmitConfig / HDR10 尝试 |

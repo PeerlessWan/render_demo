@@ -8,6 +8,8 @@
 #include "engine/debug/console.h"
 #include "engine/gi/probe_volume.h"
 #include "engine/gi/reflection_probe.h"
+#include "engine/gi/scene_capture.h"
+#include "engine/render/ibl_pack.h"
 #include "engine/media/media.h"
 #include "engine/mixed/pick.h"
 #include "engine/net/net_system.h"
@@ -528,9 +530,50 @@ int main(int argc, char** argv) {
   engine::gi::ReflectionProbe reflection_probe;
   reflection_probe.Configure({0.f, 1.6f, 0.f}, 32);
   reflection_probe.UpdateFromEnvironment(env.sun_direction, env.sun_color, 3.f, env.ambient);
-  (void)a.device().UploadReflectionCubemap(reflection_probe.rgba_faces().data(),
-                                           reflection_probe.face_size());
+  {
+    std::vector<engine::gi::SceneCaptureOrb> orbs;
+    orbs.push_back({{1.5f, 1.2f, 0.f}, {1.f, 0.4f, 0.2f, 1.f}, 0.8f});
+    orbs.push_back({{-1.2f, 1.5f, 1.f}, {0.3f, 0.6f, 1.f, 1.f}, 0.6f});
+    std::vector<std::uint8_t> faces;
+    engine::gi::CaptureApproximateSceneFaces(faces, reflection_probe.face_size(),
+                                             reflection_probe.position(), orbs, env.sun_direction,
+                                             env.sun_color, env.sun_intensity, env.ambient);
+    (void)a.device().UploadReflectionCubemap(faces.data(), reflection_probe.face_size());
+  }
   reflection_probe.ClearDirty();
+
+  // Optional IBL pack next to content or shaders.
+  {
+    namespace fs = std::filesystem;
+    const fs::path candidates[] = {
+        fs::path(ENGINE_CONTENT_DIR_A) / "ibl" / "ibl_pack.ibl1",
+        fs::path(ENGINE_SHADER_DIR_A) / "ibl_pack.ibl1",
+        fs::path("content") / "ibl" / "ibl_pack.ibl1",
+    };
+    for (const auto& p : candidates) {
+      if (!fs::exists(p)) {
+        continue;
+      }
+      auto pack = engine::render::LoadIblPack(p);
+      if (!pack) {
+        engine::LogError(pack.status().message());
+        break;
+      }
+      (void)a.device().UploadIblIrradianceCubemap(pack.value().irradiance_rgba.data(),
+                                                 pack.value().face_size);
+      (void)a.device().UploadIblPrefilterCubemap(pack.value().prefilter_rgba.data(),
+                                                pack.value().face_size);
+      (void)a.device().UploadIblBrdfLut(pack.value().brdf_lut_rgba.data(), pack.value().lut_w,
+                                       pack.value().lut_h);
+      env.ibl_irradiance = p.string();
+      env.ibl_prefilter = p.string();
+      env.ibl_brdf_lut = p.string();
+      fx.enable_ibl = true;
+      render.set_effect_tuning(fx);
+      engine::LogInfo("IBL pack loaded: " + p.string());
+      break;
+    }
+  }
 
   engine::vfx::ParticleEmitter particles;
   particles.Configure({1.8f, 2.6f, 1.0f}, 28.f, 1.1f);
@@ -902,10 +945,16 @@ int main(int argc, char** argv) {
 
     profiler.Begin("DrawFrame");
     if ((app_ref.frame_index() % 8) == 1) {
-      // CPU-side dynamic update; GPU cubemap refreshed at init (mid-frame upload unsafe).
-      reflection_probe.UpdateFromEnvironment(env.sun_direction, env.sun_color, fx.sun_intensity,
-                                             env.ambient);
+      std::vector<engine::gi::SceneCaptureOrb> orbs;
+      orbs.push_back({{1.5f, 1.2f, 0.f}, {1.f, 0.4f, 0.2f, 1.f}, 0.8f});
+      orbs.push_back({{-1.2f, 1.5f, 1.f}, {0.3f, 0.6f, 1.f, 1.f}, 0.6f});
+      std::vector<std::uint8_t> faces;
+      engine::gi::CaptureApproximateSceneFaces(faces, reflection_probe.face_size(),
+                                               reflection_probe.position(), orbs, env.sun_direction,
+                                               env.sun_color, fx.sun_intensity, env.ambient);
+      // Mid-frame GPU upload is unsafe; keep CPU capture for dynamic look, upload at init only.
       reflection_probe.ClearDirty();
+      (void)faces;
     }
     if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites,
                                    retained_quads.empty() ? nullptr : &retained_quads,

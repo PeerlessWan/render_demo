@@ -110,6 +110,9 @@ add_library(engine_rhi STATIC
   render/shadow_atlas.cpp
   render/local_lights.cpp
   render/quality.cpp
+  render/ibl_pack.cpp
+  render/instance_draw.cpp
+  render/occlusion.cpp
   backends/headless/headless_device.cpp
 )
 target_include_directories(engine_rhi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -169,6 +172,7 @@ endif()
 
 add_library(engine_media STATIC
   media/media.cpp
+  media/upscaler.cpp
 )
 target_include_directories(engine_media PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_media PUBLIC engine_core)
@@ -209,6 +213,7 @@ endif()
 add_library(engine_render2d STATIC
   render2d/sprite.cpp
   render2d/tilemap_stream.cpp
+  render2d/atlas.cpp
 )
 target_include_directories(engine_render2d PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_render2d PUBLIC engine_core)
@@ -222,6 +227,7 @@ target_link_libraries(engine_mixed PUBLIC engine_core engine_rhi engine_render2d
 add_library(engine_gi STATIC
   gi/probe_volume.cpp
   gi/reflection_probe.cpp
+  gi/scene_capture.cpp
 )
 target_include_directories(engine_gi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_gi PUBLIC engine_core)
@@ -240,6 +246,7 @@ target_link_libraries(engine_vfx PUBLIC engine_core)
 
 add_library(engine_gpu_driven STATIC
   gpu_driven/path.cpp
+  gpu_driven/indirect_draw.cpp
 )
 target_include_directories(engine_gpu_driven PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_gpu_driven PUBLIC engine_core)

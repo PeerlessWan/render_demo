@@ -42,4 +42,7 @@ struct TerrainMesh {
 // Build a simple grid mesh from height samples (M23 deepen).
 TerrainMesh BuildTerrainMesh(const Heightmap& map, const Vec3& world_origin);
 
+// Flat water patch centered at origin, extent [-half_extent, half_extent] on XZ.
+TerrainMesh BuildWaterPatchMesh(float half_extent);
+
 }  // namespace engine::terrain

@@ -28,6 +28,28 @@ void ProbeVolume::Configure(const Vec3& origin, const Vec3& spacing, int nx, int
   }
 }
 
+void ProbeVolume::UpdateFromLights(std::span<const ProbeLight> lights) {
+  if (probes_.empty()) {
+    return;
+  }
+  for (auto& probe : probes_) {
+    ColorRgba acc{0.05f, 0.05f, 0.06f, 1.f};
+    for (const auto& light : lights) {
+      const Vec3 d = probe.position - light.position;
+      const float dist = d.length();
+      if (dist >= light.range || light.range <= 0.f) {
+        continue;
+      }
+      const float t = 1.f - dist / light.range;
+      const float w = light.intensity * t * t;
+      acc.r += light.color.r * w;
+      acc.g += light.color.g * w;
+      acc.b += light.color.b * w;
+    }
+    probe.irradiance = acc;
+  }
+}
+
 ColorRgba ProbeVolume::Sample(const Vec3& world_pos) const {
   if (!enabled_ || probes_.empty()) {
     return {0, 0, 0, 1};

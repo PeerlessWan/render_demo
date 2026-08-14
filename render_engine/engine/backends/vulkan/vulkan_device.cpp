@@ -565,9 +565,52 @@ class VulkanDevice final : public IDevice {
   Status BeginLocalShadowPass() override { return Status::Fail("Vulkan lit not ready"); }
   Status BindLocalShadowTile(int) override { return Status::Fail("Vulkan lit not ready"); }
   Status EndLocalShadowPass() override { return Status::Fail("Vulkan lit not ready"); }
-  Status SetupPostMesh(const PostShaders&) override { return Status::Fail("Vulkan lit not ready"); }
-  Status ResolvePostEffects(const PostResolveDesc&) override {
-    return Status::Fail("Vulkan lit not ready");
+  Status SetupPostMesh(const PostShaders&) override {
+    post_stub_ready_ = true;
+    return Status::Ok();
+  }
+
+  Status ResolvePostEffects(const PostResolveDesc& desc) override {
+    if (!post_stub_ready_) {
+      return Status::Fail("SetupPostMesh not called");
+    }
+    if (desc.NeedsResolve() && !post_resolve_warned_) {
+      LogWarn("Vulkan ResolvePostEffects stub (post stack parity TBD)");
+      post_resolve_warned_ = true;
+    }
+    return Status::Ok();
+  }
+
+  Status UploadReflectionCubemap(const std::uint8_t* rgba_faces, int face_size) override {
+    (void)rgba_faces;
+    if (face_size <= 0) {
+      return Status::Fail(ErrorCode::InvalidArgument, "Invalid cubemap face size");
+    }
+    return AcceptIblUploadOnce();
+  }
+
+  Status UploadIblIrradianceCubemap(const std::uint8_t* rgba_faces, int face_size) override {
+    (void)rgba_faces;
+    if (face_size <= 0) {
+      return Status::Fail(ErrorCode::InvalidArgument, "Invalid irradiance face size");
+    }
+    return AcceptIblUploadOnce();
+  }
+
+  Status UploadIblPrefilterCubemap(const std::uint8_t* rgba_faces, int face_size) override {
+    (void)rgba_faces;
+    if (face_size <= 0) {
+      return Status::Fail(ErrorCode::InvalidArgument, "Invalid prefilter face size");
+    }
+    return AcceptIblUploadOnce();
+  }
+
+  Status UploadIblBrdfLut(const std::uint8_t* rgba, int w, int h) override {
+    (void)rgba;
+    if (w <= 0 || h <= 0) {
+      return Status::Fail(ErrorCode::InvalidArgument, "Invalid BRDF LUT size");
+    }
+    return AcceptIblUploadOnce();
   }
 
   Status DrawLitCube(const LitDrawItem& item) override {
@@ -695,6 +738,14 @@ class VulkanDevice final : public IDevice {
   }
 
  private:
+  Status AcceptIblUploadOnce() {
+    if (!ibl_upload_logged_) {
+      LogInfo("Vulkan IBL upload accepted (sampling parity TBD)");
+      ibl_upload_logged_ = true;
+    }
+    return Status::Ok();
+  }
+
   Status BeginLitRenderPass(const ColorRgba& color) {
     if (pass_active_) {
       cleared_ = true;
@@ -1967,6 +2018,9 @@ class VulkanDevice final : public IDevice {
   ColorRgba clear_color_{0.f, 0.f, 0.f, 1.f};
 
   bool lit_ready_ = false;
+  bool post_stub_ready_ = false;
+  bool post_resolve_warned_ = false;
+  bool ibl_upload_logged_ = false;
   bool shadow_pass_active_ = false;
   int bound_cascade_ = -1;
   std::uint32_t lit_draws_this_frame_ = 0;

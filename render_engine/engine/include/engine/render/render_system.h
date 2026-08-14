@@ -69,6 +69,8 @@ struct EffectTuning {
   float motion_blur_strength = 0.35f;
   bool enable_reflection_probe = true;
   float reflection_intensity = 0.45f;
+  bool enable_ibl = false;
+  float ibl_intensity = 1.f;
 };
 
 class RenderSystem {

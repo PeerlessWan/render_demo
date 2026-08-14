@@ -38,6 +38,8 @@ std::unique_ptr<IAudioDevice> CreateNullAudioDevice();
 // Windows: PlaySound for short wav files; falls back to null elsewhere.
 std::unique_ptr<IAudioDevice> CreateDefaultAudioDevice();
 std::unique_ptr<IVideoDecoder> CreateD3D12VaDecoderOrStub();
+// Probe whether hardware video decode is available on this build/device.
+bool QueryVideoDecodeAvailable();
 // Fire-and-forget helper for UI/sfx.
 Status PlayWavFile(const std::filesystem::path& path);
 

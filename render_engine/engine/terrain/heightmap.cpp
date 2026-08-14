@@ -107,4 +107,17 @@ TerrainMesh BuildTerrainMesh(const Heightmap& map, const Vec3& world_origin) {
   return mesh;
 }
 
+TerrainMesh BuildWaterPatchMesh(float half_extent) {
+  TerrainMesh mesh;
+  if (half_extent <= 0.f) {
+    return mesh;
+  }
+  const float h = half_extent;
+  mesh.positions = {-h, 0.f, -h, h, 0.f, -h, h, 0.f, h, -h, 0.f, h};
+  mesh.normals = {0.f, 1.f, 0.f, 0.f, 1.f, 0.f, 0.f, 1.f, 0.f, 0.f, 1.f, 0.f};
+  mesh.uvs = {0.f, 0.f, 1.f, 0.f, 1.f, 1.f, 0.f, 1.f};
+  mesh.indices = {0, 1, 2, 0, 2, 3};
+  return mesh;
+}
+
 }  // namespace engine::terrain
