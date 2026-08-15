@@ -116,6 +116,7 @@ TEST_CASE("SubmitConfig applies on gpu_headless device", "[rhi][m14]") {
   cfg.worker_count = 2;
   REQUIRE(device.value()->SetSubmitConfig(cfg));
   REQUIRE(engine::QueryFeature("bindless"));
+  REQUIRE_FALSE(engine::QueryFeature("bindless_hot_path"));  // hot path never default-on
   REQUIRE(engine::QueryFeature("multithread_submit"));
   if (auto st = device.value()->BeginFrame(); st) {
     auto probe = device.value()->ProbeBindlessMinimalPath(0);
@@ -123,6 +124,7 @@ TEST_CASE("SubmitConfig applies on gpu_headless device", "[rhi][m14]") {
       // Heap may not exist until lit setup; Feature query still proves capability gate.
       REQUIRE(engine::QueryFeature("bindless"));
     }
+    REQUIRE_FALSE(engine::QueryFeature("bindless_hot_path"));
     (void)device.value()->Present();
   }
   engine::ClearFeatureOverrides();

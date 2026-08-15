@@ -14,6 +14,9 @@ namespace engine::ui {
 struct ImmediateUiDesc {
   std::filesystem::path ui_vs;
   std::filesystem::path ui_ps;
+  // Optional CJK-capable font (e.g. Windows msyh.ttc). Empty = try system defaults then ImGui default.
+  std::filesystem::path ui_font;
+  float ui_font_size = 18.f;
 };
 
 // Facade over Dear ImGui (implementation may be stubbed if ENGINE_WITH_IMGUI=0).
@@ -46,6 +49,8 @@ class ImmediateUi {
   bool SliderFloat(std::string_view label, float* value, float min_v, float max_v);
   bool SliderInt(std::string_view label, int* value, int min_v, int max_v);
   bool Button(std::string_view label, float w = 0.f, float h = 0.f);
+  // Combo over null-terminated UTF-8 items; returns true when selection changes.
+  bool Combo(std::string_view label, int* current, const char* const* items, int item_count);
 
  private:
   struct Impl;

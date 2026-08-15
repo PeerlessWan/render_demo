@@ -28,9 +28,12 @@
 #include "engine/ui/rml_ui.h"
 #include "engine/vfx/particles.h"
 
+#include "sandbox_ui_strings.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -294,8 +297,8 @@ int main(int argc, char** argv) {
     rdesc.lit_vs = shader_dir / "lit_cube_vk.vs.spv";
     rdesc.lit_ps = shader_dir / "lit_cube_vk.ps.spv";
     rdesc.shadow_vs = shader_dir / "shadow_vk.vs.spv";
-    rdesc.post_vs = shader_dir / "post_tonemap_vk.vs.spv";
-    rdesc.post_ps = shader_dir / "post_tonemap_vk.ps.spv";
+    rdesc.post_vs = shader_dir / "post_ssao_taa_vk.vs.spv";
+    rdesc.post_ps = shader_dir / "post_ssao_taa_vk.ps.spv";
     rdesc.quad_vs = shader_dir / "quad_vk.vs.spv";
     rdesc.quad_ps = shader_dir / "quad_vk.ps.spv";
     rdesc.debug_vs = shader_dir / "debug_line_vk.vs.spv";
@@ -304,11 +307,6 @@ int main(int argc, char** argv) {
     rdesc.sky_ps = shader_dir / "skybox_vk.ps.spv";
     rdesc.enable_shadows = true;
     rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
-    // Parity profile: Vulkan post is tonemap-only (no real SSAO/TAA/SSR). Keep the same
-    // flags on D3D12 so High shadows match without an AO darkening fork.
-    rdesc.quality.enable_ssao = false;
-    rdesc.quality.enable_taa = false;
-    rdesc.quality.enable_ssr = false;
   } else {
     rdesc.lit_vs = shader_dir / "lit_cube.vs.cso";
     rdesc.lit_ps = shader_dir / "lit_cube.ps.cso";
@@ -324,24 +322,25 @@ int main(int argc, char** argv) {
     rdesc.sky_ps = shader_dir / "skybox.ps.cso";
     rdesc.enable_shadows = true;
     rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
-    rdesc.quality.enable_ssao = false;
-    rdesc.quality.enable_taa = false;
-    rdesc.quality.enable_ssr = false;
   }
   if (auto st = render.Init(a.device(), rdesc); !st) {
     engine::LogError(st.message());
     return 1;
   }
   render.ApplyEnvironmentDefaults(env);
-  if (!use_vulkan) {
-    const auto cull_cs = shader_dir / "instance_cull_cs.cso";
+  {
+    const auto cull_cs =
+        use_vulkan ? (shader_dir / "instance_cull_vk.cs.spv") : (shader_dir / "instance_cull_cs.cso");
     if (auto st = a.device().SetupInstanceCullCompute(cull_cs); !st) {
       engine::LogWarn(std::string("Cull CS optional: ") + st.message());
     }
+  }
+  if (!use_vulkan) {
     if (auto st = a.device().ProbeBindlessMinimalPath(0); !st) {
       engine::LogWarn(std::string("Bindless Feature path: ") + st.message());
     } else {
-      engine::LogInfo("Bindless Feature minimal path OK");
+      engine::LogInfo("Bindless Feature minimal path OK (bindless_hot_path default OFF; "
+                      "SetFeatureOverride to opt in)");
     }
   }
   // Dense ground plane (slot 4). Fine tris reduce near-plane straddling → no floating slab.
@@ -567,6 +566,27 @@ int main(int argc, char** argv) {
     a.world().set_mesh(phys_node, mesh);
   }
 
+  // C22 thin SoftBody: soft cube near the falling rigid body (Jolt only; builtin SKIP).
+  // Skip under gpu-headless golden/assert so dumps stay pixel-stable.
+  int soft_id = -1;
+  std::vector<engine::Vec3> soft_verts;
+  std::vector<std::uint32_t> soft_indices;
+  if (!gpu_headless_assert) {
+    engine::physics::SoftBodyDesc soft_desc;
+    soft_desc.position = {2.5f, 5.f, -2.f};
+    soft_desc.grid = 5;
+    soft_desc.cell = 0.18f;
+    soft_desc.mass = 2.f;
+    soft_id = physics->CreateSoftBody(soft_desc);
+    if (soft_id >= 0) {
+      (void)physics->SoftBodyGetIndices(soft_id, soft_indices);
+      engine::LogInfo("SoftBody created id=" + std::to_string(soft_id) +
+                      " indices=" + std::to_string(soft_indices.size()));
+    } else {
+      engine::LogInfo("SoftBody unsupported on this physics backend (SKIP)");
+    }
+  }
+
   // M23: small heightfield patch + vegetation cubes
   engine::terrain::Heightmap heightmap;
   heightmap.width = 17;
@@ -764,6 +784,11 @@ int main(int argc, char** argv) {
 
   bool panel_open = true;
   bool profiler_open = true;
+  int ui_lang_i = static_cast<int>(SandboxUiLang::Zh);
+  // Prefer OS UI language when English; otherwise default Chinese for Win target users.
+  if (PRIMARYLANGID(LANGIDFROMLCID(GetUserDefaultLCID())) == LANG_ENGLISH) {
+    ui_lang_i = static_cast<int>(SandboxUiLang::En);
+  }
   bool show_grid = true;
   bool show_axes = true;
   bool f1_was_down = false;
@@ -835,6 +860,28 @@ int main(int argc, char** argv) {
       box.max = {p.x + he.x, p.y + he.y, p.z + he.z};
       dbg.AddAabb(box, {0.2f, 0.95f, 0.35f, 1.f});
     }
+    // SoftBody wireframe: read vertices from physics, draw face edges (interactive only).
+    if (!gpu_headless_assert && soft_id >= 0 &&
+        physics->SoftBodyGetVertices(soft_id, soft_verts)) {
+      const engine::ColorRgba soft_color{0.95f, 0.45f, 0.2f, 1.f};
+      if (!soft_indices.empty()) {
+        for (std::size_t i = 0; i + 2 < soft_indices.size(); i += 3) {
+          const auto i0 = soft_indices[i];
+          const auto i1 = soft_indices[i + 1];
+          const auto i2 = soft_indices[i + 2];
+          if (i0 >= soft_verts.size() || i1 >= soft_verts.size() || i2 >= soft_verts.size()) {
+            continue;
+          }
+          dbg.AddLine(soft_verts[i0], soft_verts[i1], soft_color);
+          dbg.AddLine(soft_verts[i1], soft_verts[i2], soft_color);
+          dbg.AddLine(soft_verts[i2], soft_verts[i0], soft_color);
+        }
+      } else {
+        for (std::size_t i = 0; i + 1 < soft_verts.size(); ++i) {
+          dbg.AddLine(soft_verts[i], soft_verts[i + 1], soft_color);
+        }
+      }
+    }
     if (picked_node != engine::scene::kInvalidNode && app_ref.world().valid(picked_node)) {
       const auto pos = app_ref.world().world_matrix(picked_node).TransformPoint({0, 0, 0});
       engine::Aabb box;
@@ -860,134 +907,137 @@ int main(int argc, char** argv) {
         displayed_gpu_passes = app_ref.device().LastGpuPassTimings();
       }
       const auto& perf = displayed_perf;
+      const auto& S = SandboxUi(static_cast<SandboxUiLang>(ui_lang_i));
 
       // Always-on performance HUD (top-right).
       {
         const float pw = 260.f;
         const float ph = 148.f;
-        if (imgui.BeginWindow("Perf", dw - pw - 16.f, 16.f, pw, ph)) {
+        if (imgui.BeginWindow(S.perf, dw - pw - 16.f, 16.f, pw, ph)) {
           char line[160];
-          std::snprintf(line, sizeof(line), "FPS  %.1f", perf.fps);
+          std::snprintf(line, sizeof(line), "%s  %.1f", S.fps, perf.fps);
           imgui.Text(line);
-          std::snprintf(line, sizeof(line), "Frame  %.2f ms", perf.frame_ms);
+          std::snprintf(line, sizeof(line), "%s  %.2f ms", S.frame_ms, perf.frame_ms);
           imgui.Text(line);
-          std::snprintf(line, sizeof(line), "CPU  %.1f %%", perf.cpu_percent);
+          std::snprintf(line, sizeof(line), "%s  %.1f %%", S.cpu_pct, perf.cpu_percent);
           imgui.Text(line);
           imgui.Separator();
-          std::snprintf(line, sizeof(line), "WS  %.1f MB", perf.working_set_mb);
+          std::snprintf(line, sizeof(line), "%s  %.1f MB", S.working_set, perf.working_set_mb);
           imgui.Text(line);
-          std::snprintf(line, sizeof(line), "Private  %.1f MB", perf.private_mb);
+          std::snprintf(line, sizeof(line), "%s  %.1f MB", S.private_mem, perf.private_mb);
           imgui.Text(line);
-          std::snprintf(line, sizeof(line), "Peak WS  %.1f MB", perf.peak_working_set_mb);
+          std::snprintf(line, sizeof(line), "%s  %.1f MB", S.peak_ws, perf.peak_working_set_mb);
           imgui.Text(line);
-          std::snprintf(line, sizeof(line), "PageFaults  %u", perf.page_fault_count);
+          std::snprintf(line, sizeof(line), "%s  %u", S.page_faults, perf.page_fault_count);
           imgui.Text(line);
         }
         imgui.EndWindow();
       }
 
       if (panel_open) {
-        if (imgui.BeginWindow("Effects", 16.f, 48.f, 360.f, 760.f)) {
-          imgui.Text("LMB/RMB drag look | Wheel zoom | MMB pan");
-          imgui.Text("WASD/QE | Shift | F1 FX | F2 Profiler | F3 grid");
+        if (imgui.BeginWindow(S.effects, 16.f, 48.f, 360.f, 780.f)) {
+          const char* lang_items[] = {S.lang_en, S.lang_zh};
+          imgui.Combo(S.language, &ui_lang_i, lang_items, 2);
+          const auto& Su = SandboxUi(static_cast<SandboxUiLang>(ui_lang_i));
+          imgui.Text(Su.help_look);
+          imgui.Text(Su.help_move);
           imgui.Separator();
           char perf_line[96];
           std::snprintf(perf_line, sizeof(perf_line), "1s avg: %.0f FPS | %.1f ms | CPU %.0f%%",
                         perf.fps, perf.frame_ms, perf.cpu_percent);
           imgui.Text(perf_line);
           imgui.Separator();
-          imgui.Checkbox("Show grid (F3)", &show_grid);
-          imgui.Checkbox("Show axes (F4)", &show_axes);
-          imgui.Checkbox("Probe GI", &enable_gi);
-          imgui.SliderFloat("Morph bulge", &morph_w0, 0.f, 1.f);
-          imgui.SliderFloat("Morph squash", &morph_w1, 0.f, 1.f);
+          imgui.Checkbox(Su.show_grid, &show_grid);
+          imgui.Checkbox(Su.show_axes, &show_axes);
+          imgui.Checkbox(Su.probe_gi, &enable_gi);
+          imgui.SliderFloat(Su.morph_bulge, &morph_w0, 0.f, 1.f);
+          imgui.SliderFloat(Su.morph_squash, &morph_w1, 0.f, 1.f);
           imgui.Separator();
-          imgui.Checkbox("Shadows", &fx.enable_shadows);
-          imgui.Checkbox("SSAO", &fx.enable_ssao);
-          imgui.Checkbox("TAA", &fx.enable_taa);
-          imgui.Checkbox("IBL", &fx.enable_ibl);
-          imgui.Checkbox("Skybox", &fx.enable_skybox);
-          imgui.Checkbox("Reflection probe", &fx.enable_reflection_probe);
-          imgui.Checkbox("SSR", &fx.enable_ssr);
-          imgui.Checkbox("DoF", &fx.enable_dof);
-          imgui.Checkbox("MotionBlur", &fx.enable_motion_blur);
-          imgui.Checkbox("Tonemap", &fx.enable_tonemap);
-          imgui.Checkbox("AutoExposure", &fx.enable_auto_exposure);
-          imgui.Checkbox("Bloom", &fx.enable_bloom);
-          imgui.Checkbox("Fog", &fx.enable_fog);
+          imgui.Checkbox(Su.shadows, &fx.enable_shadows);
+          imgui.Checkbox(Su.ssao, &fx.enable_ssao);
+          imgui.Checkbox(Su.taa, &fx.enable_taa);
+          imgui.Checkbox(Su.ibl, &fx.enable_ibl);
+          imgui.Checkbox(Su.skybox, &fx.enable_skybox);
+          imgui.Checkbox(Su.reflection_probe, &fx.enable_reflection_probe);
+          imgui.Checkbox(Su.ssr, &fx.enable_ssr);
+          imgui.Checkbox(Su.dof, &fx.enable_dof);
+          imgui.Checkbox(Su.motion_blur, &fx.enable_motion_blur);
+          imgui.Checkbox(Su.tonemap, &fx.enable_tonemap);
+          imgui.Checkbox(Su.auto_exposure, &fx.enable_auto_exposure);
+          imgui.Checkbox(Su.bloom, &fx.enable_bloom);
+          imgui.Checkbox(Su.fog, &fx.enable_fog);
           imgui.Separator();
-          imgui.SliderFloat("Sun intensity", &fx.sun_intensity, 0.f, 10.f);
-          imgui.SliderFloat("Ambient scale", &fx.ambient_scale, 0.f, 3.f);
-          imgui.SliderFloat("Exposure", &fx.exposure, 0.2f, 3.f);
-          imgui.SliderInt("Tonemap mode", &fx.tonemap_mode, 0, 2);
-          imgui.SliderFloat("SSR intensity", &fx.ssr_intensity, 0.f, 1.5f);
-          imgui.SliderFloat("DoF focus", &fx.dof_focus, 1.f, 40.f);
-          imgui.SliderFloat("DoF scale", &fx.dof_scale, 0.f, 0.3f);
-          imgui.SliderFloat("Motion blur", &fx.motion_blur_strength, 0.f, 0.9f);
-          imgui.SliderFloat("Bloom thr", &fx.bloom_threshold, 0.35f, 2.f);
-          imgui.SliderFloat("Bloom int", &fx.bloom_intensity, 0.f, 2.f);
-          imgui.SliderFloat("Fog density", &fx.fog_density, 0.f, 0.1f);
-          imgui.SliderFloat("Fog start", &fx.fog_start, 0.f, 40.f);
-          imgui.SliderFloat("Shadow bias", &fx.shadow_bias, 0.0001f, 0.02f);
-          imgui.SliderFloat("Specular power", &fx.specular_power, 1.f, 128.f);
-          imgui.SliderFloat("Local light scale", &fx.local_intensity_scale, 0.f, 4.f);
-          imgui.SliderFloat("IBL intensity", &fx.ibl_intensity, 0.f, 2.f);
-          imgui.SliderFloat("Reflection intensity", &fx.reflection_intensity, 0.f, 1.5f);
-          imgui.SliderInt("Shadow cascades", &fx.shadow_cascades, 1, 4);
+          imgui.SliderFloat(Su.sun_intensity, &fx.sun_intensity, 0.f, 10.f);
+          imgui.SliderFloat(Su.ambient_scale, &fx.ambient_scale, 0.f, 3.f);
+          imgui.SliderFloat(Su.exposure, &fx.exposure, 0.2f, 3.f);
+          imgui.SliderInt(Su.tonemap_mode, &fx.tonemap_mode, 0, 2);
+          imgui.SliderFloat(Su.ssr_intensity, &fx.ssr_intensity, 0.f, 1.5f);
+          imgui.SliderFloat(Su.dof_focus, &fx.dof_focus, 1.f, 40.f);
+          imgui.SliderFloat(Su.dof_scale, &fx.dof_scale, 0.f, 0.3f);
+          imgui.SliderFloat(Su.motion_blur_strength, &fx.motion_blur_strength, 0.f, 0.9f);
+          imgui.SliderFloat(Su.bloom_thr, &fx.bloom_threshold, 0.35f, 2.f);
+          imgui.SliderFloat(Su.bloom_int, &fx.bloom_intensity, 0.f, 2.f);
+          imgui.SliderFloat(Su.fog_density, &fx.fog_density, 0.f, 0.1f);
+          imgui.SliderFloat(Su.fog_start, &fx.fog_start, 0.f, 40.f);
+          imgui.SliderFloat(Su.shadow_bias, &fx.shadow_bias, 0.0001f, 0.02f);
+          imgui.SliderFloat(Su.specular_power, &fx.specular_power, 1.f, 128.f);
+          imgui.SliderFloat(Su.local_light_scale, &fx.local_intensity_scale, 0.f, 4.f);
+          imgui.SliderFloat(Su.ibl_intensity, &fx.ibl_intensity, 0.f, 2.f);
+          imgui.SliderFloat(Su.reflection_intensity, &fx.reflection_intensity, 0.f, 1.5f);
+          imgui.SliderInt(Su.shadow_cascades, &fx.shadow_cascades, 1, 4);
           imgui.Separator();
-          // Tier buttons restore cascade counts; keep post effects that Vulkan cannot run
-          // disabled so D3D12/Vulkan stay comparable (checkbox can still opt-in on D3D).
-          auto apply_parity_post_flags = [&] {
-            fx.enable_ssao = false;
-            fx.enable_taa = false;
-            fx.enable_ssr = false;
-            fx.enable_bloom = false;
-            fx.enable_fog = false;
-            fx.enable_auto_exposure = false;
-          };
-          if (imgui.Button("Low", 90.f, 0.f)) {
+          if (imgui.Button(Su.quality_low, 90.f, 0.f)) {
             const auto q =
                 engine::render::QualitySettings::FromTier(engine::render::QualityTier::Low);
             fx.shadow_cascades = q.shadow_cascades;
-            apply_parity_post_flags();
+            fx.enable_ssao = q.enable_ssao;
+            fx.enable_taa = q.enable_taa;
+            fx.enable_ssr = q.enable_ssr;
+            fx.enable_bloom = q.enable_bloom;
             render.set_quality(q);
             render.set_effect_tuning(fx);
           }
-          if (imgui.Button("Med", 90.f, 0.f)) {
+          if (imgui.Button(Su.quality_med, 90.f, 0.f)) {
             const auto q =
                 engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
             fx.shadow_cascades = q.shadow_cascades;
-            apply_parity_post_flags();
+            fx.enable_ssao = q.enable_ssao;
+            fx.enable_taa = q.enable_taa;
+            fx.enable_ssr = q.enable_ssr;
+            fx.enable_bloom = q.enable_bloom;
             render.set_quality(q);
             render.set_effect_tuning(fx);
           }
-          if (imgui.Button("High", 90.f, 0.f)) {
+          if (imgui.Button(Su.quality_high, 90.f, 0.f)) {
             const auto q =
                 engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
             fx.shadow_cascades = q.shadow_cascades;
-            apply_parity_post_flags();
+            fx.enable_ssao = q.enable_ssao;
+            fx.enable_taa = q.enable_taa;
+            fx.enable_ssr = q.enable_ssr;
+            fx.enable_bloom = q.enable_bloom;
             render.set_quality(q);
             render.set_effect_tuning(fx);
           }
           imgui.Separator();
-          if (imgui.Button("Quit", 80.f, 0.f)) {
+          if (imgui.Button(Su.quit, 80.f, 0.f)) {
             app_ref.window().RequestClose();
           }
         }
         imgui.EndWindow();
       } else {
-        if (imgui.BeginWindow("Hint", 16.f, 16.f, 320.f, 88.f)) {
+        if (imgui.BeginWindow(S.hint, 16.f, 16.f, 320.f, 88.f)) {
           char line[128];
           std::snprintf(line, sizeof(line), "%.0f FPS | %.1f ms | CPU %.0f%% | WS %.0f MB",
                         perf.fps, perf.frame_ms, perf.cpu_percent, perf.working_set_mb);
           imgui.Text(line);
-          imgui.Text("F1 FX | F2 Profiler | F3 Grid | F4 Axes");
+          imgui.Text(S.hint_keys);
         }
         imgui.EndWindow();
       }
 
       if (profiler_open) {
-        if (imgui.BeginWindow("Profiler", 370.f, 48.f, 320.f, 320.f)) {
+        if (imgui.BeginWindow(S.profiler, 370.f, 48.f, 320.f, 320.f)) {
           char line[160];
           std::snprintf(line, sizeof(line), "1s avg  FPS %.1f | dt %.2f ms | CPU %.1f%%", perf.fps,
                         perf.frame_ms, perf.cpu_percent);
@@ -996,7 +1046,7 @@ int main(int argc, char** argv) {
                         perf.working_set_mb, perf.private_mb, perf.peak_working_set_mb);
           imgui.Text(line);
           imgui.Separator();
-          imgui.Text("CPU scopes (1s)");
+          imgui.Text(S.cpu_scopes);
           for (const auto& [name, ms] : displayed_cpu_scopes) {
             std::snprintf(line, sizeof(line), "  %s: %.3f ms", name.c_str(), ms);
             imgui.Text(line);
@@ -1186,7 +1236,7 @@ int main(int argc, char** argv) {
         proto.use_albedo = false;
         render.SetPendingLitInstanced(proto, visible);
         // Seed IndirectArgs (instance_count=0); Cull CS writes instance_count via UAV.
-        // Vulkan: CPU expand path still honors UploadInstanceTransforms + DrawLitInstanced.
+        // Default draw stays DrawLitInstanced (CPU kept count); ExecuteIndirect is available.
         engine::gpu_driven::IndirectDrawArgs seed = iargs;
         seed.instance_count = 0;
         const auto packed = engine::gpu_driven::PackIndirectArgsU32(seed);
@@ -1200,10 +1250,8 @@ int main(int argc, char** argv) {
                         " hiz=" + (engine::QueryFeature("hiz") ? "1" : "0"));
       }
     }
-    // GPU probe writes the same cube slot as IBL prefilter on D3D — skip while IBL is on
-    // so both backends keep the loaded specular environment.
-    if ((app_ref.frame_index() % 64) == 1 && !use_vulkan && !gpu_headless_assert &&
-        !fx.enable_ibl) {
+    // GPU probe writes dedicated probe cube (independent of IBL prefilter).
+    if ((app_ref.frame_index() % 64) == 1 && !use_vulkan && !gpu_headless_assert) {
       std::vector<engine::rhi::LitDrawItem> probe_items;
       probe_items.reserve(8);
       for (const auto& inst : scene.instances) {
@@ -1378,14 +1426,12 @@ int main(int argc, char** argv) {
             tier = engine::render::QualityTier::Medium;
           }
           const auto q = engine::render::QualitySettings::FromTier(tier);
-          // Keep Sandbox post profile aligned (Vulkan tonemap-only).
-          fx.enable_ssao = false;
-          fx.enable_taa = false;
-          fx.enable_bloom = false;
-          fx.enable_ssr = false;
-          fx.enable_fog = false;
           if (!(desc.gpu_headless || harness_stdio)) {
             fx.shadow_cascades = q.shadow_cascades;
+            fx.enable_ssao = q.enable_ssao;
+            fx.enable_taa = q.enable_taa;
+            fx.enable_ssr = q.enable_ssr;
+            fx.enable_bloom = q.enable_bloom;
           }
           render.set_quality(q);
           render.set_effect_tuning(fx);

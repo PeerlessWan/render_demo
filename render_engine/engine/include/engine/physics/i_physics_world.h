@@ -3,6 +3,7 @@
 #include "engine/core/math.h"
 #include "engine/core/result.h"
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -23,6 +24,14 @@ struct RigidBodyDesc {
   bool is_trigger = false;
 };
 
+// Thin SoftBody / Cloth (ADR 0029 / C22). Unsupported backends return -1 / false.
+struct SoftBodyDesc {
+  Vec3 position{};
+  int grid = 6;       // cube grid resolution (vertices per edge)
+  float cell = 0.2f;  // spacing between vertices
+  float mass = 1.f;   // total mass (>0); distributed across free vertices
+};
+
 class IPhysicsWorld {
  public:
   virtual ~IPhysicsWorld() = default;
@@ -34,6 +43,12 @@ class IPhysicsWorld {
   [[nodiscard]] virtual Vec3 body_half_extents(int body_id) const = 0;
   [[nodiscard]] virtual int body_count() const = 0;
   [[nodiscard]] virtual const char* backend_name() const = 0;
+
+  // SoftBody: default stubs SKIP (builtin / non-Jolt). Jolt adapter overrides.
+  virtual int CreateSoftBody(const SoftBodyDesc& /*desc*/) { return -1; }
+  virtual bool SoftBodyGetVertices(int /*id*/, std::vector<Vec3>& /*out_world*/) { return false; }
+  [[nodiscard]] virtual int SoftBodyGetIndexCount(int /*id*/) const { return 0; }
+  virtual bool SoftBodyGetIndices(int /*id*/, std::vector<std::uint32_t>& /*out*/) { return false; }
 };
 
 std::unique_ptr<IPhysicsWorld> CreateBuiltinPhysicsWorld();

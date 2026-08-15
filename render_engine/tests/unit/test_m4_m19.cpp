@@ -21,12 +21,15 @@
 #include "engine/scene/world.h"
 #include "engine/ui/retained_ui.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 #if defined(ENGINE_WITH_HTTPLIB) && ENGINE_WITH_HTTPLIB
 #include <httplib.h>
@@ -199,6 +202,7 @@ TEST_CASE("SubmitConfig validates multithread workers", "[rhi]") {
   bad.worker_count = 0;
   REQUIRE_FALSE(engine::rhi::ValidateSubmitConfig(bad));
   REQUIRE_FALSE(engine::QueryFeature("bindless"));
+  REQUIRE_FALSE(engine::QueryFeature("bindless_hot_path"));
   REQUIRE_FALSE(engine::QueryFeature("hdr_output"));
 }
 
@@ -238,6 +242,16 @@ TEST_CASE("Physics stack and raycast", "[physics]") {
   const auto hit = world->Raycast({0, 10, 0}, {0, -1, 0}, 100.f);
   REQUIRE(hit.hit);
   REQUIRE(hit.body_id == id);
+
+  // Builtin SoftBody is SKIP (ADR 0029 / C22).
+  engine::physics::SoftBodyDesc soft;
+  soft.position = {0, 3, 0};
+  REQUIRE(world->CreateSoftBody(soft) == -1);
+  std::vector<engine::Vec3> verts;
+  REQUIRE_FALSE(world->SoftBodyGetVertices(0, verts));
+  REQUIRE(world->SoftBodyGetIndexCount(0) == 0);
+  std::vector<std::uint32_t> indices;
+  REQUIRE_FALSE(world->SoftBodyGetIndices(0, indices));
 }
 
 TEST_CASE("Default physics world and Jolt factory", "[physics][m12]") {
@@ -259,6 +273,30 @@ TEST_CASE("Default physics world and Jolt factory", "[physics][m12]") {
   const auto hit = jolt->Raycast({0, 10, 0}, {0, -1, 0}, 100.f);
   REQUIRE(hit.hit);
   REQUIRE(hit.body_id == id);
+
+  // SoftBody cube: create, step, read vertices (thin C22).
+  engine::physics::SoftBodyDesc soft;
+  soft.position = {1.5f, 4.f, 0.f};
+  soft.grid = 4;
+  soft.cell = 0.2f;
+  soft.mass = 1.f;
+  const int soft_id = jolt->CreateSoftBody(soft);
+  REQUIRE(soft_id >= 0);
+  REQUIRE(jolt->SoftBodyGetIndexCount(soft_id) > 0);
+  std::vector<std::uint32_t> soft_indices;
+  REQUIRE(jolt->SoftBodyGetIndices(soft_id, soft_indices));
+  REQUIRE(soft_indices.size() % 3 == 0);
+  for (int i = 0; i < 120; ++i) {
+    jolt->Step(1.f / 60.f);
+  }
+  std::vector<engine::Vec3> soft_verts;
+  REQUIRE(jolt->SoftBodyGetVertices(soft_id, soft_verts));
+  REQUIRE(soft_verts.size() == static_cast<std::size_t>(4 * 4 * 4));
+  float min_y = soft_verts[0].y;
+  for (const auto& v : soft_verts) {
+    min_y = std::min(min_y, v.y);
+  }
+  REQUIRE(min_y < 2.5f);  // fell toward floor
 #else
   REQUIRE(std::string(world->backend_name()) == "builtin");
   auto jolt = engine::physics::CreateJoltPhysicsWorld();

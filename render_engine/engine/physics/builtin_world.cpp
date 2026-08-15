@@ -121,6 +121,15 @@ class BuiltinWorld final : public IPhysicsWorld {
 
   const char* backend_name() const override { return "builtin"; }
 
+  // SoftBody unsupported on builtin (ADR 0029 / C22 SKIP).
+  int CreateSoftBody(const SoftBodyDesc& /*desc*/) override { return -1; }
+
+  bool SoftBodyGetVertices(int /*id*/, std::vector<Vec3>& /*out_world*/) override { return false; }
+
+  int SoftBodyGetIndexCount(int /*id*/) const override { return 0; }
+
+  bool SoftBodyGetIndices(int /*id*/, std::vector<std::uint32_t>& /*out*/) override { return false; }
+
  private:
   std::vector<Body> bodies_;
 };

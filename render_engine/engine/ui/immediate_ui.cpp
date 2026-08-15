@@ -9,6 +9,8 @@
 #include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <filesystem>
+#include <string>
 #include <vector>
 
 namespace engine::ui {
@@ -61,19 +63,62 @@ Status ImmediateUi::Init(rhi::IDevice& device, const ImmediateUiDesc& desc) {
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
   io.IniFilename = nullptr;
+  io.LogFilename = nullptr;
 
   ImGui::StyleColorsDark();
   ImGuiStyle& style = ImGui::GetStyle();
   style.WindowRounding = 6.f;
   style.FrameRounding = 4.f;
 
+  // Bake Latin + Simplified Chinese once (language switch only swaps string pointers).
+  const float font_size = desc.ui_font_size > 1.f ? desc.ui_font_size : 18.f;
+  ImFontConfig font_cfg{};
+  font_cfg.OversampleH = 2;
+  font_cfg.OversampleV = 1;
+  font_cfg.PixelSnapH = true;
+  const ImWchar* cjk_ranges = io.Fonts->GetGlyphRangesChineseSimplifiedCommon();
+  auto try_add_font = [&](const std::filesystem::path& path) -> bool {
+    if (path.empty()) {
+      return false;
+    }
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) {
+      return false;
+    }
+    return io.Fonts->AddFontFromFileTTF(path.string().c_str(), font_size, &font_cfg, cjk_ranges) !=
+           nullptr;
+  };
+  bool font_ok = try_add_font(desc.ui_font);
+  if (!font_ok) {
+    static const char* kWinCandidates[] = {
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/msyh.ttf",
+        "C:/Windows/Fonts/simhei.ttf",
+        "C:/Windows/Fonts/simsun.ttc",
+        "C:/Windows/Fonts/NotoSansSC-Regular.otf",
+    };
+    for (const char* cand : kWinCandidates) {
+      if (try_add_font(cand)) {
+        font_ok = true;
+        LogInfo(std::string("ImmediateUi CJK font: ") + cand);
+        break;
+      }
+    }
+  }
+  if (!font_ok) {
+    io.Fonts->AddFontDefault();
+    LogWarn("ImmediateUi: no CJK font found; Chinese UI may show as ?");
+  }
+
   unsigned char* pixels = nullptr;
   int w = 0, h = 0;
   io.Fonts->GetTexDataAsRGBA32(&pixels, &w, &h);
   if (!pixels || w <= 0 || h <= 0) {
+    ImGui::DestroyContext();
     return Status::Fail("ImGui font atlas empty");
   }
   if (auto st = device.UploadUiFontAtlas(pixels, w, h); !st) {
+    ImGui::DestroyContext();
     return st;
   }
   io.Fonts->SetTexID(static_cast<ImTextureID>(1));
@@ -341,6 +386,21 @@ bool ImmediateUi::Button(std::string_view label, float w, float h) {
     return false;
   }
   return ImGui::Button(std::string(label).c_str(), ImVec2(w, h));
+#endif
+}
+
+bool ImmediateUi::Combo(std::string_view label, int* current, const char* const* items, int item_count) {
+#if !(defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI)
+  (void)label;
+  (void)current;
+  (void)items;
+  (void)item_count;
+  return false;
+#else
+  if (!impl_->ready || !current || !items || item_count <= 0) {
+    return false;
+  }
+  return ImGui::Combo(std::string(label).c_str(), current, items, item_count);
 #endif
 }
 

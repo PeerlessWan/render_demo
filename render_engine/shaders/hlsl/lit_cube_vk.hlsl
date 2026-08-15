@@ -30,6 +30,11 @@ cbuffer FrameCB : register(b0) {
   float g_local_shadow_bias;
   float g_local_shadow_count;
   float g_local_shadow_tiles;
+  float4x4 g_prev_view_proj;
+  float g_jitter_x;
+  float g_jitter_y;
+  float g_pad_j0;
+  float g_pad_j1;
 };
 
 cbuffer ObjectCB : register(b1) {
@@ -41,7 +46,15 @@ cbuffer ObjectCB : register(b1) {
   float g_use_orm;
   float g_tex_slot;
   float g_uv_scale;
+  float g_use_instances;
+  float g_pad;
 };
+
+// Lit set packing (Vulkan, -fvk-t/s-shift 2):
+//   b0/b1 UBO, t0→2 shadow … t6→8 prefilter, t7→9 LUT, t8→10 local shadow,
+//   t9→11 instances SSBO, t10→12 reflection probe (separate from IBL prefilter).
+// t9 + -fvk-t-shift 2 → binding 11 (after local shadow at t8→10).
+[[vk::binding(11, 0)]] StructuredBuffer<float4x4> g_instances : register(t9);
 
 Texture2D g_shadow_map : register(t0);
 SamplerComparisonState g_shadow_samp : register(s0);
@@ -61,6 +74,8 @@ Texture2D g_brdf_lut : register(t7);
 SamplerState g_lut_samp : register(s7);
 Texture2D g_local_shadow_map : register(t8);
 SamplerComparisonState g_local_shadow_samp : register(s8);
+TextureCube g_reflection_probe : register(t10);
+SamplerState g_probe_samp : register(s10);
 
 struct VSInput {
   float3 position : POSITION;
@@ -76,12 +91,18 @@ struct VSOutput {
   float clip_near : SV_ClipDistance0;
 };
 
-VSOutput VSMain(VSInput input) {
+VSOutput VSMain(VSInput input, uint iid : SV_InstanceID) {
   VSOutput o;
-  float4 wp = mul(g_world, float4(input.position, 1.0f));
+  float4x4 world = g_world;
+  if (g_use_instances > 0.5f) {
+    world = g_instances[iid];
+  }
+  float4 wp = mul(world, float4(input.position, 1.0f));
   o.world_pos = wp.xyz;
-  o.world_normal = normalize(mul((float3x3)g_world, input.normal));
-  o.position = mul(g_view_proj, wp);
+  o.world_normal = normalize(mul((float3x3)world, input.normal));
+  float4 curr = mul(g_view_proj, wp);
+  curr.xy += float2(g_jitter_x, g_jitter_y) * curr.w;
+  o.position = curr;
   o.uv = input.uv;
   float vz = dot(o.world_pos - g_eye, normalize(g_cam_forward));
   o.clip_near = 1.0;
@@ -273,11 +294,11 @@ float4 PSMain(VSOutput input) : SV_Target {
   // washed out CSM contact shadows and flattened the whole frame vs D3D12.
   float3 lit = g_ambient * base * tex_ao + sun_term;
 
-  // Fresnel reflection probe (same map as IBL prefilter after pack load).
+  // Fresnel / local reflection probe (dedicated cube; independent of IBL prefilter).
   if (g_enable_reflection > 0.5) {
     float3 R = reflect(-v, n);
     float lod = saturate(roughness) * 4.0;
-    float3 env = g_ibl_prefilter.SampleLevel(g_pref_samp, R, lod).rgb;
+    float3 env = g_reflection_probe.SampleLevel(g_probe_samp, R, lod).rgb;
     float fres = lerp(0.04, 1.0, metallic);
     fres *= pow(1.0 - ndotv, 5.0) * (1.0 - metallic) + metallic;
     lit += env * fres * g_reflection_intensity * tex_ao;

@@ -256,12 +256,14 @@ class IDevice {
   // M14: parallel submit preference (validated; backends may still fall back to single-thread).
   virtual Status SetSubmitConfig(const SubmitConfig& cfg) { return ValidateSubmitConfig(cfg); }
 
-  // M13: upload 6 RGBA8 faces (face-major, each face = size*size*4) for specular reflections.
+  // M13: upload 6 RGBA8 faces (face-major, each face = size*size*4) for Fresnel / local
+  // reflection probe (dedicated cube; not shared with IBL specular prefilter).
   virtual Status UploadReflectionCubemap(const std::uint8_t* /*rgba_faces*/, int /*face_size*/) {
     return Status::Ok();
   }
 
   // IBL: irradiance cube + specular prefilter cube + BRDF LUT (RGBA8).
+  // Prefilter is independent of UploadReflectionCubemap / CaptureReflectionProbeGpu.
   virtual Status UploadIblIrradianceCubemap(const std::uint8_t* rgba_faces, int face_size) {
     return UploadReflectionCubemap(rgba_faces, face_size);
   }

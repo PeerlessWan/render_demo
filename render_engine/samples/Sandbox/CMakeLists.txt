@@ -96,10 +96,10 @@ if(ENGINE_WITH_VULKAN)
     VS_ENTRY VSMain VS_OUT lit_cube_vk.vs.spv
     PS_ENTRY PSMain PS_OUT lit_cube_vk.ps.spv
   )
-  set(_vk_post_src "${CMAKE_SOURCE_DIR}/shaders/hlsl/post_tonemap_vk.hlsl")
-  set(_vk_post_vs "${_shader_out}/post_tonemap_vk.vs.spv")
-  set(_vk_post_ps "${_shader_out}/post_tonemap_vk.ps.spv")
-  # No t/s shift: post samples scene_color at (t0,s1).
+  set(_vk_post_src "${CMAKE_SOURCE_DIR}/shaders/hlsl/post_ssao_taa_vk.hlsl")
+  set(_vk_post_vs "${_shader_out}/post_ssao_taa_vk.vs.spv")
+  set(_vk_post_ps "${_shader_out}/post_ssao_taa_vk.ps.spv")
+  # No t/s shift: explicit [[vk::binding]] in shader.
   add_custom_command(
     OUTPUT "${_vk_post_vs}" "${_vk_post_ps}"
     COMMAND "${DXC_EXECUTABLE}" -T vs_6_0 -E VSMain -spirv -fspv-target-env=vulkan1.1
@@ -107,7 +107,7 @@ if(ENGINE_WITH_VULKAN)
     COMMAND "${DXC_EXECUTABLE}" -T ps_6_0 -E PSMain -spirv -fspv-target-env=vulkan1.1
             -fvk-use-dx-layout -Fo "${_vk_post_ps}" "${_vk_post_src}"
     DEPENDS "${_vk_post_src}"
-    COMMENT "DXC SPIR-V compile post_tonemap_vk (sample scene_color)"
+    COMMENT "DXC SPIR-V compile post_ssao_taa_vk (SSAO/TAA/fog/bloom/tonemap)"
     VERBATIM
   )
   add_custom_target(sample_sandbox_vk_post DEPENDS "${_vk_post_vs}" "${_vk_post_ps}")
@@ -149,7 +149,20 @@ if(ENGINE_WITH_VULKAN)
     VS_ENTRY VSMain VS_OUT quad_vk.vs.spv
     PS_ENTRY PSMain PS_OUT quad_vk.ps.spv
   )
+  # Instance cull CS → SPIR-V (Wave 3b; always-visible InterlockedAdd InstanceCount).
+  set(_vk_cull_cs "${_shader_out}/instance_cull_vk.cs.spv")
+  add_custom_command(
+    OUTPUT "${_vk_cull_cs}"
+    COMMAND "${DXC_EXECUTABLE}" -T cs_6_0 -E CSMain -spirv -fspv-target-env=vulkan1.1
+            -fvk-use-dx-layout -Fo "${_vk_cull_cs}"
+            "${CMAKE_SOURCE_DIR}/shaders/hlsl/instance_cull_vk.hlsl"
+    DEPENDS "${CMAKE_SOURCE_DIR}/shaders/hlsl/instance_cull_vk.hlsl"
+    COMMENT "DXC SPIR-V compile instance_cull_vk CS"
+    VERBATIM
+  )
+  add_custom_target(sample_sandbox_vk_cull DEPENDS "${_vk_cull_cs}")
   add_dependencies(sample_sandbox
     sample_sandbox_vk_lit sample_sandbox_vk_post sample_sandbox_vk_shadow
-    sample_sandbox_vk_sky sample_sandbox_vk_ui sample_sandbox_vk_debug sample_sandbox_vk_quad)
+    sample_sandbox_vk_sky sample_sandbox_vk_ui sample_sandbox_vk_debug sample_sandbox_vk_quad
+    sample_sandbox_vk_cull)
 endif()

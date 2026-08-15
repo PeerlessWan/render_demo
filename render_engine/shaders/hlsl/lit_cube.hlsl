@@ -49,15 +49,19 @@ cbuffer ObjectCB : register(b1) {
 
 StructuredBuffer<float4x4> g_instances : register(t9);
 
+// Lit SRV packing (D3D12):
+//   table t0..t8 + root SRV t9 (instances) + table t10 (probe)
+//   t6 = IBL specular prefilter only; t10 = Fresnel / local reflection probe.
 Texture2D g_shadow_map : register(t0);
 Texture2D g_albedo_map : register(t1);
 Texture2D g_local_shadow_map : register(t2);
 Texture2D g_orm_map : register(t3);
 Texture2D g_albedo_map2 : register(t4);
 Texture2D g_orm_map2 : register(t5);
-TextureCube g_reflection_map : register(t6);  // specular prefilter / probe
+TextureCube g_ibl_prefilter : register(t6);
 TextureCube g_ibl_irradiance : register(t7);
 Texture2D g_brdf_lut : register(t8);
+TextureCube g_reflection_probe : register(t10);
 SamplerComparisonState g_shadow_samp : register(s0);
 SamplerState g_linear_samp : register(s1);
 
@@ -264,8 +268,11 @@ float4 PSMain(VSOutput input) : SV_Target {
   if (g_use_albedo > 0.5) {
 #if defined(__SHADER_TARGET_MAJOR) && (__SHADER_TARGET_MAJOR > 6 || \
     (__SHADER_TARGET_MAJOR == 6 && __SHADER_TARGET_MINOR >= 6))
-    // Optional bindless sample: g_pad >= 0 → CBV_SRV_UAV heap slot (uniform per draw).
-    // Prefer classic t1/t4 when g_pad < 0 (default / safer path).
+    // Optional bindless: g_pad >= 0 → shadow_srv_heap slot (must match tex_slot:
+    //   tex_slot==0 → heap 1 / t1; tex_slot>0 → heap 4 / t4).
+    // Default hot path keeps g_pad=-1 (classic t1/t4) so golden/C4 stay stable.
+    // Feature "bindless_hot_path" (requires capability "bindless", not gpu_headless)
+    // is the only supported way to set pad>=0 on opaque draws.
     if (g_pad >= 0.0) {
       Texture2D bindless_albedo = ResourceDescriptorHeap[(uint)g_pad];
       base *= bindless_albedo.Sample(g_linear_samp, uv).rgb;
@@ -309,7 +316,7 @@ float4 PSMain(VSOutput input) : SV_Target {
   if (g_enable_reflection > 0.5) {
     float3 R = reflect(-v, n);
     float lod = saturate(roughness) * 4.0;
-    float3 env = g_reflection_map.SampleLevel(g_linear_samp, R, lod).rgb;
+    float3 env = g_reflection_probe.SampleLevel(g_linear_samp, R, lod).rgb;
     float fres = lerp(0.04, 1.0, metallic);
     fres *= pow(1.0 - ndotv, 5.0) * (1.0 - metallic) + metallic;
     lit += env * fres * g_reflection_intensity * ao;
@@ -320,7 +327,7 @@ float4 PSMain(VSOutput input) : SV_Target {
     lit += diffuse * irradiance * g_ibl_intensity * ao;
     float3 R = reflect(-v, n);
     float lod = saturate(roughness) * 4.0;
-    float3 prefiltered = g_reflection_map.SampleLevel(g_linear_samp, R, lod).rgb;
+    float3 prefiltered = g_ibl_prefilter.SampleLevel(g_linear_samp, R, lod).rgb;
     float2 brdf = g_brdf_lut.Sample(g_linear_samp, float2(ndotv, saturate(roughness))).rg;
     float3 f0 = lerp(float3(0.04, 0.04, 0.04), base, metallic);
     lit += prefiltered * (f0 * brdf.x + brdf.y) * g_ibl_intensity * ao;

@@ -28,6 +28,7 @@ FeatureSet QueryFeatures() {
   f.quic = false;
   f.multithread_submit = true;
   f.bindless = false;
+  f.bindless_hot_path = false;
   f.hdr_output = false;
   f.gpu_instancing = false;
   f.execute_indirect = false;
@@ -40,6 +41,7 @@ FeatureSet QueryFeatures() {
     }
   };
   apply("bindless", f.bindless);
+  apply("bindless_hot_path", f.bindless_hot_path);
   apply("hdr_output", f.hdr_output);
   apply("multithread_submit", f.multithread_submit);
   apply("raytracing", f.raytracing);
@@ -66,6 +68,7 @@ bool QueryFeature(std::string_view name) {
   if (name == "quic") return f.quic;
   if (name == "multithread_submit") return f.multithread_submit;
   if (name == "bindless") return f.bindless;
+  if (name == "bindless_hot_path") return f.bindless_hot_path;
   if (name == "hdr_output") return f.hdr_output;
   if (name == "gpu_instancing") return f.gpu_instancing;
   if (name == "execute_indirect") return f.execute_indirect;

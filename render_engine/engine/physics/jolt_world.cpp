@@ -11,10 +11,15 @@
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
+#include <Jolt/Physics/SoftBody/SoftBodyMotionProperties.h>
+#include <Jolt/Physics/SoftBody/SoftBodySharedSettings.h>
 #include <Jolt/RegisterTypes.h>
 
+#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -142,6 +147,12 @@ class JoltWorld final : public IPhysicsWorld {
 
   ~JoltWorld() override {
     JPH::BodyInterface& bodies = physics_.GetBodyInterface();
+    for (JPH::BodyID id : soft_body_ids_) {
+      if (!id.IsInvalid()) {
+        bodies.RemoveBody(id);
+        bodies.DestroyBody(id);
+      }
+    }
     for (JPH::BodyID id : body_ids_) {
       if (!id.IsInvalid()) {
         bodies.RemoveBody(id);
@@ -277,6 +288,106 @@ class JoltWorld final : public IPhysicsWorld {
 
   const char* backend_name() const override { return "jolt"; }
 
+  int CreateSoftBody(const SoftBodyDesc& desc) override {
+    const int grid = std::clamp(desc.grid, 2, 16);
+    const float cell = desc.cell > 1e-4f ? desc.cell : 0.2f;
+
+    JPH::Ref<JPH::SoftBodySharedSettings> shared =
+        JPH::SoftBodySharedSettings::sCreateCube(static_cast<JPH::uint>(grid), cell);
+    if (shared == nullptr || shared->mVertices.empty()) {
+      return -1;
+    }
+
+    // Distribute total mass across free vertices (invMass > 0).
+    if (desc.mass > 0.f) {
+      JPH::uint free_count = 0;
+      for (const auto& v : shared->mVertices) {
+        if (v.mInvMass > 0.f) {
+          ++free_count;
+        }
+      }
+      if (free_count > 0) {
+        const float inv = static_cast<float>(free_count) / desc.mass;
+        for (auto& v : shared->mVertices) {
+          if (v.mInvMass > 0.f) {
+            v.mInvMass = inv;
+          }
+        }
+      }
+    }
+
+    JPH::SoftBodyCreationSettings settings(
+        shared, JPH::RVec3(desc.position.x, desc.position.y, desc.position.z),
+        JPH::Quat::sIdentity(), Layers::kMoving);
+    // Soft bodies are not in body_ids_; keep raycast user-data mapping unambiguous.
+    settings.mUserData = static_cast<JPH::uint64>(-2);
+
+    JPH::BodyInterface& bodies = physics_.GetBodyInterface();
+    const JPH::BodyID id = bodies.CreateAndAddSoftBody(settings, JPH::EActivation::Activate);
+    if (id.IsInvalid()) {
+      return -1;
+    }
+
+    std::vector<std::uint32_t> indices;
+    indices.reserve(shared->mFaces.size() * 3);
+    for (const auto& face : shared->mFaces) {
+      indices.push_back(face.mVertex[0]);
+      indices.push_back(face.mVertex[1]);
+      indices.push_back(face.mVertex[2]);
+    }
+
+    const int soft_id = static_cast<int>(soft_body_ids_.size());
+    soft_body_ids_.push_back(id);
+    soft_body_indices_.push_back(std::move(indices));
+    return soft_id;
+  }
+
+  bool SoftBodyGetVertices(int id, std::vector<Vec3>& out_world) override {
+    out_world.clear();
+    if (id < 0 || id >= static_cast<int>(soft_body_ids_.size())) {
+      return false;
+    }
+    const JPH::BodyID body_id = soft_body_ids_[static_cast<std::size_t>(id)];
+    JPH::BodyLockRead lock(physics_.GetBodyLockInterface(), body_id);
+    if (!lock.Succeeded()) {
+      return false;
+    }
+    const JPH::Body& body = lock.GetBody();
+    if (!body.IsSoftBody()) {
+      return false;
+    }
+    const auto* mp =
+        static_cast<const JPH::SoftBodyMotionProperties*>(body.GetMotionProperties());
+    if (mp == nullptr) {
+      return false;
+    }
+    const JPH::RMat44 com = body.GetCenterOfMassTransform();
+    const auto& verts = mp->GetVertices();
+    out_world.reserve(verts.size());
+    for (const auto& v : verts) {
+      const JPH::RVec3 p = com * v.mPosition;
+      out_world.push_back({static_cast<float>(p.GetX()), static_cast<float>(p.GetY()),
+                           static_cast<float>(p.GetZ())});
+    }
+    return !out_world.empty();
+  }
+
+  int SoftBodyGetIndexCount(int id) const override {
+    if (id < 0 || id >= static_cast<int>(soft_body_indices_.size())) {
+      return 0;
+    }
+    return static_cast<int>(soft_body_indices_[static_cast<std::size_t>(id)].size());
+  }
+
+  bool SoftBodyGetIndices(int id, std::vector<std::uint32_t>& out) override {
+    out.clear();
+    if (id < 0 || id >= static_cast<int>(soft_body_indices_.size())) {
+      return false;
+    }
+    out = soft_body_indices_[static_cast<std::size_t>(id)];
+    return !out.empty();
+  }
+
  private:
   BPLayerInterfaceImpl broadphase_layers_;
   ObjectVsBroadPhaseLayerFilterImpl object_vs_broadphase_;
@@ -286,6 +397,8 @@ class JoltWorld final : public IPhysicsWorld {
   std::unique_ptr<JPH::JobSystemSingleThreaded> job_system_;
   std::vector<JPH::BodyID> body_ids_;
   std::vector<Vec3> half_extents_;
+  std::vector<JPH::BodyID> soft_body_ids_;
+  std::vector<std::vector<std::uint32_t>> soft_body_indices_;
   JPH::BodyID floor_id_;
 };
 

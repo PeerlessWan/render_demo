@@ -181,14 +181,18 @@ class D3D12Device final : public IDevice {
     if (enable_hdr_output_) {
       TryEnableDisplayHdr();
     }
-    // Bindless Feature 最小路径：ResourceBindingTier>=2 时可查询；采样走 CBV_SRV_UAV 堆槽。
+    // Bindless capability Feature: ResourceBindingTier>=2 → QueryFeature("bindless").
+    // Hot-path albedo via ResourceDescriptorHeap stays OFF by default (pad=-1 classic
+    // t1/t4) so golden/C4 do not drift. Opt-in: SetFeatureOverride("bindless_hot_path", true)
+    // when capable and not gpu_headless (see BindlessAlbedoHeapPad).
     {
       D3D12_FEATURE_DATA_D3D12_OPTIONS opts{};
       if (SUCCEEDED(device_->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &opts, sizeof(opts))) &&
           opts.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_2) {
         bindless_capable_ = true;
         engine::SetFeatureOverride("bindless", true);
-        LogInfo("D3D12 bindless Feature path enabled (ResourceBindingTier>=2)");
+        LogInfo("D3D12 bindless Feature path enabled (ResourceBindingTier>=2); "
+                "bindless_hot_path default OFF (classic pad=-1)");
       } else {
         bindless_capable_ = false;
         LogWarn("D3D12 bindless SKIP (ResourceBindingTier < 2)");
@@ -495,6 +499,7 @@ class D3D12Device final : public IDevice {
     engine::SetFeatureOverride("bindless", true);
     // 最小采样路径证明：对 CBV_SRV_UAV 堆做按槽偏移的 GPU handle（索引式 SRV）。
     // 不在此写入 command list（可在 Init 阶段安全调用）；热路径 DrawLit 已绑定同一堆。
+    // Does NOT enable bindless_hot_path — that stays Feature-gated / default OFF.
     ID3D12DescriptorHeap* heap = shadow_srv_heap_ ? shadow_srv_heap_.Get() : srv_heap_.Get();
     if (!heap) {
       return Status::Ok();  // Feature 已可查询；堆在 lit setup 后出现
@@ -505,6 +510,18 @@ class D3D12Device final : public IDevice {
     gpu.ptr += static_cast<SIZE_T>(srv_heap_slot) * static_cast<SIZE_T>(incr);
     bindless_probe_gpu_ptr_ = gpu.ptr;
     return Status::Ok();
+  }
+
+  // Albedo heap index for SM6.6 ResourceDescriptorHeap when bindless_hot_path is on.
+  // Matches classic registers: tex_slot==0 → t1 (slot 1), else → t4 (slot 4).
+  // Early auto-wave used pad=1 for all draws → tex_slot>0 sampled wrong albedo → golden RMSE.
+  // Conditions to apply: bindless_capable_ && QueryFeature("bindless_hot_path") && !gpu_headless_.
+  // Otherwise return -1 (classic path).
+  float BindlessAlbedoHeapPad(float tex_slot) const {
+    if (!bindless_capable_ || gpu_headless_ || !engine::QueryFeature("bindless_hot_path")) {
+      return -1.f;
+    }
+    return tex_slot > 0.5f ? 4.f : 1.f;
   }
 
   Status SetSubmitConfig(const SubmitConfig& cfg) override {
@@ -910,16 +927,24 @@ class D3D12Device final : public IDevice {
       return shadow_ps.status();
     }
 
-    // Lit root: CBV b0, CBV b1, table t0..t8 (pixel), root SRV t9 (instances VS).
+    // Lit root: CBV b0, CBV b1, table t0..t8 + t10 (pixel), root SRV t9 (instances VS).
+    // t6 = IBL specular prefilter; t10 = reflection probe (independent resources).
     // SM 6.6 ResourceDescriptorHeap needs Root Signature 1.1 + DIRECTLY_INDEXED.
     // CBV/SRV data is rewritten every frame (UPLOAD + shadow maps) → must NOT use DATA_STATIC.
-    D3D12_DESCRIPTOR_RANGE1 srv_range{};
-    srv_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    srv_range.NumDescriptors = 9;
-    srv_range.BaseShaderRegister = 0;
-    srv_range.RegisterSpace = 0;
-    srv_range.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
-    srv_range.OffsetInDescriptorsFromTableStart = 0;
+    // Two ranges so t9 stays a root SRV (no overlap with the descriptor table).
+    D3D12_DESCRIPTOR_RANGE1 srv_ranges[2]{};
+    srv_ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    srv_ranges[0].NumDescriptors = 9;  // t0..t8
+    srv_ranges[0].BaseShaderRegister = 0;
+    srv_ranges[0].RegisterSpace = 0;
+    srv_ranges[0].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
+    srv_ranges[0].OffsetInDescriptorsFromTableStart = 0;
+    srv_ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    srv_ranges[1].NumDescriptors = 1;  // t10 reflection probe
+    srv_ranges[1].BaseShaderRegister = 10;
+    srv_ranges[1].RegisterSpace = 0;
+    srv_ranges[1].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
+    srv_ranges[1].OffsetInDescriptorsFromTableStart = 10;
 
     D3D12_ROOT_PARAMETER1 lit_params[4]{};
     lit_params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -932,8 +957,8 @@ class D3D12Device final : public IDevice {
     lit_params[1].Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
     lit_params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     lit_params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-    lit_params[2].DescriptorTable.NumDescriptorRanges = 1;
-    lit_params[2].DescriptorTable.pDescriptorRanges = &srv_range;
+    lit_params[2].DescriptorTable.NumDescriptorRanges = 2;
+    lit_params[2].DescriptorTable.pDescriptorRanges = srv_ranges;
     lit_params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     lit_params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
     lit_params[3].Descriptor.ShaderRegister = 9;
@@ -1648,9 +1673,9 @@ class D3D12Device final : public IDevice {
       od.tex_slot = static_cast<float>(items[i].tex_slot);
       od.uv_scale = items[i].uv_scale > 0.f ? items[i].uv_scale : 1.f;
       od.use_instances = 0.f;
-      // Auto-wave tried single-draw bindless (pad=1) — sandbox golden RMSE drifted; keep classic.
-      // ResourceDescriptorHeap path remains in PS for Feature probe / future enable.
-      od.pad = -1.f;
+      // Default classic (pad=-1). Feature bindless_hot_path + capable + !headless →
+      // ResourceDescriptorHeap[tex_slot?4:1]. Hardcoded pad=1 previously drifted golden.
+      od.pad = BindlessAlbedoHeapPad(od.tex_slot);
 
       const auto offset = ObjectCbOffset(i);
       void* ptr = nullptr;
@@ -1778,6 +1803,7 @@ class D3D12Device final : public IDevice {
     od.tex_slot = static_cast<float>(prototype.tex_slot);
     od.uv_scale = prototype.uv_scale > 0.f ? prototype.uv_scale : 1.f;
     od.use_instances = 1.f;
+    // Instanced path stays classic; bindless_hot_path is opaque DrawLit only.
     od.pad = -1.f;
 
     const auto offset = ObjectCbOffset(kMaxLitDraws - 1);  // dedicated late/instanced slot
@@ -2006,7 +2032,7 @@ class D3D12Device final : public IDevice {
         od.tex_slot = static_cast<float>(items[i].tex_slot);
         od.uv_scale = items[i].uv_scale > 0.f ? items[i].uv_scale : 1.f;
         od.use_instances = 0.f;
-        od.pad = -1.f;  // classic t1/t4; bindless uses pad>=0 only on opaque path
+        od.pad = -1.f;  // probe faces: classic only (no bindless_hot_path)
         const auto offset = ObjectCbOffset(i);
         void* ptr = nullptr;
         if (FAILED(object_cb_->Map(0, nullptr, &ptr))) {
@@ -2043,7 +2069,7 @@ class D3D12Device final : public IDevice {
                  D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
       reflection_cube_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     }
-    if (auto st = BindCubeSrv(6, reflection_cube_.Get()); !st) {
+    if (auto st = BindCubeSrv(10, reflection_cube_.Get()); !st) {
       return st;
     }
     if (auto st = SetFrameLighting(saved); !st) {
@@ -3044,7 +3070,7 @@ class D3D12Device final : public IDevice {
     }
 
     D3D12_DESCRIPTOR_HEAP_DESC srv_heap{};
-    srv_heap.NumDescriptors = 16;  // t0..t8 + bindless-friendly room
+    srv_heap.NumDescriptors = 16;  // t0..t8 + t10 probe + bindless-friendly room
     srv_heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     srv_heap.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     hr = device_->CreateDescriptorHeap(&srv_heap, IID_PPV_ARGS(&shadow_srv_heap_));
@@ -3304,7 +3330,7 @@ class D3D12Device final : public IDevice {
   }
 
   Status BindReflectionCubeSrv() {
-    return BindCubeSrv(6, reflection_cube_.Get());
+    return BindCubeSrv(10, reflection_cube_.Get());
   }
 
   Status EnsureDefaultReflectionCubemap() {
@@ -3326,6 +3352,9 @@ class D3D12Device final : public IDevice {
     if (auto st = UploadReflectionCubemap(faces.data(), kFace); !st) {
       return st;
     }
+    if (auto st = UploadIblPrefilterCubemap(faces.data(), kFace); !st) {
+      return st;
+    }
     if (auto st = UploadIblIrradianceCubemap(faces.data(), kFace); !st) {
       return st;
     }
@@ -3343,7 +3372,9 @@ class D3D12Device final : public IDevice {
     if (auto st = UploadCubemapResource(reflection_cube_, rgba_faces, face_size); !st) {
       return st;
     }
-    return BindCubeSrv(6, reflection_cube_.Get());
+    reflection_cube_state_ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    probe_cube_size_ = face_size;
+    return BindCubeSrv(10, reflection_cube_.Get());
   }
 
   Status BindCubeSrv(UINT slot, ID3D12Resource* cube) {
@@ -3362,7 +3393,7 @@ class D3D12Device final : public IDevice {
   }
 
   Status UploadIblIrradianceCubemap(const std::uint8_t* rgba_faces, int face_size) override {
-    // Store as dedicated irradiance cube at t7; also keep reflection default.
+    // Dedicated irradiance cube at t7.
     if (auto st = UploadCubemapResource(ibl_irradiance_, rgba_faces, face_size); !st) {
       return st;
     }
@@ -3370,10 +3401,11 @@ class D3D12Device final : public IDevice {
   }
 
   Status UploadIblPrefilterCubemap(const std::uint8_t* rgba_faces, int face_size) override {
-    if (auto st = UploadCubemapResource(reflection_cube_, rgba_faces, face_size); !st) {
+    // Dedicated specular prefilter at t6 (independent of reflection probe t10).
+    if (auto st = UploadCubemapResource(ibl_prefilter_, rgba_faces, face_size); !st) {
       return st;
     }
-    return BindCubeSrv(6, reflection_cube_.Get());
+    return BindCubeSrv(6, ibl_prefilter_.Get());
   }
 
   Status UploadIblBrdfLut(const std::uint8_t* rgba, int w, int h) override {
@@ -4625,8 +4657,9 @@ class D3D12Device final : public IDevice {
   ComPtr<ID3D12Resource> lit_orm_;
   ComPtr<ID3D12Resource> lit_albedo2_;
   ComPtr<ID3D12Resource> lit_orm2_;
-  ComPtr<ID3D12Resource> reflection_cube_;
-  ComPtr<ID3D12Resource> ibl_irradiance_;
+  ComPtr<ID3D12Resource> reflection_cube_;   // t10 Fresnel / local probe
+  ComPtr<ID3D12Resource> ibl_prefilter_;     // t6 IBL specular prefilter
+  ComPtr<ID3D12Resource> ibl_irradiance_;    // t7
   ComPtr<ID3D12RootSignature> sky_root_;
   ComPtr<ID3D12PipelineState> sky_pso_;
   ComPtr<ID3D12DescriptorHeap> sky_srv_heap_;

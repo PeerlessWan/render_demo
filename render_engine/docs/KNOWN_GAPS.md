@@ -18,8 +18,8 @@
 
 | ID | 缺口 | 状态 | 里程碑 |
 |---|---|---|---|
-| G01 | 跨后端（VK） | **Win 对标加深**：真读回 + post **采样** `scene_color`；局部影 atlas **compare 采样**（`enable_local_shadow`） | M17 |
-| G18 | Mesh Shader / GPU Driven | **Cull CS → IndirectArgs + compact indices UAV + ExecuteIndirect**；Bindless PS 路径在，热路径仍 `g_pad=-1`（试开黄金图漂） | M24 |
+| G01 | 跨后端（VK） | **Win 双后端 100% 收口**（见 [VULKAN_PARITY.md](VULKAN_PARITY.md)）：全栈 post、GPU 实例/Cull/Indirect、探针/IBL 分槽；Linux 仍外置 | M17 |
+| G18 | Mesh Shader / GPU Driven | **Cull/Indirect 两端可用**；Bindless 热路径 Feature `bindless_hot_path`（默认 OFF 保黄金图）；VK bindless SKIP | M24 |
 | G19 | Linux | **文档占位 / 外置** | M18 |
 | G02–G04、G11 | 混合打磨 / 拣选 / 多 DPI | **可用加深** | M20 |
 | G05–G10、G12 | 2D 深度 | **可用加深** | M21 |
@@ -79,7 +79,7 @@
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| **C22** | **薄 SoftBody / Cloth** | 经 `IPhysicsWorld` + Jolt；读回顶点 + Demo；**非**服装管线/破坏/轮胎；[ADR 0029](learn/adr/0029-physics-softbody-boundary.md) | 中（看板 **W-phys-soft**） |
+| **C22** | **薄 SoftBody / Cloth** | **已落地**：`IPhysicsWorld` + Jolt + Sandbox DebugDraw；builtin SKIP；[ADR 0029](learn/adr/0029-physics-softbody-boundary.md) | 已收口（看板 W-phys-soft） |
 
 ### 4.4 2D / 文本 / 矢量
 
@@ -112,8 +112,8 @@
 
 1. 单项进入计划前必须：**验收标准 + Feature/L0–L2 归属 + 双后端策略**（宿主类可标「引擎外」）。  
 2. 默认仍遵守：不做 mac/移动、不做完整编辑器进 `engine/`、不做玩法/同步进引擎、不做音频 DSP。  
-3. C01/C02/C10/G13 若要做，建议优先于 C06/C18；**C22 薄 SoftBody** 可与 GI 加深穿插，但次于近端 VK 债。  
-4. 脚本/编辑器优先走 **HOSTING 外挂**；C19–C21 立项不得默认同步改 POSITIONING。  
+3. C01/C02/C10/G13 若要做，建议优先于 C06/C18。  
+4. 脚本/编辑器优先走 **HOSTING 外挂**；C19–C21 立项不得默认同步改 POSITIONING。**Win 双后端 100%**（含薄 SoftBody）已按 [VULKAN_PARITY.md](VULKAN_PARITY.md) 收口；下一批优先 Linux/大气等口径外项。  
 5. **服装级**布料编辑/穿戴/撕裂资产流 **不进** `engine/`（与 C22 区分）。
 
 ## 5. 明确范围外（不做）
