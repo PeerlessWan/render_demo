@@ -63,52 +63,51 @@ Mat4 CascadedShadowMap::FitLightMatrix(const Vec3& light_dir, const std::array<V
   if (std::fabs(Dot(dir, up)) > 0.95f) {
     up = Vec3{0.f, 0.f, 1.f};
   }
-  const float radius =
-      std::max({(corners[0] - center).length(), (corners[1] - center).length(),
-                (corners[2] - center).length(), (corners[3] - center).length(),
-                (corners[4] - center).length(), (corners[5] - center).length(),
-                (corners[6] - center).length(), (corners[7] - center).length()}) +
-      1.f;
-  const Vec3 eye = center - dir * (radius + 20.f);
-  const Mat4 light_view = Mat4::LookAt(eye, center, up);
 
-  Vec3 bmin{1e9f, 1e9f, 1e9f};
-  Vec3 bmax{-1e9f, -1e9f, -1e9f};
+  float radius = 0.f;
+  for (const auto& c : corners) {
+    radius = std::max(radius, (c - center).length());
+  }
+  // Fixed sphere extent stops XY bounds from crawling when the camera turns.
+  radius = std::max(radius + 1.f, 8.f);
+  const float extent = radius;
+
+  // Pull the light back along -dir; depth range covers casters behind the slice.
+  const float z_pull = extent + 20.f;
+  Vec3 eye = center - dir * z_pull;
+  Mat4 light_view = Mat4::LookAt(eye, center, up);
+
+  // Texel-snap the sphere center in light space so the shadow map doesn't shimmer
+  // when the camera (and thus the cascade sphere) moves.
+  const float res = static_cast<float>(std::max(map_resolution, 1));
+  const float units_per_texel = (extent * 2.f) / res;
+  if (units_per_texel > 1e-6f) {
+    const Vec3 center_ls = light_view.TransformPoint(center);
+    const float snap_x = std::floor(center_ls.x / units_per_texel + 0.5f) * units_per_texel;
+    const float snap_y = std::floor(center_ls.y / units_per_texel + 0.5f) * units_per_texel;
+    const float dx = snap_x - center_ls.x;
+    const float dy = snap_y - center_ls.y;
+    // Match Mat4::LookAt basis: s=Cross(f,up), u=Cross(s,f), f=dir.
+    const Vec3 s = Normalize(Cross(dir, up));
+    const Vec3 u = Cross(s, dir);
+    center = center + s * dx + u * dy;
+    eye = center - dir * z_pull;
+    light_view = Mat4::LookAt(eye, center, up);
+  }
+
+  // Depth: cover casters beyond the sphere (stable Z range in light space).
+  float z_min = 1e9f;
+  float z_max = -1e9f;
   for (const auto& c : corners) {
     const Vec3 lp = light_view.TransformPoint(c);
-    bmin.x = std::min(bmin.x, lp.x);
-    bmin.y = std::min(bmin.y, lp.y);
-    bmin.z = std::min(bmin.z, lp.z);
-    bmax.x = std::max(bmax.x, lp.x);
-    bmax.y = std::max(bmax.y, lp.y);
-    bmax.z = std::max(bmax.z, lp.z);
+    z_min = std::min(z_min, lp.z);
+    z_max = std::max(z_max, lp.z);
   }
-
-  // Expand XY so the whole playground ground stays covered when the camera turns.
-  const float pad = (std::max)(radius * 0.55f, 8.f);
-  bmin.x -= pad;
-  bmax.x += pad;
-  bmin.y -= pad;
-  bmax.y += pad;
-  // Expand Z so casters behind the slice still contribute.
-  bmin.z -= radius * 1.0f + 10.f;
-  bmax.z += radius * 0.5f + 4.f;
-
-  // Texel snap to reduce shimmer.
-  const float res = static_cast<float>(std::max(map_resolution, 1));
-  const float world_units_per_texel_x = (bmax.x - bmin.x) / res;
-  const float world_units_per_texel_y = (bmax.y - bmin.y) / res;
-  if (world_units_per_texel_x > 1e-6f) {
-    bmin.x = std::floor(bmin.x / world_units_per_texel_x) * world_units_per_texel_x;
-    bmax.x = std::floor(bmax.x / world_units_per_texel_x) * world_units_per_texel_x;
-  }
-  if (world_units_per_texel_y > 1e-6f) {
-    bmin.y = std::floor(bmin.y / world_units_per_texel_y) * world_units_per_texel_y;
-    bmax.y = std::floor(bmax.y / world_units_per_texel_y) * world_units_per_texel_y;
-  }
+  z_min -= extent * 1.0f + 10.f;
+  z_max += extent * 0.5f + 4.f;
 
   const Mat4 light_proj =
-      Mat4::Orthographic(bmin.x, bmax.x, bmin.y, bmax.y, bmin.z, bmax.z);
+      Mat4::Orthographic(-extent, extent, -extent, extent, z_min, z_max);
   return light_proj * light_view;
 }
 

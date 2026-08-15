@@ -75,6 +75,7 @@ class D3D12Device final : public IDevice {
     width_ = desc.width;
     height_ = desc.height;
     adapter_index_ = desc.adapter_index;
+    vsync_ = desc.enable_vsync;
 
 #if defined(_DEBUG)
     {
@@ -231,6 +232,9 @@ class D3D12Device final : public IDevice {
   }
 
   [[nodiscard]] bool is_headless() const override { return gpu_headless_; }
+
+  void SetVSync(bool enabled) override { vsync_ = enabled; }
+  [[nodiscard]] bool vsync() const override { return vsync_; }
 
   UINT CurrentBbIndex() const {
     if (gpu_headless_ || !swapchain_) {
@@ -764,7 +768,12 @@ class D3D12Device final : public IDevice {
     queue_->ExecuteCommandLists(1, lists);
 
     if (!gpu_headless_) {
-      const HRESULT hr = swapchain_->Present(1, 0);
+      UINT sync = vsync_ ? 1u : 0u;
+      UINT flags = 0;
+      if (!vsync_ && allow_tearing_) {
+        flags = DXGI_PRESENT_ALLOW_TEARING;
+      }
+      const HRESULT hr = swapchain_->Present(sync, flags);
       if (FAILED(hr)) {
         std::string msg = "Present failed: " + HrToString(hr);
         if (device_) {
@@ -4017,6 +4026,13 @@ class D3D12Device final : public IDevice {
   }
 
   Status CreateSwapchain() {
+    allow_tearing_ = false;
+    BOOL allow = FALSE;
+    if (SUCCEEDED(factory_->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allow,
+                                                  sizeof(allow)))) {
+      allow_tearing_ = allow == TRUE;
+    }
+
     DXGI_SWAP_CHAIN_DESC1 scd{};
     scd.Width = width_;
     scd.Height = height_;
@@ -4025,6 +4041,9 @@ class D3D12Device final : public IDevice {
     scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     scd.BufferCount = kFrameCount;
     scd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    if (allow_tearing_) {
+      scd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+    }
 
     ComPtr<IDXGISwapChain1> swap1;
     HRESULT hr =
@@ -4037,6 +4056,8 @@ class D3D12Device final : public IDevice {
     if (FAILED(hr)) {
       return Status::Fail("QueryInterface IDXGISwapChain3 failed");
     }
+    LogInfo(std::string("D3D12 vsync=") + (vsync_ ? "on" : "off") +
+            (allow_tearing_ ? " (tearing OK)" : ""));
     return Status::Ok();
   }
 
@@ -4619,6 +4640,8 @@ class D3D12Device final : public IDevice {
   std::uint32_t height_ = 0;
   bool gpu_headless_ = false;
   int adapter_index_ = -1;
+  bool vsync_ = false;
+  bool allow_tearing_ = false;
   bool enable_hdr_output_ = false;
   bool bindless_capable_ = false;
   SIZE_T bindless_probe_gpu_ptr_ = 0;

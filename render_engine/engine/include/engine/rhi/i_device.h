@@ -27,6 +27,8 @@ struct DeviceDesc {
   bool enable_validation = false;
   // GPU adapter index from EnumerateGpuAdapters. -1 = auto (high-performance / discrete).
   int adapter_index = -1;
+  // Vertical sync. false = uncapped (D3D Present(0)+tearing when available; VK MAILBOX/IMMEDIATE).
+  bool enable_vsync = false;
 };
 
 struct GpuAdapterInfo {
@@ -206,6 +208,10 @@ class IDevice {
   virtual Status Present() = 0;
   virtual Status Resize(std::uint32_t width, std::uint32_t height) = 0;
   virtual Status SetupSimpleMesh(const SimpleMeshShaders& shaders) = 0;
+
+  // Vertical sync (default on for D3D Present(1); Sandbox may turn off for uncapped FPS).
+  virtual void SetVSync(bool enabled) { (void)enabled; }
+  [[nodiscard]] virtual bool vsync() const { return true; }
 
   virtual Status SetupLitMesh(const LitMeshShaders& shaders) = 0;
   virtual Status SetFrameLighting(const FrameLighting& lighting) = 0;

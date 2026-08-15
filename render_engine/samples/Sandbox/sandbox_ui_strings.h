@@ -32,6 +32,7 @@ struct SandboxUiStrings {
   const char* auto_exposure;
   const char* bloom;
   const char* fog;
+  const char* vsync;
   const char* sun_intensity;
   const char* ambient_scale;
   const char* exposure;
@@ -94,6 +95,7 @@ inline const SandboxUiStrings& SandboxUi(SandboxUiLang lang) {
       "AutoExposure",
       "Bloom",
       "Fog",
+      "VSync",
       "Sun intensity",
       "Ambient scale",
       "Exposure",
@@ -154,6 +156,7 @@ inline const SandboxUiStrings& SandboxUi(SandboxUiLang lang) {
       "自动曝光",
       "Bloom 光晕",
       "雾",
+      "垂直同步",
       "太阳强度",
       "环境光倍率",
       "曝光",

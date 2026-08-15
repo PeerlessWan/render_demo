@@ -204,6 +204,7 @@ class VulkanDevice final : public IDevice {
     height_ = desc.height;
     adapter_index_ = desc.adapter_index;
     enable_validation_ = desc.enable_validation;
+    vsync_ = desc.enable_vsync;
     if (const char* v = std::getenv("ENGINE_ENABLE_VALIDATION"); v && v[0] == '1') {
       enable_validation_ = true;
     }
@@ -276,7 +277,24 @@ class VulkanDevice final : public IDevice {
   [[nodiscard]] std::uint32_t width() const override { return width_; }
   [[nodiscard]] std::uint32_t height() const override { return height_; }
 
+  void SetVSync(bool enabled) override {
+    if (vsync_ == enabled) {
+      return;
+    }
+    vsync_ = enabled;
+    vsync_dirty_ = true;
+  }
+  [[nodiscard]] bool vsync() const override { return vsync_; }
+
   Status BeginFrame() override {
+    if (vsync_dirty_ && device_ != VK_NULL_HANDLE && swapchain_ != VK_NULL_HANDLE) {
+      vsync_dirty_ = false;
+      if (auto st = RecreateSwapchain(); !st) {
+        LogWarn(std::string("Vulkan vsync swapchain recreate failed: ") + st.message());
+      } else {
+        LogInfo(std::string("Vulkan vsync=") + (vsync_ ? "on" : "off"));
+      }
+    }
     // Shadow atlas + lit UBs are shared across frames-in-flight. Wait for every
     // slot before recording so a previous frame cannot sample while this frame
     // clears the atlas (low-frequency flicker with Shadows on).
@@ -3864,24 +3882,30 @@ class VulkanDevice final : public IDevice {
     std::vector<VkPresentModeKHR> modes(present_count);
     vkGetPhysicalDeviceSurfacePresentModesKHR(physical_, surface_, &present_count, modes.data());
     VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
-    for (auto m : modes) {
-      if (m == VK_PRESENT_MODE_MAILBOX_KHR) {
-        present_mode = m;
-        break;
-      }
-    }
-    if (present_mode == VK_PRESENT_MODE_FIFO_KHR) {
+    if (vsync_) {
+      present_mode = VK_PRESENT_MODE_FIFO_KHR;
+    } else {
+      present_mode = VK_PRESENT_MODE_FIFO_KHR;
       for (auto m : modes) {
-        if (m == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+        if (m == VK_PRESENT_MODE_MAILBOX_KHR) {
           present_mode = m;
           break;
+        }
+      }
+      if (present_mode == VK_PRESENT_MODE_FIFO_KHR) {
+        for (auto m : modes) {
+          if (m == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+            present_mode = m;
+            break;
+          }
         }
       }
     }
     LogInfo(std::string("Vulkan presentMode=") +
             (present_mode == VK_PRESENT_MODE_MAILBOX_KHR
                  ? "MAILBOX"
-                 : present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR ? "IMMEDIATE" : "FIFO"));
+                 : present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR ? "IMMEDIATE" : "FIFO") +
+            (vsync_ ? " (vsync)" : " (uncapped)"));
 
     VkExtent2D extent{};
     if (caps.currentExtent.width != UINT32_MAX) {
@@ -6293,6 +6317,8 @@ class VulkanDevice final : public IDevice {
   bool lit_ready_ = false;
   bool enable_validation_ = false;
   int adapter_index_ = -1;
+  bool vsync_ = false;
+  bool vsync_dirty_ = false;
   bool post_stub_ready_ = false;
   bool post_resolve_warned_ = false;
   bool ibl_upload_logged_ = false;

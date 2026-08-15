@@ -208,6 +208,10 @@ int main(int argc, char** argv) {
       desc.adapter_index = std::atoi(arg.c_str() + 6);
     } else if (arg == "--gpu" && i + 1 < argc) {
       desc.adapter_index = std::atoi(argv[++i]);
+    } else if (arg == "--vsync" || arg == "--vsync=1" || arg == "--vsync=on") {
+      desc.enable_vsync = true;
+    } else if (arg == "--vsync=0" || arg == "--vsync=off" || arg == "--no-vsync") {
+      desc.enable_vsync = false;
     } else if (arg == "--harness-stdio" || arg == "--mcp") {
       harness_stdio = true;
       desc.gpu_headless = true;
@@ -814,6 +818,7 @@ int main(int argc, char** argv) {
 
   bool panel_open = true;
   bool profiler_open = true;
+  bool enable_vsync = desc.enable_vsync;
   int ui_lang_i = static_cast<int>(SandboxUiLang::Zh);
   // Prefer OS UI language when English; otherwise default Chinese for Win target users.
   if (PRIMARYLANGID(LANGIDFROMLCID(GetUserDefaultLCID())) == LANG_ENGLISH) {
@@ -996,6 +1001,9 @@ int main(int argc, char** argv) {
           imgui.Checkbox(Su.auto_exposure, &fx.enable_auto_exposure);
           imgui.Checkbox(Su.bloom, &fx.enable_bloom);
           imgui.Checkbox(Su.fog, &fx.enable_fog);
+          if (imgui.Checkbox(Su.vsync, &enable_vsync)) {
+            app_ref.device().SetVSync(enable_vsync);
+          }
           imgui.Separator();
           imgui.SliderFloat(Su.sun_intensity, &fx.sun_intensity, 0.f, 10.f);
           imgui.SliderFloat(Su.ambient_scale, &fx.ambient_scale, 0.f, 3.f);

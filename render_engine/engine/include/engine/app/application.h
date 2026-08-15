@@ -33,6 +33,8 @@ struct ApplicationDesc {
   bool enable_validation = false;  // C1: prefer API validation layers
   // GPU adapter index (-1 = auto high-performance / discrete). See --gpu=N.
   int adapter_index = -1;
+  // Vertical sync (Sandbox may override at runtime via IDevice::SetVSync).
+  bool enable_vsync = false;
 };
 
 class Application {
