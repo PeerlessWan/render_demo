@@ -71,12 +71,14 @@ Status ImmediateUi::Init(rhi::IDevice& device, const ImmediateUiDesc& desc) {
   style.FrameRounding = 4.f;
 
   // Bake Latin + Simplified Chinese once (language switch only swaps string pointers).
+  // Use Full ranges — Common misses Sandbox UI chars (晕/域/拽/锯/齿/幂/缺…).
   const float font_size = desc.ui_font_size > 1.f ? desc.ui_font_size : 18.f;
   ImFontConfig font_cfg{};
   font_cfg.OversampleH = 2;
   font_cfg.OversampleV = 1;
   font_cfg.PixelSnapH = true;
-  const ImWchar* cjk_ranges = io.Fonts->GetGlyphRangesChineseSimplifiedCommon();
+  font_cfg.FontNo = 0;  // first face in TTC (e.g. msyh.ttc)
+  const ImWchar* cjk_ranges = io.Fonts->GetGlyphRangesChineseFull();
   auto try_add_font = [&](const std::filesystem::path& path) -> bool {
     if (path.empty()) {
       return false;

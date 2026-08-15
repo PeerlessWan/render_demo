@@ -27,6 +27,7 @@
 #include "engine/ui/immediate_ui.h"
 #include "engine/ui/rml_ui.h"
 #include "engine/vfx/particles.h"
+#include "engine/rhi/backend.h"
 
 #include "sandbox_ui_strings.h"
 
@@ -174,6 +175,7 @@ int main(int argc, char** argv) {
   bool use_vulkan = false;
   bool gpu_headless_assert = false;
   bool harness_stdio = false;
+  bool list_gpus = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i] ? argv[i] : "";
     if (arg == "--headless") {
@@ -200,6 +202,12 @@ int main(int argc, char** argv) {
     } else if (arg == "--backend=d3d12") {
       desc.backend = engine::rhi::Backend::D3D12;
       use_vulkan = false;
+    } else if (arg == "--list-gpus") {
+      list_gpus = true;
+    } else if (arg.rfind("--gpu=", 0) == 0) {
+      desc.adapter_index = std::atoi(arg.c_str() + 6);
+    } else if (arg == "--gpu" && i + 1 < argc) {
+      desc.adapter_index = std::atoi(argv[++i]);
     } else if (arg == "--harness-stdio" || arg == "--mcp") {
       harness_stdio = true;
       desc.gpu_headless = true;
@@ -210,6 +218,26 @@ int main(int argc, char** argv) {
     } else if (arg.rfind("--frames=", 0) == 0) {
       desc.headless_frames = std::atoi(arg.c_str() + 9);
     }
+  }
+
+  if (list_gpus) {
+    const auto backend =
+        use_vulkan ? engine::rhi::Backend::Vulkan : engine::rhi::Backend::D3D12;
+    std::cout << (use_vulkan ? "Vulkan" : "D3D12") << " adapters:\n";
+    const auto adapters = engine::rhi::EnumerateGpuAdapters(backend);
+    if (adapters.empty()) {
+      std::cout << "  (none)\n";
+      return 1;
+    }
+    for (const auto& a : adapters) {
+      std::cout << "  [" << a.index << "] " << a.name
+                << (a.discrete ? "  (discrete)" : "")
+                << (a.software ? "  (software)" : "") << "  vram≈"
+                << (a.dedicated_memory_bytes / (1024ull * 1024ull)) << " MB\n";
+    }
+    std::cout << "Use: sample_sandbox.exe --backend=" << (use_vulkan ? "vulkan" : "d3d12")
+              << " --gpu=N\n";
+    return 0;
   }
 
   auto app = engine::Application::Create(desc);
@@ -504,7 +532,9 @@ int main(int argc, char** argv) {
   fx.ambient_scale = 1.05f;
   fx.exposure = use_vulkan ? 1.f : 1.0f;
   fx.enable_ssao = rdesc.quality.enable_ssao;
-  fx.enable_taa = rdesc.quality.enable_taa;
+  // Default TAA off: Halton lit jitter reads as whole-screen shake when history is weak.
+  // Opt-in via Effects panel (still available on both backends).
+  fx.enable_taa = false;
   fx.enable_ssr = rdesc.quality.enable_ssr;
   fx.enable_bloom = false;  // Bloom turns the horizon band into a floating white slab on LDR.
   fx.bloom_threshold = 1.1f;
@@ -986,38 +1016,24 @@ int main(int argc, char** argv) {
           imgui.SliderFloat(Su.reflection_intensity, &fx.reflection_intensity, 0.f, 1.5f);
           imgui.SliderInt(Su.shadow_cascades, &fx.shadow_cascades, 1, 4);
           imgui.Separator();
-          if (imgui.Button(Su.quality_low, 90.f, 0.f)) {
-            const auto q =
-                engine::render::QualitySettings::FromTier(engine::render::QualityTier::Low);
+          auto apply_quality_tier = [&](engine::render::QualityTier tier) {
+            const auto q = engine::render::QualitySettings::FromTier(tier);
             fx.shadow_cascades = q.shadow_cascades;
             fx.enable_ssao = q.enable_ssao;
-            fx.enable_taa = q.enable_taa;
+            // Keep TAA as user checkbox; tier High enabling it causes Halton shake.
             fx.enable_ssr = q.enable_ssr;
-            fx.enable_bloom = q.enable_bloom;
+            fx.enable_bloom = false;
             render.set_quality(q);
             render.set_effect_tuning(fx);
+          };
+          if (imgui.Button(Su.quality_low, 90.f, 0.f)) {
+            apply_quality_tier(engine::render::QualityTier::Low);
           }
           if (imgui.Button(Su.quality_med, 90.f, 0.f)) {
-            const auto q =
-                engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
-            fx.shadow_cascades = q.shadow_cascades;
-            fx.enable_ssao = q.enable_ssao;
-            fx.enable_taa = q.enable_taa;
-            fx.enable_ssr = q.enable_ssr;
-            fx.enable_bloom = q.enable_bloom;
-            render.set_quality(q);
-            render.set_effect_tuning(fx);
+            apply_quality_tier(engine::render::QualityTier::Medium);
           }
           if (imgui.Button(Su.quality_high, 90.f, 0.f)) {
-            const auto q =
-                engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
-            fx.shadow_cascades = q.shadow_cascades;
-            fx.enable_ssao = q.enable_ssao;
-            fx.enable_taa = q.enable_taa;
-            fx.enable_ssr = q.enable_ssr;
-            fx.enable_bloom = q.enable_bloom;
-            render.set_quality(q);
-            render.set_effect_tuning(fx);
+            apply_quality_tier(engine::render::QualityTier::High);
           }
           imgui.Separator();
           if (imgui.Button(Su.quit, 80.f, 0.f)) {

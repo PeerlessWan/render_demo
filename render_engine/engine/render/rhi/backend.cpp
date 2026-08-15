@@ -32,4 +32,18 @@ Result<std::unique_ptr<IDevice>> CreateDevice(Backend backend, const DeviceDesc&
   return Result<std::unique_ptr<IDevice>>::Fail("unknown backend");
 }
 
+std::vector<GpuAdapterInfo> EnumerateGpuAdapters(Backend backend) {
+  switch (backend) {
+    case Backend::D3D12:
+      return EnumerateD3D12Adapters();
+    case Backend::Vulkan:
+#if defined(ENGINE_WITH_VULKAN) && ENGINE_WITH_VULKAN
+      return EnumerateVulkanAdapters();
+#else
+      return {};
+#endif
+  }
+  return {};
+}
+
 }  // namespace engine::rhi

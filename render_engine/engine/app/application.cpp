@@ -87,6 +87,7 @@ Result<std::unique_ptr<Application>> Application::Create(const ApplicationDesc& 
   device_desc.height = window.value()->height();
   device_desc.gpu_headless = desc.gpu_headless;
   device_desc.enable_validation = desc.enable_validation;
+  device_desc.adapter_index = desc.adapter_index;
   if (const char* v = std::getenv("ENGINE_ENABLE_VALIDATION"); v && v[0] == '1') {
     device_desc.enable_validation = true;
   }

@@ -202,6 +202,7 @@ class VulkanDevice final : public IDevice {
     hwnd_ = static_cast<HWND>(desc.native_window);
     width_ = desc.width;
     height_ = desc.height;
+    adapter_index_ = desc.adapter_index;
     enable_validation_ = desc.enable_validation;
     if (const char* v = std::getenv("ENGINE_ENABLE_VALIDATION"); v && v[0] == '1') {
       enable_validation_ = true;
@@ -3657,7 +3658,19 @@ class VulkanDevice final : public IDevice {
     std::vector<VkPhysicalDevice> devices(count);
     vkEnumeratePhysicalDevices(instance_, &count, devices.data());
 
-    for (VkPhysicalDevice pd : devices) {
+    struct Candidate {
+      VkPhysicalDevice pd = VK_NULL_HANDLE;
+      std::uint32_t graphics = 0;
+      std::uint32_t present = 0;
+      int index = 0;
+      bool discrete = false;
+      std::uint64_t vram = 0;
+      std::string name;
+    };
+    std::vector<Candidate> candidates;
+
+    for (std::uint32_t di = 0; di < count; ++di) {
+      VkPhysicalDevice pd = devices[di];
       std::uint32_t qcount = 0;
       vkGetPhysicalDeviceQueueFamilyProperties(pd, &qcount, nullptr);
       std::vector<VkQueueFamilyProperties> qprops(qcount);
@@ -3666,15 +3679,15 @@ class VulkanDevice final : public IDevice {
       std::int32_t graphics = -1;
       std::int32_t present = -1;
       for (std::uint32_t i = 0; i < qcount; ++i) {
-        if (qprops[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+        if ((qprops[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && graphics < 0) {
           graphics = static_cast<std::int32_t>(i);
         }
         VkBool32 support = VK_FALSE;
         vkGetPhysicalDeviceSurfaceSupportKHR(pd, i, surface_, &support);
-        if (support) {
+        if (support && present < 0) {
           present = static_cast<std::int32_t>(i);
         }
-        if (graphics >= 0 && present >= 0) {
+        if (graphics >= 0 && present >= 0 && graphics == present) {
           break;
         }
       }
@@ -3697,16 +3710,63 @@ class VulkanDevice final : public IDevice {
         continue;
       }
 
-      physical_ = pd;
-      graphics_family_ = static_cast<std::uint32_t>(graphics);
-      present_family_ = static_cast<std::uint32_t>(present);
-      break;
+      VkPhysicalDeviceProperties props{};
+      vkGetPhysicalDeviceProperties(pd, &props);
+      VkPhysicalDeviceMemoryProperties mem{};
+      vkGetPhysicalDeviceMemoryProperties(pd, &mem);
+      std::uint64_t vram = 0;
+      for (std::uint32_t mi = 0; mi < mem.memoryHeapCount; ++mi) {
+        if (mem.memoryHeaps[mi].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+          vram += mem.memoryHeaps[mi].size;
+        }
+      }
+
+      Candidate c;
+      c.pd = pd;
+      c.graphics = static_cast<std::uint32_t>(graphics);
+      c.present = static_cast<std::uint32_t>(present);
+      c.index = static_cast<int>(di);
+      c.discrete = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+      c.vram = vram;
+      c.name = props.deviceName;
+      candidates.push_back(std::move(c));
     }
 
-    if (physical_ == VK_NULL_HANDLE) {
+    if (candidates.empty()) {
       return Status::Fail("No suitable Vulkan GPU with swapchain + present");
     }
+
+    const Candidate* chosen = nullptr;
+    if (adapter_index_ >= 0) {
+      for (const auto& c : candidates) {
+        if (c.index == adapter_index_) {
+          chosen = &c;
+          break;
+        }
+      }
+      if (!chosen) {
+        return Status::Fail("Vulkan adapter_index=" + std::to_string(adapter_index_) +
+                            " not suitable (use --list-gpus)");
+      }
+    } else {
+      // Match D3D HIGH_PERFORMANCE preference: discrete first, then most VRAM.
+      chosen = &candidates[0];
+      for (const auto& c : candidates) {
+        if (c.discrete && !chosen->discrete) {
+          chosen = &c;
+        } else if (c.discrete == chosen->discrete && c.vram > chosen->vram) {
+          chosen = &c;
+        }
+      }
+    }
+
+    physical_ = chosen->pd;
+    graphics_family_ = chosen->graphics;
+    present_family_ = chosen->present;
     vkGetPhysicalDeviceMemoryProperties(physical_, &mem_props_);
+    LogInfo(std::string("Vulkan adapter[") + std::to_string(chosen->index) +
+            (chosen->discrete ? " discrete]: " : "]: ") + chosen->name + " vram≈" +
+            std::to_string(chosen->vram / (1024ull * 1024ull)) + "MB");
     return Status::Ok();
   }
 
@@ -3810,6 +3870,18 @@ class VulkanDevice final : public IDevice {
         break;
       }
     }
+    if (present_mode == VK_PRESENT_MODE_FIFO_KHR) {
+      for (auto m : modes) {
+        if (m == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+          present_mode = m;
+          break;
+        }
+      }
+    }
+    LogInfo(std::string("Vulkan presentMode=") +
+            (present_mode == VK_PRESENT_MODE_MAILBOX_KHR
+                 ? "MAILBOX"
+                 : present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR ? "IMMEDIATE" : "FIFO"));
 
     VkExtent2D extent{};
     if (caps.currentExtent.width != UINT32_MAX) {
@@ -6220,6 +6292,7 @@ class VulkanDevice final : public IDevice {
 
   bool lit_ready_ = false;
   bool enable_validation_ = false;
+  int adapter_index_ = -1;
   bool post_stub_ready_ = false;
   bool post_resolve_warned_ = false;
   bool ibl_upload_logged_ = false;
@@ -6405,6 +6478,45 @@ Result<std::unique_ptr<IDevice>> CreateVulkanDevice(const DeviceDesc& desc) {
     return Result<std::unique_ptr<IDevice>>::Fail(st);
   }
   return Result<std::unique_ptr<IDevice>>::Ok(std::move(device));
+}
+
+std::vector<GpuAdapterInfo> EnumerateVulkanAdapters() {
+  std::vector<GpuAdapterInfo> out;
+  VkApplicationInfo app{};
+  app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+  app.apiVersion = VK_API_VERSION_1_1;
+  VkInstanceCreateInfo ci{};
+  ci.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+  ci.pApplicationInfo = &app;
+  VkInstance instance = VK_NULL_HANDLE;
+  if (vkCreateInstance(&ci, nullptr, &instance) != VK_SUCCESS) {
+    return out;
+  }
+  std::uint32_t count = 0;
+  vkEnumeratePhysicalDevices(instance, &count, nullptr);
+  std::vector<VkPhysicalDevice> devices(count);
+  if (count > 0) {
+    vkEnumeratePhysicalDevices(instance, &count, devices.data());
+  }
+  for (std::uint32_t i = 0; i < count; ++i) {
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(devices[i], &props);
+    VkPhysicalDeviceMemoryProperties mem{};
+    vkGetPhysicalDeviceMemoryProperties(devices[i], &mem);
+    GpuAdapterInfo info;
+    info.index = static_cast<int>(i);
+    info.name = props.deviceName;
+    info.discrete = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+    info.software = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
+    for (std::uint32_t mi = 0; mi < mem.memoryHeapCount; ++mi) {
+      if (mem.memoryHeaps[mi].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+        info.dedicated_memory_bytes += mem.memoryHeaps[mi].size;
+      }
+    }
+    out.push_back(std::move(info));
+  }
+  vkDestroyInstance(instance, nullptr);
+  return out;
 }
 
 }  // namespace engine::rhi

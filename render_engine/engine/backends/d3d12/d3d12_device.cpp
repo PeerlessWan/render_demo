@@ -74,6 +74,7 @@ class D3D12Device final : public IDevice {
     hwnd_ = desc.native_window ? static_cast<HWND>(desc.native_window) : nullptr;
     width_ = desc.width;
     height_ = desc.height;
+    adapter_index_ = desc.adapter_index;
 
 #if defined(_DEBUG)
     {
@@ -109,26 +110,48 @@ class D3D12Device final : public IDevice {
     factory_ = factory;
 
     ComPtr<IDXGIAdapter1> adapter;
-    for (UINT i = 0;
-         factory->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
-                                             IID_PPV_ARGS(&adapter)) != DXGI_ERROR_NOT_FOUND;
-         ++i) {
+    auto try_create = [&](IDXGIAdapter1* a) -> bool {
+      return a && SUCCEEDED(D3D12CreateDevice(a, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device),
+                                              nullptr));
+    };
+
+    if (adapter_index_ >= 0) {
+      if (FAILED(factory->EnumAdapters1(static_cast<UINT>(adapter_index_), &adapter)) ||
+          !try_create(adapter.Get())) {
+        return Status::Fail("D3D12 adapter_index=" + std::to_string(adapter_index_) +
+                            " unavailable or not D3D12-capable");
+      }
+    } else {
+      for (UINT i = 0;
+           factory->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+                                               IID_PPV_ARGS(&adapter)) != DXGI_ERROR_NOT_FOUND;
+           ++i) {
+        DXGI_ADAPTER_DESC1 ad{};
+        adapter->GetDesc1(&ad);
+        if (ad.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) {
+          adapter.Reset();
+          continue;
+        }
+        if (try_create(adapter.Get())) {
+          break;
+        }
+        adapter.Reset();
+      }
+      if (!adapter) {
+        if (FAILED(factory->EnumAdapters1(0, &adapter)) || !try_create(adapter.Get())) {
+          return Status::Fail("No DXGI adapter");
+        }
+      }
+    }
+
+    {
       DXGI_ADAPTER_DESC1 ad{};
       adapter->GetDesc1(&ad);
-      if (ad.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) {
-        adapter.Reset();
-        continue;
-      }
-      if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device),
-                                      nullptr))) {
-        break;
-      }
-      adapter.Reset();
-    }
-    if (!adapter) {
-      if (FAILED(factory->EnumAdapters1(0, &adapter))) {
-        return Status::Fail("No DXGI adapter");
-      }
+      char name_utf8[256]{};
+      WideCharToMultiByte(CP_UTF8, 0, ad.Description, -1, name_utf8, sizeof(name_utf8), nullptr,
+                          nullptr);
+      LogInfo(std::string("D3D12 adapter[") + std::to_string(adapter_index_ >= 0 ? adapter_index_ : -1) +
+              " auto]: " + name_utf8);
     }
 
     hr = D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device_));
@@ -4595,6 +4618,7 @@ class D3D12Device final : public IDevice {
   std::uint32_t width_ = 0;
   std::uint32_t height_ = 0;
   bool gpu_headless_ = false;
+  int adapter_index_ = -1;
   bool enable_hdr_output_ = false;
   bool bindless_capable_ = false;
   SIZE_T bindless_probe_gpu_ptr_ = 0;
@@ -4753,6 +4777,33 @@ Result<std::unique_ptr<IDevice>> CreateD3D12Device(const DeviceDesc& desc) {
     return Result<std::unique_ptr<IDevice>>::Fail(st);
   }
   return Result<std::unique_ptr<IDevice>>::Ok(std::unique_ptr<IDevice>(std::move(device)));
+}
+
+std::vector<GpuAdapterInfo> EnumerateD3D12Adapters() {
+  std::vector<GpuAdapterInfo> out;
+  ComPtr<IDXGIFactory6> factory;
+  if (FAILED(CreateDXGIFactory2(0, IID_PPV_ARGS(&factory)))) {
+    return out;
+  }
+  for (UINT i = 0;; ++i) {
+    ComPtr<IDXGIAdapter1> adapter;
+    if (factory->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND) {
+      break;
+    }
+    DXGI_ADAPTER_DESC1 ad{};
+    adapter->GetDesc1(&ad);
+    GpuAdapterInfo info;
+    info.index = static_cast<int>(i);
+    info.software = (ad.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+    info.dedicated_memory_bytes = ad.DedicatedVideoMemory;
+    info.discrete = !info.software && ad.DedicatedVideoMemory > (512ull << 20);
+    char name_utf8[256]{};
+    WideCharToMultiByte(CP_UTF8, 0, ad.Description, -1, name_utf8, sizeof(name_utf8), nullptr,
+                        nullptr);
+    info.name = name_utf8;
+    out.push_back(std::move(info));
+  }
+  return out;
 }
 
 }  // namespace engine::rhi

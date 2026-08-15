@@ -25,6 +25,16 @@ struct DeviceDesc {
   bool enable_hdr_output = false;
   // Prefer enabling D3D12/Vulkan validation layers when available (CI -Validation).
   bool enable_validation = false;
+  // GPU adapter index from EnumerateGpuAdapters. -1 = auto (high-performance / discrete).
+  int adapter_index = -1;
+};
+
+struct GpuAdapterInfo {
+  int index = 0;
+  std::string name;
+  bool discrete = false;
+  bool software = false;
+  std::uint64_t dedicated_memory_bytes = 0;
 };
 
 struct SimpleMeshShaders {
@@ -339,7 +349,11 @@ class IDevice {
 
 Result<std::unique_ptr<IDevice>> CreateD3D12Device(const DeviceDesc& desc);
 Result<std::unique_ptr<IDevice>> CreateHeadlessDevice(const DeviceDesc& desc);
+std::vector<GpuAdapterInfo> EnumerateD3D12Adapters();
 // Real Vulkan path when ENGINE_WITH_VULKAN=1 (Win32 clear + optional lit cube SPIR-V).
 Result<std::unique_ptr<IDevice>> CreateVulkanDevice(const DeviceDesc& desc);
+#if defined(ENGINE_WITH_VULKAN) && ENGINE_WITH_VULKAN
+std::vector<GpuAdapterInfo> EnumerateVulkanAdapters();
+#endif
 
 }  // namespace engine::rhi
