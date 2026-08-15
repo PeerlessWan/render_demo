@@ -2,7 +2,19 @@
 
 > 与 [PLAN.md](PLAN.md) 里程碑进度表互补：本文件跟踪**当前迭代**的进行中项、待办队列与回退方式。
 
-## 主线水位（截至 Engine 100% 加深波 W0–W3）
+## 封板（Engine freeze）
+
+| 项 | 值 |
+|---|---|
+| **状态** | **暂时封板** — 主线不再开新功能波 |
+| **基线 tip** | `1700a71`（Deepen engine to Win 100% polish…） |
+| **口径** | Win D3D12+Vulkan 100% + W0–W3 加深；见 [VULKAN_PARITY.md](VULKAN_PARITY.md) |
+| **例外** | 仅修阻断性回归 / 安全；画质债与口径外项进下方 Todo，**不主动开工** |
+| **产品轨** | `game_kit` / `editor` 与引擎解耦，可在封板期间并行 |
+
+---
+
+## 主线水位（封板快照）
 
 | 层 | 状态 |
 |---|---|
@@ -14,8 +26,9 @@
 | **W3 / M26** | **已收口**：ADR 0032；C01 Forward+、C02 8 灯、C10 状态机、C08 MeshShader SKIP、C04 vignette/grain、C16 热重载 Poll、C20 content_lint |
 
 ```text
-安全基线：见 git tip（Engine 100% 加深波）
+封板基线：1700a71
 口径说明：docs/VULKAN_PARITY.md（不含 Linux/大气/editor/game_kit）
+解封条件：明确下令开新波（如 Linux / 大气 / 柱影再修 / DXR 真示范）
 ```
 
 ---
@@ -26,7 +39,7 @@
 - **不静默安装** 系统 OpenSSL / MsQuic
 - C4：默认 ROI；超阈 `[REGRESSION-NOTED]`；`-StrictParity` / `--strict` 才 FAIL
 - 大气 / Linux：**本口径外**，仍排队
-- **不要动 `editor/`**（并行会话）
+- **封板期间不要动 `render_engine/` 主线**（除非阻断回归）；`editor/` / `game_kit` 可并行
 
 验收总闸：`ci_headless.ps1 -Golden`（可选 `-StrictParity`）
 
@@ -34,11 +47,11 @@
 
 ## Doing
 
-（空 — Engine 100% 加深 W0–W3 已收口）
+（空 — **引擎暂时封板**）
 
 ---
 
-## Todo（波次）
+## Todo（解封后再排）
 
 | 优先级 | ID | 项 | 备注 |
 |---|---|---|---|
@@ -55,7 +68,7 @@
 - **W0 已落地**：origin texel-snap、半径 0.5 量子、cascade overlap、log 偏置 0.75、Poisson PCF、tile clamp、法线/斜率 bias、宽 cascade blend。
 - **验证**：`captures/_analyze_dump.py` + 可选绿 mask 脚本；只开 Shadows 再 F5。
 
-### 产品轨（不进本板实现波）
+### 产品轨（不进引擎封板范围）
 
 | 优先级 | ID | 项 | 备注 |
 |---|---|---|---|
@@ -68,7 +81,7 @@
 
 | 标签 | 值 |
 |---|---|
-| 安全基线 | 加深波前 tip；验证 `ci_headless.ps1 -Golden` |
+| 封板基线 | `1700a71`；验证 `ci_headless.ps1 -Golden` |
 
 ---
 
@@ -76,6 +89,7 @@
 
 | 项 | 说明 |
 |---|---|
+| **Engine 封板** | 主线冻结于加深波收口 tip |
 | **Engine 100% 加深 W0–W3** | 见上方主线水位 |
 | **W-win-dual-100** | 既有双后端口径 |
 | **ADR 0030–0032** | DXR 范围 / QUIC SKIP / M26 Forward+ |

@@ -5,6 +5,7 @@
 > 定位：**Windows（D3D12 + Vulkan）/ Linux（Vulkan）通用 2D·3D 渲染引擎**  
 > 范围分段：M1–M16（既有能力）+ M17–M19（后端/Linux/网络）+ **M20–M25 引擎缺口补齐（P2）**。  
 > **当前迭代看板**（Doing / Undo / Todo）：[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)  
+> **引擎状态：暂时封板**（基线 `1700a71`；仅阻断回归可动；解封须明确下令）。  
 > **游戏可用 ≠ 渲染可用**：工作区可玩产品水位见 **§1.9**（主缺口 `game_kit` GK0–GK3）。
 
 ## 1. 总验收目标
