@@ -97,9 +97,12 @@ VSOutput VSMain(VSInput input, uint iid : SV_InstanceID) {
   o.velocity = curr_ndc - prev_ndc;
   o.uv = input.uv;
   float vz = dot(o.world_pos - g_eye, normalize(g_cam_forward));
-  // Floors: clip anything closer than 0.5m in view space (near-plane straddling
-  // otherwise becomes a floating screen-space white slab).
-  o.clip_near = (abs(input.normal.y) > 0.85) ? (vz - 0.5) : 1.0;
+  // Soft near clip only for tiled ground, and only when clearly in front of the
+  // camera — avoid wiping the brick floor at grazing orbit angles.
+  o.clip_near = 1.0;
+  if (g_uv_scale > 2.5 && abs(input.normal.y) > 0.85 && vz > 0.0) {
+    o.clip_near = vz - 0.25;
+  }
   return o;
 }
 
@@ -345,7 +348,15 @@ float4 PSMain(VSOutput input) : SV_Target {
     // Soft hint only; real history TAA is ResolvePostEffects.
     lit = lerp(lit, lit * 0.98 + g_ambient * base * 0.02, 0.15);
   }
-  return float4(lit, g_base_color.a);
+  // Transparent (glass): keep HDR RGB bounded so SrcAlpha blends do not flash a
+  // white screen-space slab when a large face fills the view.
+  const float alpha = saturate(g_base_color.a);
+  if (alpha < 0.999) {
+    lit = min(lit, 1.35.xxx);
+    // Premultiply-ish: darker transmission, less "milk white" overlay.
+    lit *= lerp(0.55, 1.0, alpha);
+  }
+  return float4(lit, alpha);
 }
 
 cbuffer ShadowFrameCB : register(b0) {

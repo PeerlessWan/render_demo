@@ -1034,6 +1034,9 @@ class D3D12Device final : public IDevice {
     lit_pso_tr.BlendState.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
     lit_pso_tr.BlendState.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
     lit_pso_tr.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    // Clamp rather than clip: near-plane cuts on alpha-blended glass became a floating
+    // white slab that appeared/disappeared with the Transparent profiler pass.
+    lit_pso_tr.RasterizerState.DepthClipEnable = FALSE;
     lit_pso_tr.DepthStencilState.DepthEnable = TRUE;
     lit_pso_tr.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
     lit_pso_tr.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
@@ -1781,18 +1784,9 @@ class D3D12Device final : public IDevice {
     object_cb_->Unmap(0, nullptr);
     command_list_->SetGraphicsRootConstantBufferView(
         1, object_cb_->GetGPUVirtualAddress() + offset);
-    if (indirect_args_buf_ && draw_indexed_cmd_sig_ &&
-        engine::QueryFeature("execute_indirect")) {
-      if (indirect_args_state_ != D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT) {
-        Transition(indirect_args_buf_.Get(), indirect_args_state_,
-                   D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
-        indirect_args_state_ = D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;
-      }
-      command_list_->ExecuteIndirect(draw_indexed_cmd_sig_.Get(), 1, indirect_args_buf_.Get(), 0,
-                                     nullptr, 0);
-    } else {
-      command_list_->DrawIndexedInstanced(mesh_slots_[slot].index_count, instance_count, 0, 0, 0);
-    }
+    // Prefer CPU instance count. ExecuteIndirect + Cull CS can disagree with the
+    // uploaded transform buffer and shear the green scale pillars on D3D12.
+    command_list_->DrawIndexedInstanced(mesh_slots_[slot].index_count, instance_count, 0, 0, 0);
     lit_draws_ += instance_count;
     return Status::Ok();
   }

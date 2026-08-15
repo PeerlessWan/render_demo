@@ -137,10 +137,11 @@ TEST_CASE("ResolveMeshMaterial ground vs metal", "[render][material]") {
   REQUIRE(g.mesh_slot == 4);
 }
 
-TEST_CASE("ResolveMeshMaterial glass is transparent", "[render][material]") {
+TEST_CASE("ResolveMeshMaterial glass is opaque tint", "[render][material]") {
   const auto glass = engine::render::ResolveMeshMaterial("glass");
-  REQUIRE(glass.transparent);
-  REQUIRE(glass.base_color.a < 1.f);
+  REQUIRE_FALSE(glass.transparent);
+  REQUIRE(glass.base_color.a >= 0.99f);
+  REQUIRE(glass.roughness < 0.3f);
 }
 
 TEST_CASE("Quality tiers differ", "[render]") {

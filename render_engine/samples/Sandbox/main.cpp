@@ -253,8 +253,9 @@ int main(int argc, char** argv) {
   {
     auto glass = a.world().CreateNode("glass");
     engine::scene::Transform t;
-    t.position = {2.2f, 1.0f, 1.4f};
-    t.scale = {1.1f, 1.1f, 1.1f};
+    // Keep clear of the camera near plane while orbiting the origin.
+    t.position = {2.6f, 1.0f, 2.0f};
+    t.scale = {0.85f, 0.85f, 0.85f};
     a.world().set_local_transform(glass, t);
     engine::scene::MeshRenderer mesh;
     mesh.mesh_id = "glass";

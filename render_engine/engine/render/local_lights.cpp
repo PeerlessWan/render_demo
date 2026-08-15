@@ -55,10 +55,12 @@ material::PbrMaterial ResolveMeshMaterial(std::string_view mesh_id) {
     m.metallic = 0.95f;
     m.uv_scale = 1.f;
   } else if (mesh_id == "glass") {
-    m.base_color = {0.55f, 0.75f, 0.95f, 0.35f};
-    m.roughness = 0.08f;
-    m.metallic = 0.f;
-    m.transparent = true;
+    // Opaque tinted “glass”: alpha-blend + no depth write produced a floating white
+    // slab on D3D12 that appeared/disappeared with the Transparent profiler pass.
+    m.base_color = {0.55f, 0.72f, 0.88f, 1.f};
+    m.roughness = 0.12f;
+    m.metallic = 0.05f;
+    m.transparent = false;
     m.uv_scale = 1.f;
   } else if (mesh_id == "helmet") {
     m.base_color = {1.f, 1.f, 1.f, 1.f};

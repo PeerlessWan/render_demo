@@ -77,8 +77,10 @@ VSOutput VSMain(VSInput input) {
   o.position = mul(g_view_proj, wp);
   o.uv = input.uv;
   float vz = dot(o.world_pos - g_eye, normalize(g_cam_forward));
-  // Floors: clip tris that straddle the camera near plane (floating slab).
-  o.clip_near = (abs(input.normal.y) > 0.85) ? (vz - 0.45) : 1.0;
+  o.clip_near = 1.0;
+  if (g_uv_scale > 2.5 && abs(input.normal.y) > 0.85 && vz > 0.0) {
+    o.clip_near = vz - 0.25;
+  }
   return o;
 }
 
@@ -253,7 +255,12 @@ float4 PSMain(VSOutput input) : SV_Target {
     lit += diffuse * nd * lcol * atten * tex_ao * lsh;
   }
 
-  return float4(lit, g_base_color.a);
+  const float alpha = saturate(g_base_color.a);
+  if (alpha < 0.999) {
+    lit = min(lit, 1.35.xxx);
+    lit *= lerp(0.55, 1.0, alpha);
+  }
+  return float4(lit, alpha);
 }
 
 cbuffer ShadowFrameCB : register(b0) {
