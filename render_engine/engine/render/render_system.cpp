@@ -337,6 +337,17 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
           LogError(st.message());
           break;
         }
+        if (pending_instanced_ && !pending_instanced_worlds_.empty()) {
+          std::vector<rhi::LitDrawItem> shadow_inst;
+          shadow_inst.resize(pending_instanced_worlds_.size(), pending_instanced_proto_);
+          for (std::size_t si = 0; si < pending_instanced_worlds_.size(); ++si) {
+            shadow_inst[si].world = pending_instanced_worlds_[si];
+          }
+          if (auto st = device.DrawShadowCubes(shadow_inst); !st) {
+            LogError(st.message());
+            break;
+          }
+        }
       }
       if (auto st = device.EndShadowPass(); !st) {
         LogError(st.message());
@@ -394,14 +405,15 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
         if (auto st = device.DrawLitCubes(opaque); !st) {
           LogError(st.message());
         }
-        if (pending_instanced_ && pending_instanced_count_ > 0) {
-          if (auto st =
-                  device.DrawLitInstanced(pending_instanced_proto_, pending_instanced_count_);
+        if (pending_instanced_ && !pending_instanced_worlds_.empty()) {
+          if (auto st = device.DrawLitInstanced(pending_instanced_proto_,
+                                               static_cast<std::uint32_t>(
+                                                   pending_instanced_worlds_.size()));
               !st) {
             LogError(st.message());
           }
           pending_instanced_ = false;
-          pending_instanced_count_ = 0;
+          pending_instanced_worlds_.clear();
         }
         device.GpuPassEnd();
       });

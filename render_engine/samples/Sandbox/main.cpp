@@ -303,8 +303,10 @@ int main(int argc, char** argv) {
     rdesc.sky_vs = shader_dir / "skybox_vk.vs.spv";
     rdesc.sky_ps = shader_dir / "skybox_vk.ps.spv";
     rdesc.enable_shadows = true;
-    rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
+    rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
     rdesc.quality.enable_ssao = false;
+    // Halton clip jitter without a rock-solid history resolve crawls on large floors /
+    // thin green scale pillars. Keep High shadows; TAA stays opt-in via ImGui.
     rdesc.quality.enable_taa = false;
   } else {
     rdesc.lit_vs = shader_dir / "lit_cube.vs.cso";
@@ -1176,7 +1178,7 @@ int main(int argc, char** argv) {
         proto.metallic = 0.05f;
         proto.roughness = 0.7f;
         proto.use_albedo = false;
-        render.SetPendingLitInstanced(proto, kept);
+        render.SetPendingLitInstanced(proto, visible);
         // Seed IndirectArgs (instance_count=0); Cull CS writes instance_count via UAV.
         // Vulkan: CPU expand path still honors UploadInstanceTransforms + DrawLitInstanced.
         engine::gpu_driven::IndirectDrawArgs seed = iargs;

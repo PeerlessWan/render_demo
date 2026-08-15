@@ -1001,8 +1001,10 @@ class D3D12Device final : public IDevice {
     lit_pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
     lit_pso.SampleMask = UINT_MAX;
     lit_pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-    // BACK cull: floor should not draw from below (avoids a second "white slab").
-    lit_pso.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+    // NONE: matches Vulkan lit and avoids hollow untextured cubes from winding/viewport
+    // mismatch. Floor slab mitigations are SV_ClipDistance + PS discard (not backface cull).
+    // Ground plane indices are CCW from +Y (see Sandbox slot4 upload).
+    lit_pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
     lit_pso.RasterizerState.FrontCounterClockwise = TRUE;
     // Keep depth clip on: Perspective is Z∈[0,1]. DepthClip=FALSE clamped near-floor
     // depth to 0 and hid the debug grid under a featureless white plane.
@@ -1300,6 +1302,7 @@ class D3D12Device final : public IDevice {
     shadow_active_ = true;
     local_shadow_active_ = false;
     bound_shadow_slot_ = 0;
+    shadow_draws_ = 0;
     return Status::Ok();
   }
 
@@ -1372,7 +1375,7 @@ class D3D12Device final : public IDevice {
 
       float world[16]{};
       std::memcpy(world, items[i].world.m.data(), sizeof(world));
-      const auto offset = ObjectCbOffset(i);
+      const auto offset = ObjectCbOffset(shadow_draws_);
       void* ptr = nullptr;
       if (FAILED(object_cb_->Map(0, nullptr, &ptr))) {
         return Status::Fail("Map object CB failed");
@@ -1383,8 +1386,8 @@ class D3D12Device final : public IDevice {
       command_list_->SetGraphicsRootConstantBufferView(
           1, object_cb_->GetGPUVirtualAddress() + offset);
       command_list_->DrawIndexedInstanced(mesh_slots_[slot].index_count, 1, 0, 0, 0);
+      ++shadow_draws_;
     }
-    shadow_draws_ += static_cast<std::uint32_t>(items.size());
     return Status::Ok();
   }
 

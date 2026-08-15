@@ -15,6 +15,7 @@
 #include "engine/render2d/sprite.h"
 
 #include <filesystem>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -101,10 +102,12 @@ class RenderSystem {
   void set_post_enabled(std::string_view name, bool on);
 
   // Draw during OpaqueLit (before post). Avoids post-then-HDR RT DEVICE_REMOVED.
-  void SetPendingLitInstanced(const rhi::LitDrawItem& prototype, std::uint32_t instance_count) {
+  // Worlds are also CSM-cast so scale pillars match D3D12/Vulkan contact shadows.
+  void SetPendingLitInstanced(const rhi::LitDrawItem& prototype,
+                              std::span<const Mat4> worlds) {
     pending_instanced_ = true;
     pending_instanced_proto_ = prototype;
-    pending_instanced_count_ = instance_count;
+    pending_instanced_worlds_.assign(worlds.begin(), worlds.end());
   }
 
  private:
@@ -128,7 +131,7 @@ class RenderSystem {
   bool have_prev_view_proj_ = false;
   bool pending_instanced_ = false;
   rhi::LitDrawItem pending_instanced_proto_{};
-  std::uint32_t pending_instanced_count_ = 0;
+  std::vector<Mat4> pending_instanced_worlds_;
 };
 
 }  // namespace engine::render

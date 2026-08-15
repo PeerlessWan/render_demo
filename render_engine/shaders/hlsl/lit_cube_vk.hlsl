@@ -116,7 +116,7 @@ float SampleCascadeShadow(float3 world_pos, int c) {
     return -1.0;
   }
   float2 atlas_uv = CascadeAtlasUv(uv, c);
-  float cmp = proj.z - g_shadow_bias * (1.25 + (float)c * 0.4);
+  float cmp = proj.z - g_shadow_bias * (1.0 + (float)c * 0.35);
   float shadow = 0;
   float2 texel = 1.0 / 2048.0;
   [unroll] for (int y = -1; y <= 1; ++y) {
@@ -148,17 +148,27 @@ float ShadowFactor(float3 world_pos) {
       best = s;
     } else if (c == start + 1) {
       next_s = s;
+    } else if (best < 0.0 && c > start) {
+      best = s;
     } else if (best < 0.0) {
       best = s;
     }
   }
   if (best >= 0.0 && next_s >= 0.0) {
     float split = g_cascade_splits[min(start, 3)];
-    float prev = (start > 0) ? g_cascade_splits[start - 1] : 0.0;
+    float prev = 0.0;
+    if (start == 1) {
+      prev = g_cascade_splits[0];
+    } else if (start == 2) {
+      prev = g_cascade_splits[1];
+    } else if (start == 3) {
+      prev = g_cascade_splits[2];
+    }
     float span = max(split - prev, 1e-3);
     float t = saturate((split - view_depth) / max(span * 0.25, 0.75));
     best = lerp(next_s, best, t);
   }
+  // Keep sun contribution stable when outside all cascades (no tint flip to local-only).
   return best >= 0.0 ? best : 0.85;
 }
 
@@ -188,6 +198,13 @@ float LocalShadowFactor(float3 world_pos) {
 
 float4 PSMain(VSOutput input) : SV_Target {
   float3 n = normalize(input.world_normal);
+  // Match D3D lit_cube.hlsl: drop near-camera floor fragments that become a floating slab.
+  float vz = dot(input.world_pos - g_eye, normalize(g_cam_forward));
+  if (n.y > 0.55) {
+    if (vz < 0.25 || input.position.z < 1e-3) {
+      discard;
+    }
+  }
   float3 l = normalize(-g_sun_dir);
   float3 v = normalize(g_eye - input.world_pos);
   float3 h = normalize(l + v);
@@ -217,26 +234,27 @@ float4 PSMain(VSOutput input) : SV_Target {
 
   float spec = pow(saturate(dot(n, h)), max(1.0, g_specular_power * (1.0 - roughness))) *
                (1.0 - roughness) * lerp(0.04, 1.0, metallic) * ndotl;
-  // Grazing floors → bright horizon band / floating white slab.
-  spec *= ndotv * ndotv;
+  // Match D3D lit_cube: fade floor horizon specular harder.
+  spec *= ndotv * ndotv * ndotv;
   float sh = ShadowFactor(input.world_pos);
   float lsh = LocalShadowFactor(input.world_pos);
   sh = min(sh, lsh);
   float3 diffuse = base * (1.0 - metallic);
-  float3 ambient = g_ambient * base * tex_ao;
+  float3 sun_term = (diffuse * ndotl + g_sun_color * spec) * g_sun_intensity * sh * tex_ao;
+  sun_term = min(sun_term, 8.0.xxx);
+  // Additive IBL (same as D3D lit_cube.hlsl). Replacing ambient with irradiance
+  // washed out CSM contact shadows and flattened the whole frame vs D3D12.
+  float3 lit = g_ambient * base * tex_ao + sun_term;
   if (g_enable_ibl > 0.5) {
     float3 irr = g_ibl_irradiance.Sample(g_ibl_samp, n).rgb;
-    ambient = lerp(ambient, irr * base * g_ibl_intensity * tex_ao, 0.85);
+    lit += diffuse * irr * g_ibl_intensity * tex_ao;
     float3 R = reflect(-v, n);
     float lod = saturate(roughness) * 4.0;
     float3 prefiltered = g_ibl_prefilter.SampleLevel(g_pref_samp, R, lod).rgb;
     float2 brdf = g_brdf_lut.Sample(g_lut_samp, float2(ndotv, saturate(roughness))).rg;
     float3 f0 = lerp(float3(0.04, 0.04, 0.04), base, metallic);
-    ambient += prefiltered * (f0 * brdf.x + brdf.y) * g_ibl_intensity * tex_ao;
+    lit += prefiltered * (f0 * brdf.x + brdf.y) * g_ibl_intensity * tex_ao;
   }
-  float3 sun_term = (diffuse * ndotl + g_sun_color * spec) * g_sun_intensity * sh * tex_ao;
-  sun_term = min(sun_term, 8.0.xxx);
-  float3 lit = ambient + sun_term;
 
   int lc = (int)g_local_count;
   [unroll] for (int i = 0; i < 4; ++i) {

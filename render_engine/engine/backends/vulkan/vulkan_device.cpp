@@ -219,11 +219,15 @@ class VulkanDevice final : public IDevice {
   [[nodiscard]] std::uint32_t height() const override { return height_; }
 
   Status BeginFrame() override {
-    VkFence fence = in_flight_fences_[frame_index_];
-    VkResult r = vkWaitForFences(device_, 1, &fence, VK_TRUE, UINT64_MAX);
+    // Shadow atlas + lit UBs are shared across frames-in-flight. Wait for every
+    // slot before recording so a previous frame cannot sample while this frame
+    // clears the atlas (low-frequency flicker with Shadows on).
+    VkResult r = vkWaitForFences(device_, kFramesInFlight, in_flight_fences_.data(), VK_TRUE,
+                                 UINT64_MAX);
     if (r != VK_SUCCESS) {
       return Status::Fail("vkWaitForFences failed: " + VkErr(r));
     }
+    VkFence fence = in_flight_fences_[frame_index_];
 
     r = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX, image_available_[frame_index_],
                               VK_NULL_HANDLE, &image_index_);
@@ -347,9 +351,29 @@ class VulkanDevice final : public IDevice {
         return st;
       }
     }
+    const bool ended_clear_only_pass = pass_active_ && !post_resolved_this_frame_;
     if (pass_active_) {
       vkCmdEndRenderPass(cmd);
       pass_active_ = false;
+    }
+    // Clear pass finalLayout is COLOR_ATTACHMENT (so CaptureSceneColor can blit). Move to
+    // PRESENT when that was the last pass. Load/post pass already ends as PRESENT.
+    if (ended_clear_only_pass) {
+      VkImageMemoryBarrier to_present{};
+      to_present.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      to_present.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+      to_present.dstAccessMask = 0;
+      to_present.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+      to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+      to_present.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      to_present.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      to_present.image = swapchain_images_[image_index_];
+      to_present.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      to_present.subresourceRange.levelCount = 1;
+      to_present.subresourceRange.layerCount = 1;
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                           VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                           &to_present);
     }
 
     VkResult r = vkEndCommandBuffer(cmd);
@@ -509,7 +533,8 @@ class VulkanDevice final : public IDevice {
     data.tiles_per_row = static_cast<float>(lighting_.cascade_tiles_per_row);
     data.enable_ibl = lighting_.enable_ibl ? 1.f : 0.f;
     data.ibl_intensity = lighting_.ibl_intensity;
-    data.enable_local_shadow = lighting_.enable_local_shadow ? 1.f : 0.f;
+    // Force off until a dedicated local-shadow atlas exists (shared CSM atlas stomps cascades).
+    data.enable_local_shadow = 0.f;
     data.local_shadow_bias = lighting_.local_shadow_bias > 0.f ? lighting_.local_shadow_bias
                                                               : lighting_.shadow_bias;
     data.local_shadow_tiles =
@@ -528,8 +553,9 @@ class VulkanDevice final : public IDevice {
     std::memcpy(data.local_shadow_vp, lighting_.local_shadow_vp.m.data(),
                 sizeof(data.local_shadow_vp));
 
+    const VkDeviceSize frame_off = static_cast<VkDeviceSize>(frame_index_) * kFrameUbSize;
     void* mapped = nullptr;
-    if (vkMapMemory(device_, frame_ub_mem_, 0, sizeof(data), 0, &mapped) != VK_SUCCESS) {
+    if (vkMapMemory(device_, frame_ub_mem_, frame_off, sizeof(data), 0, &mapped) != VK_SUCCESS) {
       return Status::Fail("Map frame UB failed");
     }
     std::memcpy(mapped, &data, sizeof(data));
@@ -569,6 +595,7 @@ class VulkanDevice final : public IDevice {
 
     shadow_pass_active_ = true;
     bound_cascade_ = -1;
+    shadow_draws_this_pass_ = 0;
     used_graphics_ = true;
     return Status::Ok();
   }
@@ -585,8 +612,10 @@ class VulkanDevice final : public IDevice {
     std::memcpy(frame.view_proj,
                 lighting_.cascade_view_proj[static_cast<std::size_t>(cascade_index)].m.data(),
                 sizeof(frame.view_proj));
+    const VkDeviceSize frame_sh_off = static_cast<VkDeviceSize>(frame_index_) * kUniformAlign;
     void* mapped = nullptr;
-    if (vkMapMemory(device_, shadow_frame_ub_mem_, 0, sizeof(frame), 0, &mapped) != VK_SUCCESS) {
+    if (vkMapMemory(device_, shadow_frame_ub_mem_, frame_sh_off, sizeof(frame), 0, &mapped) !=
+        VK_SUCCESS) {
       return Status::Fail("Map shadow frame UB failed");
     }
     std::memcpy(mapped, &frame, sizeof(frame));
@@ -615,6 +644,10 @@ class VulkanDevice final : public IDevice {
   }
 
   Status DrawShadowCubes(std::span<const LitDrawItem> items) override {
+    // Local-shadow stub: BeginLocalShadowPass does not open the CSM atlas RP.
+    if (local_shadow_stub_active_ && !shadow_pass_active_) {
+      return Status::Ok();
+    }
     if (!lit_ready_ || !shadow_pass_active_) {
       return Status::Fail("BeginShadowPass not active");
     }
@@ -639,7 +672,9 @@ class VulkanDevice final : public IDevice {
       ObjectGpu od{};
       std::memcpy(od.world, items[i].world.m.data(), sizeof(od.world));
 
-      const VkDeviceSize slot = static_cast<VkDeviceSize>(i % kMaxLitDraws) * kUniformAlign;
+      const std::uint32_t draw_slot = shadow_draws_this_pass_ % kMaxLitDraws;
+      const VkDeviceSize slot =
+          (static_cast<VkDeviceSize>(frame_index_) * kMaxLitDraws + draw_slot) * kUniformAlign;
       void* mapped = nullptr;
       if (vkMapMemory(device_, object_ub_mem_, slot, sizeof(od), 0, &mapped) != VK_SUCCESS) {
         return Status::Fail("Map object UB failed");
@@ -647,10 +682,13 @@ class VulkanDevice final : public IDevice {
       std::memcpy(mapped, &od, sizeof(od));
       vkUnmapMemory(device_, object_ub_mem_);
 
-      const std::uint32_t dyn_offset = static_cast<std::uint32_t>(slot);
+      const std::uint32_t dyn_offsets[2] = {
+          static_cast<std::uint32_t>(frame_index_) * static_cast<std::uint32_t>(kUniformAlign),
+          static_cast<std::uint32_t>(slot)};
       vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline_layout_, 0, 1,
-                              &shadow_desc_set_, 1, &dyn_offset);
+                              &shadow_desc_set_, 2, dyn_offsets);
       vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
+      ++shadow_draws_this_pass_;
     }
 
     used_graphics_ = true;
@@ -670,75 +708,31 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
   Status BeginLocalShadowPass() override {
-    if (!lit_ready_ || shadow_image_ == VK_NULL_HANDLE) {
+    if (!lit_ready_) {
       return Status::Fail("SetupLitMesh not called");
     }
     if (!frame_recording_) {
       return Status::Fail("BeginFrame not called");
     }
-    VkCommandBuffer cmd = command_buffers_[frame_index_];
-    if (pass_active_) {
-      vkCmdEndRenderPass(cmd);
-      pass_active_ = false;
-    }
-    // Keep CSM contents: LOAD pass into the same atlas (min local-shadow path).
-    if (shadow_layout_ != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
-      BarrierShadowImage(cmd, shadow_layout_, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-    }
-    VkRenderPassBeginInfo rp{};
-    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rp.renderPass =
-        shadow_render_pass_load_ != VK_NULL_HANDLE ? shadow_render_pass_load_ : shadow_render_pass_;
-    rp.framebuffer = shadow_framebuffer_;
-    rp.renderArea.extent = {kShadowMapSize, kShadowMapSize};
-    rp.clearValueCount = 0;
-    vkCmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
-    shadow_pass_active_ = true;
+    // Do NOT write into the CSM atlas: local tiles shared the same 2K depth and
+    // stomped cascade 0/1, which made floor/cubes flicker when shadows were on.
+    // Keep a Feature-level stub until a separate local-shadow atlas exists.
     local_shadow_stub_active_ = true;
-    bound_cascade_ = -1;
-    used_graphics_ = true;
     engine::SetFeatureOverride("local_shadow", true);
     if (!local_shadow_warned_) {
-      LogInfo("Vulkan local shadow pass active (atlas LOAD + Feature)");
+      LogInfo("Vulkan local shadow stub (no atlas write; CSM atlas preserved)");
       local_shadow_warned_ = true;
     }
     return Status::Ok();
   }
   Status BindLocalShadowTile(int tile) override {
-    if (!local_shadow_stub_active_ || !shadow_pass_active_) {
+    if (!local_shadow_stub_active_) {
       return Status::Fail("BeginLocalShadowPass not active");
     }
     if (tile < 0 || tile >= lighting_.local_shadow_tile_count) {
       return Status::Fail(ErrorCode::InvalidArgument, "Invalid local shadow tile");
     }
-    ShadowFrameGpu frame{};
-    const Mat4& vp_mat =
-        lighting_.local_shadow_tile_count > 0
-            ? lighting_.local_shadow_vps[static_cast<std::size_t>(tile)]
-            : lighting_.local_shadow_vp;
-    std::memcpy(frame.view_proj, vp_mat.m.data(), sizeof(frame.view_proj));
-    void* mapped = nullptr;
-    if (vkMapMemory(device_, shadow_frame_ub_mem_, 0, sizeof(frame), 0, &mapped) != VK_SUCCESS) {
-      return Status::Fail("Map shadow frame UB failed");
-    }
-    std::memcpy(mapped, &frame, sizeof(frame));
-    vkUnmapMemory(device_, shadow_frame_ub_mem_);
-
-    const int tiles_per_row = (std::max)(1, lighting_.local_shadow_tiles_per_row);
-    const float tile_px = static_cast<float>(kShadowMapSize) / static_cast<float>(tiles_per_row);
-    const int ix = tile % tiles_per_row;
-    const int iy = tile / tiles_per_row;
-    VkCommandBuffer cmd = command_buffers_[frame_index_];
-    const float ox = static_cast<float>(ix) * tile_px;
-    const float oy = static_cast<float>(iy) * tile_px;
-    VkViewport vp = MakeViewport(ox, oy, tile_px, tile_px);
-    vkCmdSetViewport(cmd, 0, 1, &vp);
-    VkRect2D scissor{};
-    scissor.offset.x = static_cast<std::int32_t>(ox);
-    scissor.offset.y = static_cast<std::int32_t>(oy);
-    scissor.extent.width = static_cast<std::uint32_t>(tile_px);
-    scissor.extent.height = static_cast<std::uint32_t>(tile_px);
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    (void)tile;
     return Status::Ok();
   }
   Status EndLocalShadowPass() override {
@@ -746,14 +740,14 @@ class VulkanDevice final : public IDevice {
       return Status::Ok();
     }
     local_shadow_stub_active_ = false;
-    // After local tiles are written, atlas is sampled in lit PS via enable_local_shadow.
-    lighting_.enable_local_shadow = true;
+    // Sampling stays off: shader would read CSM depths with a local VP.
+    lighting_.enable_local_shadow = false;
     engine::SetFeatureOverride("local_shadow", true);
     if (!local_shadow_sample_warned_) {
-      LogInfo("Vulkan local shadow sample path armed (atlas compare + local VP)");
+      LogInfo("Vulkan local shadow sample deferred (needs dedicated atlas)");
       local_shadow_sample_warned_ = true;
     }
-    return EndShadowPass();
+    return Status::Ok();
   }
 
   Status UploadInstanceTransforms(std::span<const Mat4> worlds) override {
@@ -836,8 +830,8 @@ class VulkanDevice final : public IDevice {
     UpdatePostSceneColorDescriptor();
 
     if (!pass_active_) {
-      // Load not required �?we overwrite with sampled tonemap.
-      if (auto st = BeginLitRenderPass(clear_color_); !st) {
+      // LOAD color+depth: tonemap overwrites color; depth must survive for debug lines.
+      if (auto st = BeginLitRenderPass(clear_color_, /*load_contents=*/true); !st) {
         return st;
       }
     }
@@ -976,7 +970,8 @@ class VulkanDevice final : public IDevice {
       od.uv_scale = items[i].uv_scale > 0.f ? items[i].uv_scale : 1.f;
 
       const std::uint32_t draw_slot = lit_draws_this_frame_ % kMaxLitDraws;
-      const VkDeviceSize slot = static_cast<VkDeviceSize>(draw_slot) * kUniformAlign;
+      const VkDeviceSize slot =
+          (static_cast<VkDeviceSize>(frame_index_) * kMaxLitDraws + draw_slot) * kUniformAlign;
       void* mapped = nullptr;
       if (vkMapMemory(device_, object_ub_mem_, slot, sizeof(od), 0, &mapped) != VK_SUCCESS) {
         return Status::Fail("Map object UB failed");
@@ -984,9 +979,11 @@ class VulkanDevice final : public IDevice {
       std::memcpy(mapped, &od, sizeof(od));
       vkUnmapMemory(device_, object_ub_mem_);
 
-      const std::uint32_t dyn_offset = static_cast<std::uint32_t>(slot);
+      const std::uint32_t dyn_offsets[2] = {
+          static_cast<std::uint32_t>(frame_index_) * static_cast<std::uint32_t>(kFrameUbSize),
+          static_cast<std::uint32_t>(slot)};
       vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lit_pipeline_layout_, 0, 1,
-                              &lit_desc_set_, 1, &dyn_offset);
+                              &lit_desc_set_, 2, dyn_offsets);
       vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
       ++lit_draws_this_frame_;
     }
@@ -1076,7 +1073,7 @@ class VulkanDevice final : public IDevice {
       return Status::Fail("BeginFrame not called");
     }
     if (!pass_active_) {
-      if (auto st = BeginLitRenderPass(clear_color_); !st) {
+      if (auto st = BeginLitRenderPass(clear_color_, post_resolved_this_frame_); !st) {
         return st;
       }
     }
@@ -1159,7 +1156,8 @@ class VulkanDevice final : public IDevice {
       return Status::Fail("BeginFrame not called");
     }
     if (!pass_active_) {
-      if (auto st = BeginLitRenderPass(clear_color_); !st) {
+      // Prefer LOAD so grid occludes behind scene depth written during OpaqueLit.
+      if (auto st = BeginLitRenderPass(clear_color_, /*load_contents=*/true); !st) {
         return st;
       }
     }
@@ -1482,7 +1480,7 @@ class VulkanDevice final : public IDevice {
       return Status::Fail("BeginFrame not called");
     }
     if (!pass_active_) {
-      if (auto st = BeginLitRenderPass(clear_color_); !st) {
+      if (auto st = BeginLitRenderPass(clear_color_, post_resolved_this_frame_); !st) {
         return st;
       }
     }
@@ -2737,7 +2735,9 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
 
-  Status BeginLitRenderPass(const ColorRgba& color) {
+  // load_contents: resume after CaptureSceneColor / mid-frame end without wiping depth.
+  // Required so debug grid depth-tests against lit geometry (matches D3D12 DSV reuse).
+  Status BeginLitRenderPass(const ColorRgba& color, bool load_contents = false) {
     if (pass_active_) {
       cleared_ = true;
       used_graphics_ = true;
@@ -2746,6 +2746,9 @@ class VulkanDevice final : public IDevice {
     if (framebuffers_.empty() || image_index_ >= framebuffers_.size()) {
       return Status::Fail("Lit framebuffers missing");
     }
+    if (load_contents && render_pass_load_ == VK_NULL_HANDLE) {
+      return Status::Fail("Lit load render pass missing");
+    }
 
     VkClearValue clears[2]{};
     clears[0].color = {{color.r, color.g, color.b, color.a}};
@@ -2753,7 +2756,7 @@ class VulkanDevice final : public IDevice {
 
     VkRenderPassBeginInfo rp{};
     rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rp.renderPass = render_pass_;
+    rp.renderPass = load_contents ? render_pass_load_ : render_pass_;
     rp.framebuffer = framebuffers_[image_index_];
     rp.renderArea.extent = {width_, height_};
     rp.clearValueCount = 2;
@@ -3274,26 +3277,6 @@ class VulkanDevice final : public IDevice {
     if (render_pass_ != VK_NULL_HANDLE) {
       return Status::Ok();
     }
-    VkAttachmentDescription color{};
-    color.format = surface_format_.format;
-    color.samples = VK_SAMPLE_COUNT_1_BIT;
-    color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-    VkAttachmentDescription depth{};
-    depth.format = VK_FORMAT_D32_SFLOAT;
-    depth.samples = VK_SAMPLE_COUNT_1_BIT;
-    depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
     VkAttachmentReference color_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     VkAttachmentReference depth_ref{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
 
@@ -3313,6 +3296,29 @@ class VulkanDevice final : public IDevice {
     dep.dstAccessMask =
         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
+    // First open of the frame: clear color+depth. Keep color in COLOR_ATTACHMENT so
+    // CaptureSceneColor can blit without an invalid PRESENT→TRANSFER transition.
+    // STORE depth so post/debug can LOAD it afterward.
+    VkAttachmentDescription color{};
+    color.format = surface_format_.format;
+    color.samples = VK_SAMPLE_COUNT_1_BIT;
+    color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    color.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentDescription depth{};
+    depth.format = VK_FORMAT_D32_SFLOAT;
+    depth.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
     const VkAttachmentDescription atts[] = {color, depth};
     VkRenderPassCreateInfo rpci{};
     rpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -3324,6 +3330,23 @@ class VulkanDevice final : public IDevice {
     rpci.pDependencies = &dep;
     if (vkCreateRenderPass(device_, &rpci, nullptr, &render_pass_) != VK_SUCCESS) {
       return Status::Fail("vkCreateRenderPass failed");
+    }
+
+    // Compatible resume pass: load color+depth (post/debug after CaptureSceneColor).
+    // finalLayout PRESENT so Present() can submit after EndRenderPass.
+    VkAttachmentDescription color_load = color;
+    color_load.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    color_load.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    color_load.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentDescription depth_load = depth;
+    depth_load.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    depth_load.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    const VkAttachmentDescription load_atts[] = {color_load, depth_load};
+    rpci.pAttachments = load_atts;
+    if (vkCreateRenderPass(device_, &rpci, nullptr, &render_pass_load_) != VK_SUCCESS) {
+      return Status::Fail("vkCreateRenderPass (load) failed");
     }
     return Status::Ok();
   }
@@ -3446,7 +3469,7 @@ class VulkanDevice final : public IDevice {
 
     VkDescriptorSetLayoutBinding binds[10]{};
     binds[0].binding = 0;
-    binds[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    binds[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     binds[0].descriptorCount = 1;
     binds[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     binds[1].binding = 1;
@@ -3518,7 +3541,8 @@ class VulkanDevice final : public IDevice {
     VkPipelineRasterizationStateCreateInfo rs{
         VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
     rs.polygonMode = VK_POLYGON_MODE_FILL;
-    // NONE: single-sided ground stays visible if winding/neg-VP pairing drifts.
+    // NONE: neg-height VP + mesh winding can disagree; BACK cull previously hid the
+    // ground plane and made scale pillars look toppled (only back faces remained).
     rs.cullMode = VK_CULL_MODE_NONE;
     rs.frontFace = VK_FRONT_FACE_CLOCKWISE;  // neg-height VP + CCW meshes
     rs.lineWidth = 1.f;
@@ -3989,7 +4013,7 @@ class VulkanDevice final : public IDevice {
 
     VkDescriptorSetLayoutBinding binds[2]{};
     binds[0].binding = 0;
-    binds[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    binds[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     binds[0].descriptorCount = 1;
     binds[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     binds[1].binding = 1;
@@ -4057,8 +4081,10 @@ class VulkanDevice final : public IDevice {
     rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rs.lineWidth = 1.f;
     rs.rasterizerDiscardEnable = VK_FALSE;
+    // Align with D3D12 shadow PSO (DepthBias=1500 ≈ mild constant; slope 2.0).
+    // Larger constants crushed cascade contact shadows and flattened lit response.
     rs.depthBiasEnable = VK_TRUE;
-    rs.depthBiasConstantFactor = 1.5f;
+    rs.depthBiasConstantFactor = 1.25f;
     rs.depthBiasClamp = 0.f;
     rs.depthBiasSlopeFactor = 2.0f;
 
@@ -4132,19 +4158,18 @@ class VulkanDevice final : public IDevice {
   Status CreateLitBuffersAndDescriptors() {
     const VkMemoryPropertyFlags host =
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    if (auto st = CreateBuffer(kFrameUbSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, host, frame_ub_,
-                               frame_ub_mem_);
+    if (auto st = CreateBuffer(kFrameUbSize * kFramesInFlight, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                               host, frame_ub_, frame_ub_mem_);
         !st) {
       return st;
     }
-    if (auto st = CreateBuffer(kUniformAlign, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, host,
-                               shadow_frame_ub_, shadow_frame_ub_mem_);
+    if (auto st = CreateBuffer(kUniformAlign * kFramesInFlight, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                               host, shadow_frame_ub_, shadow_frame_ub_mem_);
         !st) {
       return st;
     }
-    if (auto st =
-            CreateBuffer(kUniformAlign * kMaxLitDraws, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, host,
-                         object_ub_, object_ub_mem_);
+    if (auto st = CreateBuffer(kUniformAlign * kMaxLitDraws * kFramesInFlight,
+                               VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, host, object_ub_, object_ub_mem_);
         !st) {
       return st;
     }
@@ -4165,8 +4190,8 @@ class VulkanDevice final : public IDevice {
     }
 
     VkDescriptorPoolSize sizes[3]{};
-    sizes[0] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2};
-    sizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 2};
+    sizes[0] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
+    sizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 4};
     sizes[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8};
     VkDescriptorPoolCreateInfo pci{};
     pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -4277,7 +4302,7 @@ class VulkanDevice final : public IDevice {
     writes[0].dstSet = lit_desc_set_;
     writes[0].dstBinding = 0;
     writes[0].descriptorCount = 1;
-    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     writes[0].pBufferInfo = &frame_info;
     writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[1].dstSet = lit_desc_set_;
@@ -4301,7 +4326,7 @@ class VulkanDevice final : public IDevice {
     writes[4].dstSet = shadow_desc_set_;
     writes[4].dstBinding = 0;
     writes[4].descriptorCount = 1;
-    writes[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     writes[4].pBufferInfo = &shadow_frame_info;
     writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[5].dstSet = shadow_desc_set_;
@@ -4417,6 +4442,10 @@ class VulkanDevice final : public IDevice {
     destroy_buf(shadow_frame_ub_, shadow_frame_ub_mem_);
     destroy_buf(object_ub_, object_ub_mem_);
 
+    if (render_pass_load_ != VK_NULL_HANDLE) {
+      vkDestroyRenderPass(device_, render_pass_load_, nullptr);
+      render_pass_load_ = VK_NULL_HANDLE;
+    }
     if (render_pass_ != VK_NULL_HANDLE) {
       vkDestroyRenderPass(device_, render_pass_, nullptr);
       render_pass_ = VK_NULL_HANDLE;
@@ -4498,9 +4527,11 @@ class VulkanDevice final : public IDevice {
   bool shadow_pass_active_ = false;
   int bound_cascade_ = -1;
   std::uint32_t lit_draws_this_frame_ = 0;
+  std::uint32_t shadow_draws_this_pass_ = 0;
   FrameLighting lighting_{};
 
   VkRenderPass render_pass_ = VK_NULL_HANDLE;
+  VkRenderPass render_pass_load_ = VK_NULL_HANDLE;
   VkImage depth_image_ = VK_NULL_HANDLE;
   VkDeviceMemory depth_mem_ = VK_NULL_HANDLE;
   VkImageView depth_view_ = VK_NULL_HANDLE;
