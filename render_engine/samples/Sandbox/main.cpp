@@ -304,10 +304,11 @@ int main(int argc, char** argv) {
     rdesc.sky_ps = shader_dir / "skybox_vk.ps.spv";
     rdesc.enable_shadows = true;
     rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
+    // Parity profile: Vulkan post is tonemap-only (no real SSAO/TAA/SSR). Keep the same
+    // flags on D3D12 so High shadows match without an AO darkening fork.
     rdesc.quality.enable_ssao = false;
-    // Halton clip jitter without a rock-solid history resolve crawls on large floors /
-    // thin green scale pillars. Keep High shadows; TAA stays opt-in via ImGui.
     rdesc.quality.enable_taa = false;
+    rdesc.quality.enable_ssr = false;
   } else {
     rdesc.lit_vs = shader_dir / "lit_cube.vs.cso";
     rdesc.lit_ps = shader_dir / "lit_cube.ps.cso";
@@ -323,9 +324,9 @@ int main(int argc, char** argv) {
     rdesc.sky_ps = shader_dir / "skybox.ps.cso";
     rdesc.enable_shadows = true;
     rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
-    // Halton clip jitter without a rock-solid history resolve crawls on large floors /
-    // thin green scale pillars. Keep High shadows; TAA stays opt-in via ImGui.
+    rdesc.quality.enable_ssao = false;
     rdesc.quality.enable_taa = false;
+    rdesc.quality.enable_ssr = false;
   }
   if (auto st = render.Init(a.device(), rdesc); !st) {
     engine::LogError(st.message());
@@ -510,6 +511,7 @@ int main(int argc, char** argv) {
   fx.bloom_threshold = 1.1f;
   fx.bloom_intensity = 0.2f;
   fx.enable_auto_exposure = false;
+  fx.enable_fog = false;  // env.fog_enabled already false; keep effect flag explicit for parity.
   // gpu-headless: single cascade + disable temporal FX for stable golden/readback.
   if (desc.gpu_headless || harness_stdio) {
     fx.shadow_cascades = 1;
@@ -933,35 +935,39 @@ int main(int argc, char** argv) {
           imgui.SliderFloat("Reflection intensity", &fx.reflection_intensity, 0.f, 1.5f);
           imgui.SliderInt("Shadow cascades", &fx.shadow_cascades, 1, 4);
           imgui.Separator();
+          // Tier buttons restore cascade counts; keep post effects that Vulkan cannot run
+          // disabled so D3D12/Vulkan stay comparable (checkbox can still opt-in on D3D).
+          auto apply_parity_post_flags = [&] {
+            fx.enable_ssao = false;
+            fx.enable_taa = false;
+            fx.enable_ssr = false;
+            fx.enable_bloom = false;
+            fx.enable_fog = false;
+            fx.enable_auto_exposure = false;
+          };
           if (imgui.Button("Low", 90.f, 0.f)) {
             const auto q =
                 engine::render::QualitySettings::FromTier(engine::render::QualityTier::Low);
-            fx.enable_ssao = q.enable_ssao;
-            fx.enable_taa = q.enable_taa;
-            fx.enable_bloom = q.enable_bloom;
-            fx.enable_ssr = q.enable_ssr;
             fx.shadow_cascades = q.shadow_cascades;
+            apply_parity_post_flags();
             render.set_quality(q);
+            render.set_effect_tuning(fx);
           }
           if (imgui.Button("Med", 90.f, 0.f)) {
             const auto q =
                 engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
-            fx.enable_ssao = q.enable_ssao;
-            fx.enable_taa = q.enable_taa;
-            fx.enable_bloom = q.enable_bloom;
-            fx.enable_ssr = q.enable_ssr;
             fx.shadow_cascades = q.shadow_cascades;
+            apply_parity_post_flags();
             render.set_quality(q);
+            render.set_effect_tuning(fx);
           }
           if (imgui.Button("High", 90.f, 0.f)) {
             const auto q =
                 engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
-            fx.enable_ssao = q.enable_ssao;
-            fx.enable_taa = q.enable_taa;
-            fx.enable_bloom = q.enable_bloom;
-            fx.enable_ssr = q.enable_ssr;
             fx.shadow_cascades = q.shadow_cascades;
+            apply_parity_post_flags();
             render.set_quality(q);
+            render.set_effect_tuning(fx);
           }
           imgui.Separator();
           if (imgui.Button("Quit", 80.f, 0.f)) {
@@ -1194,7 +1200,10 @@ int main(int argc, char** argv) {
                         " hiz=" + (engine::QueryFeature("hiz") ? "1" : "0"));
       }
     }
-    if ((app_ref.frame_index() % 64) == 1 && !use_vulkan && !gpu_headless_assert) {
+    // GPU probe writes the same cube slot as IBL prefilter on D3D — skip while IBL is on
+    // so both backends keep the loaded specular environment.
+    if ((app_ref.frame_index() % 64) == 1 && !use_vulkan && !gpu_headless_assert &&
+        !fx.enable_ibl) {
       std::vector<engine::rhi::LitDrawItem> probe_items;
       probe_items.reserve(8);
       for (const auto& inst : scene.instances) {
@@ -1369,10 +1378,12 @@ int main(int argc, char** argv) {
             tier = engine::render::QualityTier::Medium;
           }
           const auto q = engine::render::QualitySettings::FromTier(tier);
-          fx.enable_ssao = q.enable_ssao;
-          fx.enable_taa = q.enable_taa;
-          fx.enable_bloom = q.enable_bloom;
-          fx.enable_ssr = q.enable_ssr;
+          // Keep Sandbox post profile aligned (Vulkan tonemap-only).
+          fx.enable_ssao = false;
+          fx.enable_taa = false;
+          fx.enable_bloom = false;
+          fx.enable_ssr = false;
+          fx.enable_fog = false;
           if (!(desc.gpu_headless || harness_stdio)) {
             fx.shadow_cascades = q.shadow_cascades;
           }

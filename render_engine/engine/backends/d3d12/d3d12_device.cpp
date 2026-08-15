@@ -1089,6 +1089,8 @@ class D3D12Device final : public IDevice {
     shadow_pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
     shadow_pso.RasterizerState.FrontCounterClockwise = TRUE;
     shadow_pso.RasterizerState.DepthClipEnable = TRUE;
+    // Integer depth-bias units (D32_FLOAT). Vulkan uses depthBiasConstantFactor=1.25 which
+    // was tuned to match this slope=2.0 pair — do not assume the numerics are interchangeable.
     shadow_pso.RasterizerState.DepthBias = 1500;
     shadow_pso.RasterizerState.SlopeScaledDepthBias = 2.0f;
     shadow_pso.RasterizerState.DepthBiasClamp = 0.f;

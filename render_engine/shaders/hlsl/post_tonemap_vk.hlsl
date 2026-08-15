@@ -1,4 +1,6 @@
 // Vulkan post: sample scene_color then apply exposure/tonemap to swapchain.
+// Intentionally tonemap-only (no SSAO/TAA/bloom/fog). Sandbox keeps those effect
+// flags off on both backends so D3D12 post_ssao_taa does not fork the look.
 // D3D-style Y-up NDC; backend uses negative viewport height for upright FB.
 
 struct VSOut {

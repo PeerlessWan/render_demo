@@ -29,11 +29,13 @@ constexpr std::uint32_t kFramesInFlight = 2;
 constexpr std::uint32_t kMaxLitDraws = 2048;
 constexpr VkDeviceSize kUniformAlign = 256;
 constexpr std::uint32_t kShadowMapSize = 2048;
+constexpr std::uint32_t kLocalShadowMapSize = 2048;
 constexpr int kMaxMeshSlots = 8;
 constexpr std::uint32_t kMaxScreenQuads = 1024;
 constexpr std::uint32_t kMaxDebugVerts = 16384;
 constexpr std::uint32_t kMaxUiVerts = 16384;
 constexpr std::uint32_t kMaxUiIndices = 49152;
+static constexpr VkFormat kHdrColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
 std::string VkErr(VkResult r) {
   return "VkResult=" + std::to_string(static_cast<int>(r));
@@ -71,14 +73,18 @@ struct FrameGpu {
   float tiles_per_row;
   float enable_ibl;
   float ibl_intensity;
-  float enable_local_shadow;
-  float local_shadow_bias;
-  float local_shadow_tiles;
+  float enable_reflection;
+  float reflection_intensity;
   float local_count;
-  float _pad_local_cb;  // HLSL aligns float4 arrays to 16 bytes
+  float enable_taa;
+  float _pad_before_lights[2];
   float local_pos_range[4][4];
   float local_color_intensity[4][4];
-  float local_shadow_vp[16];
+  float local_shadow_vp[12][16];
+  float enable_local_shadow;
+  float local_shadow_bias;
+  float local_shadow_count;
+  float local_shadow_tiles;
 };
 
 struct ShadowFrameGpu {
@@ -261,6 +267,8 @@ class VulkanDevice final : public IDevice {
     frame_recording_ = true;
     cleared_ = false;
     pass_active_ = false;
+    present_pass_active_ = false;
+    present_pass_load_ = false;
     shadow_pass_active_ = false;
     post_resolved_this_frame_ = false;
     lit_draws_this_frame_ = 0;
@@ -345,21 +353,22 @@ class VulkanDevice final : public IDevice {
                            VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
       }
     }
-    // After ResolvePostEffects we already ended the lit/post pass and may hold scene_color RT;
-    // do not re-open with CLEAR (would wipe tonemap).
+    // Ensure HDR targets are cleared when nothing drew this frame. Do not re-open HDR after post.
     if (lit_ready_ && !pass_active_ && !post_resolved_this_frame_) {
       if (auto st = BeginLitRenderPass(clear_color_); !st) {
         return st;
       }
     }
-    const bool ended_clear_only_pass = pass_active_ && !post_resolved_this_frame_;
+    const bool need_swapchain_present_barrier =
+        pass_active_ && present_pass_active_ && !present_pass_load_;
     if (pass_active_) {
       vkCmdEndRenderPass(cmd);
       pass_active_ = false;
+      present_pass_active_ = false;
+      present_pass_load_ = false;
     }
-    // Clear pass finalLayout is COLOR_ATTACHMENT (so CaptureSceneColor can blit). Move to
-    // PRESENT when that was the last pass. Load/post pass already ends as PRESENT.
-    if (ended_clear_only_pass) {
+    // Present pass (clear color) finalLayout is COLOR_ATTACHMENT. Move swapchain to PRESENT.
+    if (need_swapchain_present_barrier) {
       VkImageMemoryBarrier to_present{};
       to_present.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
       to_present.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -534,13 +543,10 @@ class VulkanDevice final : public IDevice {
     data.tiles_per_row = static_cast<float>(lighting_.cascade_tiles_per_row);
     data.enable_ibl = lighting_.enable_ibl ? 1.f : 0.f;
     data.ibl_intensity = lighting_.ibl_intensity;
-    // Force off until a dedicated local-shadow atlas exists (shared CSM atlas stomps cascades).
-    data.enable_local_shadow = 0.f;
-    data.local_shadow_bias = lighting_.local_shadow_bias > 0.f ? lighting_.local_shadow_bias
-                                                              : lighting_.shadow_bias;
-    data.local_shadow_tiles =
-        static_cast<float>((std::max)(1, lighting_.local_shadow_tiles_per_row));
+    data.enable_reflection = lighting_.enable_reflection_probe ? 1.f : 0.f;
+    data.reflection_intensity = lighting_.reflection_intensity;
     data.local_count = static_cast<float>(lighting_.local_light_count);
+    data.enable_taa = lighting_.enable_taa ? 1.f : 0.f;
     for (int i = 0; i < 4; ++i) {
       data.local_pos_range[i][0] = lighting_.local_pos[static_cast<std::size_t>(i)].x;
       data.local_pos_range[i][1] = lighting_.local_pos[static_cast<std::size_t>(i)].y;
@@ -551,8 +557,19 @@ class VulkanDevice final : public IDevice {
       data.local_color_intensity[i][2] = lighting_.local_color[static_cast<std::size_t>(i)].b;
       data.local_color_intensity[i][3] = lighting_.local_intensity[static_cast<std::size_t>(i)];
     }
-    std::memcpy(data.local_shadow_vp, lighting_.local_shadow_vp.m.data(),
-                sizeof(data.local_shadow_vp));
+    for (int i = 0; i < 12; ++i) {
+      std::memcpy(data.local_shadow_vp[i],
+                  lighting_.local_shadow_vps[static_cast<std::size_t>(i)].m.data(),
+                  sizeof(data.local_shadow_vp[i]));
+    }
+    std::memcpy(data.local_shadow_vp[0], lighting_.local_shadow_vp.m.data(),
+                sizeof(data.local_shadow_vp[0]));
+    data.enable_local_shadow =
+        (lighting_.enable_local_shadow && local_shadow_image_ != VK_NULL_HANDLE) ? 1.f : 0.f;
+    data.local_shadow_bias = lighting_.local_shadow_bias;
+    data.local_shadow_count = static_cast<float>(lighting_.local_shadow_count);
+    data.local_shadow_tiles =
+        static_cast<float>((std::max)(1, lighting_.local_shadow_tiles_per_row));
 
     const VkDeviceSize frame_off = static_cast<VkDeviceSize>(frame_index_) * kFrameUbSize;
     void* mapped = nullptr;
@@ -646,12 +663,8 @@ class VulkanDevice final : public IDevice {
   }
 
   Status DrawShadowCubes(std::span<const LitDrawItem> items) override {
-    // Local-shadow stub: BeginLocalShadowPass does not open the CSM atlas RP.
-    if (local_shadow_stub_active_ && !shadow_pass_active_) {
-      return Status::Ok();
-    }
-    if (!lit_ready_ || !shadow_pass_active_) {
-      return Status::Fail("BeginShadowPass not active");
+    if (!lit_ready_ || (!shadow_pass_active_ && !local_shadow_pass_active_)) {
+      return Status::Fail("BeginShadowPass/BeginLocalShadowPass not active");
     }
     if (items.empty()) {
       return Status::Ok();
@@ -710,45 +723,108 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
   Status BeginLocalShadowPass() override {
-    if (!lit_ready_) {
+    if (!lit_ready_ || local_shadow_image_ == VK_NULL_HANDLE) {
       return Status::Fail("SetupLitMesh not called");
     }
     if (!frame_recording_) {
       return Status::Fail("BeginFrame not called");
     }
-    // Do NOT write into the CSM atlas: local tiles shared the same 2K depth and
-    // stomped cascade 0/1, which made floor/cubes flicker when shadows were on.
-    // Keep a Feature-level stub until a separate local-shadow atlas exists.
-    local_shadow_stub_active_ = true;
-    engine::SetFeatureOverride("local_shadow", true);
-    if (!local_shadow_warned_) {
-      LogInfo("Vulkan local shadow stub (no atlas write; CSM atlas preserved)");
-      local_shadow_warned_ = true;
+    VkCommandBuffer cmd = command_buffers_[frame_index_];
+    if (pass_active_) {
+      vkCmdEndRenderPass(cmd);
+      pass_active_ = false;
     }
-    return Status::Ok();
+    if (shadow_pass_active_) {
+      vkCmdEndRenderPass(cmd);
+      shadow_pass_active_ = false;
+      BarrierShadowImage(cmd, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+    }
+
+    if (local_shadow_layout_ != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+      BarrierLocalShadowImage(cmd, local_shadow_layout_,
+                              VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    }
+
+    VkClearValue clear{};
+    clear.depthStencil = {1.f, 0};
+    VkRenderPassBeginInfo rp{};
+    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp.renderPass = shadow_render_pass_;
+    rp.framebuffer = local_shadow_framebuffer_;
+    rp.renderArea.extent = {kLocalShadowMapSize, kLocalShadowMapSize};
+    rp.clearValueCount = 1;
+    rp.pClearValues = &clear;
+    vkCmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+
+    local_shadow_pass_active_ = true;
+    shadow_draws_this_pass_ = 0;
+    used_graphics_ = true;
+    engine::SetFeatureOverride("local_shadow", true);
+    return BindLocalShadowTile(0);
   }
   Status BindLocalShadowTile(int tile) override {
-    if (!local_shadow_stub_active_) {
+    if (!local_shadow_pass_active_) {
       return Status::Fail("BeginLocalShadowPass not active");
     }
-    if (tile < 0 || tile >= lighting_.local_shadow_tile_count) {
+    const int count = (std::max)(1, lighting_.local_shadow_tile_count > 0
+                                        ? lighting_.local_shadow_tile_count
+                                        : lighting_.local_shadow_count);
+    if (tile < 0 || tile >= count) {
       return Status::Fail(ErrorCode::InvalidArgument, "Invalid local shadow tile");
     }
-    (void)tile;
+
+    ShadowFrameGpu frame{};
+    std::memcpy(frame.view_proj,
+                lighting_.local_shadow_vps[static_cast<std::size_t>(tile)].m.data(),
+                sizeof(frame.view_proj));
+    if (tile == 0) {
+      std::memcpy(frame.view_proj, lighting_.local_shadow_vp.m.data(), sizeof(frame.view_proj));
+    }
+    const VkDeviceSize frame_sh_off = static_cast<VkDeviceSize>(frame_index_) * kUniformAlign;
+    void* mapped = nullptr;
+    if (vkMapMemory(device_, shadow_frame_ub_mem_, frame_sh_off, sizeof(frame), 0, &mapped) !=
+        VK_SUCCESS) {
+      return Status::Fail("Map shadow frame UB failed");
+    }
+    std::memcpy(mapped, &frame, sizeof(frame));
+    vkUnmapMemory(device_, shadow_frame_ub_mem_);
+
+    const int tiles_per_row = (std::max)(1, lighting_.local_shadow_tiles_per_row);
+    const float tile_px =
+        static_cast<float>(kLocalShadowMapSize) / static_cast<float>(tiles_per_row);
+    const int ix = tile % tiles_per_row;
+    const int iy = tile / tiles_per_row;
+    const float ox = static_cast<float>(ix) * tile_px;
+    const float oy = static_cast<float>(iy) * tile_px;
+
+    VkCommandBuffer cmd = command_buffers_[frame_index_];
+    VkViewport vp = MakeYFlippedViewport(ox, oy, tile_px, tile_px);
+    vkCmdSetViewport(cmd, 0, 1, &vp);
+    VkRect2D scissor{};
+    scissor.offset.x = static_cast<std::int32_t>(ox);
+    scissor.offset.y = static_cast<std::int32_t>(oy);
+    scissor.extent.width = static_cast<std::uint32_t>(tile_px);
+    scissor.extent.height = static_cast<std::uint32_t>(tile_px);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
     return Status::Ok();
   }
   Status EndLocalShadowPass() override {
-    if (!local_shadow_stub_active_) {
+    if (!local_shadow_pass_active_) {
       return Status::Ok();
     }
-    local_shadow_stub_active_ = false;
-    // Sampling stays off: shader would read CSM depths with a local VP.
-    lighting_.enable_local_shadow = false;
-    engine::SetFeatureOverride("local_shadow", true);
-    if (!local_shadow_sample_warned_) {
-      LogInfo("Vulkan local shadow sample deferred (needs dedicated atlas)");
-      local_shadow_sample_warned_ = true;
+    VkCommandBuffer cmd = command_buffers_[frame_index_];
+    vkCmdEndRenderPass(cmd);
+    local_shadow_pass_active_ = false;
+    BarrierLocalShadowImage(cmd, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                            VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+    if (lit_desc_set_ != VK_NULL_HANDLE && local_shadow_view_ != VK_NULL_HANDLE &&
+        shadow_sampler_ != VK_NULL_HANDLE) {
+      UpdateLitCombinedBinding(10, local_shadow_view_, shadow_sampler_,
+                               VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
     }
+    lighting_.enable_local_shadow = true;
+    engine::SetFeatureOverride("local_shadow", true);
     return Status::Ok();
   }
 
@@ -802,6 +878,11 @@ class VulkanDevice final : public IDevice {
     if (auto st = CreatePostPipeline(vs.value(), ps.value()); !st) {
       return st;
     }
+    if (lit_ready_) {
+      if (auto st = EnsureSceneColor(); !st) {
+        return st;
+      }
+    }
     post_stub_ready_ = true;
     LogInfo("Vulkan post mesh ready (SPIR-V tonemap fullscreen)");
     return Status::Ok();
@@ -831,11 +912,8 @@ class VulkanDevice final : public IDevice {
     }
     UpdatePostSceneColorDescriptor();
 
-    if (!pass_active_) {
-      // LOAD color+depth: tonemap overwrites color; depth must survive for debug lines.
-      if (auto st = BeginLitRenderPass(clear_color_, /*load_contents=*/true); !st) {
-        return st;
-      }
+    if (auto st = BeginPresentRenderPass(clear_color_, /*load_contents=*/false); !st) {
+      return st;
     }
 
     struct PostPC {
@@ -874,7 +952,8 @@ class VulkanDevice final : public IDevice {
   }
 
   Status UploadReflectionCubemap(const std::uint8_t* rgba_faces, int face_size) override {
-    return UploadIblCubemapGpu(rgba_faces, face_size, true);
+    // Match D3D: reflection probe and IBL prefilter share the specular cube slot.
+    return UploadIblPrefilterCubemap(rgba_faces, face_size);
   }
 
   Status UploadIblIrradianceCubemap(const std::uint8_t* rgba_faces, int face_size) override {
@@ -918,12 +997,15 @@ class VulkanDevice final : public IDevice {
   }
 
   Status DrawTransparentLitCubes(std::span<const LitDrawItem> items) override {
-    // No transparent lit PSO yet; reuse opaque lit path when lit is ready.
-    return DrawLitCubes(items);
+    return DrawLitCubesWithPipeline(items, lit_pipeline_transparent_);
   }
 
   Status DrawLitCubes(std::span<const LitDrawItem> items) override {
-    if (!lit_ready_) {
+    return DrawLitCubesWithPipeline(items, lit_pipeline_);
+  }
+
+  Status DrawLitCubesWithPipeline(std::span<const LitDrawItem> items, VkPipeline pipeline) {
+    if (!lit_ready_ || pipeline == VK_NULL_HANDLE) {
       return Status::Fail("SetupLitMesh not called");
     }
     if (!frame_recording_) {
@@ -939,7 +1021,7 @@ class VulkanDevice final : public IDevice {
     }
 
     VkCommandBuffer cmd = command_buffers_[frame_index_];
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lit_pipeline_);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
     VkViewport vp = MakeYFlippedViewport(0.f, 0.f, static_cast<float>(width_),
                                           static_cast<float>(height_));
@@ -1075,7 +1157,7 @@ class VulkanDevice final : public IDevice {
       return Status::Fail("BeginFrame not called");
     }
     if (!pass_active_) {
-      if (auto st = BeginLitRenderPass(clear_color_, post_resolved_this_frame_); !st) {
+      if (auto st = BeginPresentRenderPass(clear_color_, post_resolved_this_frame_); !st) {
         return st;
       }
     }
@@ -1159,7 +1241,7 @@ class VulkanDevice final : public IDevice {
     }
     if (!pass_active_) {
       // Prefer LOAD so grid occludes behind scene depth written during OpaqueLit.
-      if (auto st = BeginLitRenderPass(clear_color_, /*load_contents=*/true); !st) {
+      if (auto st = BeginPresentRenderPass(clear_color_, /*load_contents=*/true); !st) {
         return st;
       }
     }
@@ -1239,8 +1321,8 @@ class VulkanDevice final : public IDevice {
     if (!ps) {
       return ps.status();
     }
-    if (render_pass_ == VK_NULL_HANDLE) {
-      return Status::Fail("SetupLitMesh first (UI needs lit render pass)");
+    if (present_render_pass_ == VK_NULL_HANDLE) {
+      return Status::Fail("SetupLitMesh first (UI needs present render pass)");
     }
 
     VkShaderModule vs_mod = VK_NULL_HANDLE;
@@ -1358,7 +1440,7 @@ class VulkanDevice final : public IDevice {
     gp.pColorBlendState = &blend;
     gp.pDynamicState = &dyn;
     gp.layout = ui_pipeline_layout_;
-    gp.renderPass = render_pass_;
+    gp.renderPass = present_render_pass_;
     gp.subpass = 0;
     const VkResult r =
         vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &gp, nullptr, &ui_pipeline_);
@@ -1482,7 +1564,7 @@ class VulkanDevice final : public IDevice {
       return Status::Fail("BeginFrame not called");
     }
     if (!pass_active_) {
-      if (auto st = BeginLitRenderPass(clear_color_, post_resolved_this_frame_); !st) {
+      if (auto st = BeginPresentRenderPass(clear_color_, post_resolved_this_frame_); !st) {
         return st;
       }
     }
@@ -1930,16 +2012,25 @@ class VulkanDevice final : public IDevice {
     }
     const auto* src = static_cast<const std::uint8_t*>(mapped);
     out_rgba.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4, 0);
+    const bool bgra = surface_format_.format == VK_FORMAT_B8G8R8A8_UNORM ||
+                      surface_format_.format == VK_FORMAT_B8G8R8A8_SRGB;
     for (int y = 0; y < h; ++y) {
       const auto* row = src + static_cast<std::size_t>(y) * static_cast<std::size_t>(row_pitch);
       for (int x = 0; x < w; ++x) {
         const std::size_t di =
             (static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)) *
             4;
-        out_rgba[di + 0] = row[x * 4 + 0];
-        out_rgba[di + 1] = row[x * 4 + 1];
-        out_rgba[di + 2] = row[x * 4 + 2];
-        out_rgba[di + 3] = row[x * 4 + 3];
+        if (bgra) {
+          out_rgba[di + 0] = row[x * 4 + 2];
+          out_rgba[di + 1] = row[x * 4 + 1];
+          out_rgba[di + 2] = row[x * 4 + 0];
+          out_rgba[di + 3] = row[x * 4 + 3];
+        } else {
+          out_rgba[di + 0] = row[x * 4 + 0];
+          out_rgba[di + 1] = row[x * 4 + 1];
+          out_rgba[di + 2] = row[x * 4 + 2];
+          out_rgba[di + 3] = row[x * 4 + 3];
+        }
       }
     }
     vkUnmapMemory(device_, color_readback_mem_);
@@ -1997,13 +2088,18 @@ class VulkanDevice final : public IDevice {
   }
 
   void UpdateLitCombinedBinding(std::uint32_t binding, VkImageView view, VkSampler sampler) {
+    UpdateLitCombinedBinding(binding, view, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  }
+
+  void UpdateLitCombinedBinding(std::uint32_t binding, VkImageView view, VkSampler sampler,
+                                VkImageLayout layout) {
     if (lit_desc_set_ == VK_NULL_HANDLE || view == VK_NULL_HANDLE || sampler == VK_NULL_HANDLE) {
       return;
     }
     VkDescriptorImageInfo info{};
     info.sampler = sampler;
     info.imageView = view;
-    info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    info.imageLayout = layout;
     VkWriteDescriptorSet write{};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     write.dstSet = lit_desc_set_;
@@ -2541,7 +2637,7 @@ class VulkanDevice final : public IDevice {
     gp.pColorBlendState = &blend;
     gp.pDynamicState = &dyn;
     gp.layout = quad_pipeline_layout_;
-    gp.renderPass = render_pass_;
+    gp.renderPass = present_render_pass_;
     gp.subpass = 0;
     const VkResult r =
         vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &gp, nullptr, &quad_pipeline_);
@@ -2679,7 +2775,7 @@ class VulkanDevice final : public IDevice {
     gp.pColorBlendState = &blend;
     gp.pDynamicState = &dyn;
     gp.layout = debug_pipeline_layout_;
-    gp.renderPass = render_pass_;
+    gp.renderPass = present_render_pass_;
     gp.subpass = 0;
     const VkResult r =
         vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &gp, nullptr, &debug_pipeline_);
@@ -2745,8 +2841,8 @@ class VulkanDevice final : public IDevice {
       used_graphics_ = true;
       return Status::Ok();
     }
-    if (framebuffers_.empty() || image_index_ >= framebuffers_.size()) {
-      return Status::Fail("Lit framebuffers missing");
+    if (hdr_framebuffer_ == VK_NULL_HANDLE) {
+      return Status::Fail("HDR framebuffer missing");
     }
     if (load_contents && render_pass_load_ == VK_NULL_HANDLE) {
       return Status::Fail("Lit load render pass missing");
@@ -2759,6 +2855,43 @@ class VulkanDevice final : public IDevice {
     VkRenderPassBeginInfo rp{};
     rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rp.renderPass = load_contents ? render_pass_load_ : render_pass_;
+    rp.framebuffer = hdr_framebuffer_;
+    rp.renderArea.extent = {width_, height_};
+    rp.clearValueCount = 2;
+    rp.pClearValues = clears;
+
+    vkCmdBeginRenderPass(command_buffers_[frame_index_], &rp, VK_SUBPASS_CONTENTS_INLINE);
+    pass_active_ = true;
+    present_pass_active_ = false;
+    present_pass_load_ = false;
+    cleared_ = true;
+    used_graphics_ = true;
+    return Status::Ok();
+  }
+
+  Status BeginPresentRenderPass(const ColorRgba& color, bool load_contents = false) {
+    if (pass_active_) {
+      cleared_ = true;
+      used_graphics_ = true;
+      return Status::Ok();
+    }
+    if (framebuffers_.empty() || image_index_ >= framebuffers_.size()) {
+      return Status::Fail("Present framebuffers missing");
+    }
+    if (load_contents && present_render_pass_load_ == VK_NULL_HANDLE) {
+      return Status::Fail("Present load render pass missing");
+    }
+    if (!load_contents && present_render_pass_ == VK_NULL_HANDLE) {
+      return Status::Fail("Present render pass missing");
+    }
+
+    VkClearValue clears[2]{};
+    clears[0].color = {{color.r, color.g, color.b, color.a}};
+    clears[1].depthStencil = {1.f, 0};
+
+    VkRenderPassBeginInfo rp{};
+    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp.renderPass = load_contents ? present_render_pass_load_ : present_render_pass_;
     rp.framebuffer = framebuffers_[image_index_];
     rp.renderArea.extent = {width_, height_};
     rp.clearValueCount = 2;
@@ -2766,6 +2899,8 @@ class VulkanDevice final : public IDevice {
 
     vkCmdBeginRenderPass(command_buffers_[frame_index_], &rp, VK_SUBPASS_CONTENTS_INLINE);
     pass_active_ = true;
+    present_pass_active_ = true;
+    present_pass_load_ = load_contents;
     cleared_ = true;
     used_graphics_ = true;
     return Status::Ok();
@@ -2904,10 +3039,22 @@ class VulkanDevice final : public IDevice {
     }
 
     const char* exts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    VkPhysicalDeviceFeatures features{};
+    VkPhysicalDeviceFeatures available{};
+    vkGetPhysicalDeviceFeatures(physical_, &available);
+    if (available.depthClamp) {
+      features.depthClamp = VK_TRUE;
+      depth_clamp_enabled_ = true;
+    } else {
+      depth_clamp_enabled_ = false;
+      LogWarn("Vulkan depthClamp unavailable; transparent lit uses clip (may differ from D3D)");
+    }
+
     VkDeviceCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     ci.queueCreateInfoCount = static_cast<std::uint32_t>(qcis.size());
     ci.pQueueCreateInfos = qcis.data();
+    ci.pEnabledFeatures = &features;
     ci.enabledExtensionCount = 1;
     ci.ppEnabledExtensionNames = exts;
 
@@ -3073,13 +3220,23 @@ class VulkanDevice final : public IDevice {
     }
     vkDeviceWaitIdle(device_);
     DestroyFramebuffersOnly();
+    DestroySceneColorOnly();
     DestroyDepthOnly();
     DestroySwapchainViews();
+    if (lit_ready_) {
+      DestroyPresentRenderPasses();
+    }
     if (auto st = CreateSwapchain(); !st) {
       return st;
     }
     if (lit_ready_) {
       if (auto st = CreateDepthResources(); !st) {
+        return st;
+      }
+      if (auto st = CreatePresentRenderPass(); !st) {
+        return st;
+      }
+      if (auto st = EnsureSceneColor(); !st) {
         return st;
       }
       if (auto st = CreateFramebuffers(); !st) {
@@ -3248,6 +3405,53 @@ class VulkanDevice final : public IDevice {
     shadow_layout_ = new_layout;
   }
 
+  void BarrierLocalShadowImage(VkCommandBuffer cmd, VkImageLayout old_layout,
+                               VkImageLayout new_layout) {
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = old_layout;
+    barrier.newLayout = new_layout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = local_shadow_image_;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 1;
+
+    VkPipelineStageFlags src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    VkPipelineStageFlags dst_stage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
+        new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+      src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+      dst_stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    } else if (old_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL &&
+               new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+      barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+      src_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+      dst_stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    } else if (old_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL &&
+               new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL) {
+      barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      src_stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+      dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else {
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = 0;
+    }
+
+    vkCmdPipelineBarrier(cmd, src_stage, dst_stage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    local_shadow_layout_ = new_layout;
+  }
+
   Status ImmediateTransitionShadow(VkImageLayout new_layout) {
     VkCommandBufferAllocateInfo alloc{};
     alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -3276,6 +3480,13 @@ class VulkanDevice final : public IDevice {
   }
 
   Status CreateRenderPass() {
+    if (auto st = CreateLitRenderPass(); !st) {
+      return st;
+    }
+    return CreatePresentRenderPass();
+  }
+
+  Status CreateLitRenderPass() {
     if (render_pass_ != VK_NULL_HANDLE) {
       return Status::Ok();
     }
@@ -3298,11 +3509,9 @@ class VulkanDevice final : public IDevice {
     dep.dstAccessMask =
         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-    // First open of the frame: clear color+depth. Keep color in COLOR_ATTACHMENT so
-    // CaptureSceneColor can blit without an invalid PRESENT→TRANSFER transition.
-    // STORE depth so post/debug can LOAD it afterward.
+    // Lit/sky: HDR offscreen + depth. Keep HDR in COLOR_ATTACHMENT for post sampling.
     VkAttachmentDescription color{};
-    color.format = surface_format_.format;
+    color.format = kHdrColorFormat;
     color.samples = VK_SAMPLE_COUNT_1_BIT;
     color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -3334,13 +3543,9 @@ class VulkanDevice final : public IDevice {
       return Status::Fail("vkCreateRenderPass failed");
     }
 
-    // Compatible resume pass: load color+depth (post/debug after CaptureSceneColor).
-    // finalLayout PRESENT so Present() can submit after EndRenderPass.
     VkAttachmentDescription color_load = color;
     color_load.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     color_load.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    color_load.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
     VkAttachmentDescription depth_load = depth;
     depth_load.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     depth_load.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -3349,6 +3554,86 @@ class VulkanDevice final : public IDevice {
     rpci.pAttachments = load_atts;
     if (vkCreateRenderPass(device_, &rpci, nullptr, &render_pass_load_) != VK_SUCCESS) {
       return Status::Fail("vkCreateRenderPass (load) failed");
+    }
+    return Status::Ok();
+  }
+
+  void DestroyPresentRenderPasses() {
+    if (present_render_pass_load_ != VK_NULL_HANDLE) {
+      vkDestroyRenderPass(device_, present_render_pass_load_, nullptr);
+      present_render_pass_load_ = VK_NULL_HANDLE;
+    }
+    if (present_render_pass_ != VK_NULL_HANDLE) {
+      vkDestroyRenderPass(device_, present_render_pass_, nullptr);
+      present_render_pass_ = VK_NULL_HANDLE;
+    }
+  }
+
+  Status CreatePresentRenderPass() {
+    DestroyPresentRenderPasses();
+
+    VkAttachmentReference color_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkAttachmentReference depth_ref{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+
+    VkSubpassDescription sub{};
+    sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.colorAttachmentCount = 1;
+    sub.pColorAttachments = &color_ref;
+    sub.pDepthStencilAttachment = &depth_ref;
+
+    VkSubpassDependency dep{};
+    dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dep.dstSubpass = 0;
+    dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                       VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dep.dstStageMask = dep.srcStageMask;
+    dep.srcAccessMask = 0;
+    dep.dstAccessMask =
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+    // Post/debug/UI: LDR swapchain. Clear color, load depth from lit pass.
+    VkAttachmentDescription color{};
+    color.format = surface_format_.format;
+    color.samples = VK_SAMPLE_COUNT_1_BIT;
+    color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    color.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentDescription depth{};
+    depth.format = VK_FORMAT_D32_SFLOAT;
+    depth.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    const VkAttachmentDescription atts[] = {color, depth};
+    VkRenderPassCreateInfo rpci{};
+    rpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    rpci.attachmentCount = 2;
+    rpci.pAttachments = atts;
+    rpci.subpassCount = 1;
+    rpci.pSubpasses = &sub;
+    rpci.dependencyCount = 1;
+    rpci.pDependencies = &dep;
+    if (vkCreateRenderPass(device_, &rpci, nullptr, &present_render_pass_) != VK_SUCCESS) {
+      return Status::Fail("vkCreateRenderPass (present) failed");
+    }
+
+    VkAttachmentDescription color_load = color;
+    color_load.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    color_load.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    color_load.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    const VkAttachmentDescription load_atts[] = {color_load, depth};
+    rpci.pAttachments = load_atts;
+    if (vkCreateRenderPass(device_, &rpci, nullptr, &present_render_pass_load_) != VK_SUCCESS) {
+      return Status::Fail("vkCreateRenderPass (present load) failed");
     }
     return Status::Ok();
   }
@@ -3415,6 +3700,10 @@ class VulkanDevice final : public IDevice {
   }
 
   void DestroyFramebuffersOnly() {
+    if (hdr_framebuffer_ != VK_NULL_HANDLE) {
+      vkDestroyFramebuffer(device_, hdr_framebuffer_, nullptr);
+      hdr_framebuffer_ = VK_NULL_HANDLE;
+    }
     for (VkFramebuffer fb : framebuffers_) {
       if (fb != VK_NULL_HANDLE) {
         vkDestroyFramebuffer(device_, fb, nullptr);
@@ -3423,14 +3712,48 @@ class VulkanDevice final : public IDevice {
     framebuffers_.clear();
   }
 
+  Status RecreateHdrFramebuffer() {
+    if (hdr_framebuffer_ != VK_NULL_HANDLE) {
+      vkDestroyFramebuffer(device_, hdr_framebuffer_, nullptr);
+      hdr_framebuffer_ = VK_NULL_HANDLE;
+    }
+    if (render_pass_ == VK_NULL_HANDLE || scene_color_view_ == VK_NULL_HANDLE ||
+        depth_view_ == VK_NULL_HANDLE) {
+      return Status::Ok();
+    }
+    const VkImageView hdr_atts[] = {scene_color_view_, depth_view_};
+    VkFramebufferCreateInfo hfbi{};
+    hfbi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    hfbi.renderPass = render_pass_;
+    hfbi.attachmentCount = 2;
+    hfbi.pAttachments = hdr_atts;
+    hfbi.width = width_;
+    hfbi.height = height_;
+    hfbi.layers = 1;
+    if (vkCreateFramebuffer(device_, &hfbi, nullptr, &hdr_framebuffer_) != VK_SUCCESS) {
+      return Status::Fail("vkCreateFramebuffer (HDR) failed");
+    }
+    return Status::Ok();
+  }
+
   Status CreateFramebuffers() {
     DestroyFramebuffersOnly();
+    if (auto st = EnsureSceneColor(); !st) {
+      return st;
+    }
+    if (present_render_pass_ == VK_NULL_HANDLE) {
+      return Status::Fail("Present render pass missing for framebuffers");
+    }
+    if (auto st = RecreateHdrFramebuffer(); !st) {
+      return st;
+    }
+
     framebuffers_.resize(swapchain_views_.size());
     for (std::size_t i = 0; i < swapchain_views_.size(); ++i) {
       const VkImageView atts[] = {swapchain_views_[i], depth_view_};
       VkFramebufferCreateInfo fi{};
       fi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-      fi.renderPass = render_pass_;
+      fi.renderPass = present_render_pass_;
       fi.attachmentCount = 2;
       fi.pAttachments = atts;
       fi.width = width_;
@@ -3469,7 +3792,7 @@ class VulkanDevice final : public IDevice {
       return st;
     }
 
-    VkDescriptorSetLayoutBinding binds[10]{};
+    VkDescriptorSetLayoutBinding binds[11]{};
     binds[0].binding = 0;
     binds[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     binds[0].descriptorCount = 1;
@@ -3478,7 +3801,7 @@ class VulkanDevice final : public IDevice {
     binds[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     binds[1].descriptorCount = 1;
     binds[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    for (std::uint32_t i = 0; i < 8; ++i) {
+    for (std::uint32_t i = 0; i < 9; ++i) {
       binds[2 + i].binding = 2 + i;
       binds[2 + i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
       binds[2 + i].descriptorCount = 1;
@@ -3487,7 +3810,7 @@ class VulkanDevice final : public IDevice {
 
     VkDescriptorSetLayoutCreateInfo dsl{};
     dsl.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dsl.bindingCount = 10;
+    dsl.bindingCount = 11;
     dsl.pBindings = binds;
     if (vkCreateDescriptorSetLayout(device_, &dsl, nullptr, &lit_set_layout_) != VK_SUCCESS) {
       vkDestroyShaderModule(device_, vs, nullptr);
@@ -3592,18 +3915,36 @@ class VulkanDevice final : public IDevice {
 
     const VkResult r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &gp, nullptr,
                                                  &lit_pipeline_);
+    if (r != VK_SUCCESS) {
+      vkDestroyShaderModule(device_, vs, nullptr);
+      vkDestroyShaderModule(device_, ps, nullptr);
+      return Status::Fail("vkCreateGraphicsPipelines failed: " + VkErr(r));
+    }
+
+    // Transparent: SrcAlpha blend, no depth write, depth clamp (D3D DepthClipEnable=FALSE).
+    rs.depthClampEnable = depth_clamp_enabled_ ? VK_TRUE : VK_FALSE;
+    ds.depthWriteEnable = VK_FALSE;
+    blend_att.blendEnable = VK_TRUE;
+    blend_att.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blend_att.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend_att.colorBlendOp = VK_BLEND_OP_ADD;
+    blend_att.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blend_att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend_att.alphaBlendOp = VK_BLEND_OP_ADD;
+    const VkResult rt = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &gp, nullptr,
+                                                  &lit_pipeline_transparent_);
     vkDestroyShaderModule(device_, vs, nullptr);
     vkDestroyShaderModule(device_, ps, nullptr);
-    if (r != VK_SUCCESS) {
-      return Status::Fail("vkCreateGraphicsPipelines failed: " + VkErr(r));
+    if (rt != VK_SUCCESS) {
+      return Status::Fail("vkCreateGraphicsPipelines (transparent) failed: " + VkErr(rt));
     }
     return Status::Ok();
   }
 
   Status CreatePostPipeline(const std::vector<std::uint8_t>& vs_spv,
                             const std::vector<std::uint8_t>& ps_spv) {
-    if (render_pass_ == VK_NULL_HANDLE) {
-      return Status::Fail("Lit render pass missing for post");
+    if (present_render_pass_ == VK_NULL_HANDLE) {
+      return Status::Fail("Present render pass missing for post");
     }
     VkShaderModule vs = VK_NULL_HANDLE;
     VkShaderModule ps = VK_NULL_HANDLE;
@@ -3711,7 +4052,7 @@ class VulkanDevice final : public IDevice {
     gp.pColorBlendState = &blend;
     gp.pDynamicState = &dyn;
     gp.layout = post_pipeline_layout_;
-    gp.renderPass = render_pass_;
+    gp.renderPass = present_render_pass_;
     gp.subpass = 0;
 
     const VkResult r =
@@ -3795,6 +4136,24 @@ class VulkanDevice final : public IDevice {
     vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
   }
 
+  void DestroySceneColorOnly() {
+    if (scene_color_view_ != VK_NULL_HANDLE) {
+      vkDestroyImageView(device_, scene_color_view_, nullptr);
+      scene_color_view_ = VK_NULL_HANDLE;
+    }
+    if (scene_color_image_ != VK_NULL_HANDLE) {
+      vkDestroyImage(device_, scene_color_image_, nullptr);
+      scene_color_image_ = VK_NULL_HANDLE;
+    }
+    if (scene_color_mem_ != VK_NULL_HANDLE) {
+      vkFreeMemory(device_, scene_color_mem_, nullptr);
+      scene_color_mem_ = VK_NULL_HANDLE;
+    }
+    scene_color_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+    scene_color_width_ = 0;
+    scene_color_height_ = 0;
+  }
+
   void DestroyPostResources() {
     post_stub_ready_ = false;
     if (post_pipeline_ != VK_NULL_HANDLE) {
@@ -3818,28 +4177,18 @@ class VulkanDevice final : public IDevice {
       vkDestroySampler(device_, post_sampler_, nullptr);
       post_sampler_ = VK_NULL_HANDLE;
     }
-    if (scene_color_view_ != VK_NULL_HANDLE) {
-      vkDestroyImageView(device_, scene_color_view_, nullptr);
-      scene_color_view_ = VK_NULL_HANDLE;
-    }
-    if (scene_color_image_ != VK_NULL_HANDLE) {
-      vkDestroyImage(device_, scene_color_image_, nullptr);
-      scene_color_image_ = VK_NULL_HANDLE;
-    }
-    if (scene_color_mem_ != VK_NULL_HANDLE) {
-      vkFreeMemory(device_, scene_color_mem_, nullptr);
-      scene_color_mem_ = VK_NULL_HANDLE;
-    }
-    scene_color_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+    DestroySceneColorOnly();
   }
 
   Status EnsureSceneColor() {
-    if (scene_color_image_ != VK_NULL_HANDLE) {
+    if (scene_color_image_ != VK_NULL_HANDLE && scene_color_width_ == width_ &&
+        scene_color_height_ == height_) {
       return Status::Ok();
     }
-    if (auto st = CreateImage(width_, height_, surface_format_.format,
-                              VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                                  VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+    DestroySceneColorOnly();
+    if (auto st = CreateImage(width_, height_, kHdrColorFormat,
+                              VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                               scene_color_image_, scene_color_mem_);
         !st) {
       return st;
@@ -3848,7 +4197,7 @@ class VulkanDevice final : public IDevice {
     vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     vi.image = scene_color_image_;
     vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vi.format = surface_format_.format;
+    vi.format = kHdrColorFormat;
     vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     vi.subresourceRange.levelCount = 1;
     vi.subresourceRange.layerCount = 1;
@@ -3856,7 +4205,9 @@ class VulkanDevice final : public IDevice {
       return Status::Fail("scene_color view failed");
     }
     scene_color_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
-    return Status::Ok();
+    scene_color_width_ = width_;
+    scene_color_height_ = height_;
+    return RecreateHdrFramebuffer();
   }
 
   Status CaptureSceneColorIntermediate(VkCommandBuffer cmd) {
@@ -3866,55 +4217,26 @@ class VulkanDevice final : public IDevice {
     if (pass_active_) {
       vkCmdEndRenderPass(cmd);
       pass_active_ = false;
+      present_pass_active_ = false;
+      present_pass_load_ = false;
     }
-    VkImage src = swapchain_images_[image_index_];
-    // Present/color �?TRANSFER_SRC
-    VkImageMemoryBarrier b0{};
-    b0.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    b0.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    b0.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    b0.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    b0.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    b0.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b0.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b0.image = src;
-    b0.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    b0.subresourceRange.levelCount = 1;
-    b0.subresourceRange.layerCount = 1;
-    VkImageMemoryBarrier b1 = b0;
-    b1.srcAccessMask = 0;
-    b1.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    b1.oldLayout = scene_color_layout_;
-    b1.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    b1.image = scene_color_image_;
-    VkImageMemoryBarrier bars[] = {b0, b1};
+
+    // Lit already wrote HDR into scene_color_. Transition for post sampling (no swapchain blit).
+    VkImageMemoryBarrier bar{};
+    bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    bar.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    bar.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    bar.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    bar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bar.image = scene_color_image_;
+    bar.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    bar.subresourceRange.levelCount = 1;
+    bar.subresourceRange.layerCount = 1;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, bars);
-
-    VkImageBlit blit{};
-    blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    blit.srcSubresource.layerCount = 1;
-    blit.dstSubresource = blit.srcSubresource;
-    blit.srcOffsets[1] = {static_cast<std::int32_t>(width_), static_cast<std::int32_t>(height_), 1};
-    blit.dstOffsets[1] = blit.srcOffsets[1];
-    vkCmdBlitImage(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, scene_color_image_,
-                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
-
-    VkImageMemoryBarrier b2 = b0;
-    b2.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    b2.dstAccessMask = 0;
-    b2.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    b2.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    b2.image = src;
-    VkImageMemoryBarrier b3 = b1;
-    b3.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    b3.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    b3.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    b3.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    b3.image = scene_color_image_;
-    VkImageMemoryBarrier after[] = {b2, b3};
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         0, 0, nullptr, 0, nullptr, 2, after);
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                         &bar);
     scene_color_layout_ = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     return Status::Ok();
   }
@@ -3996,6 +4318,48 @@ class VulkanDevice final : public IDevice {
     fi.layers = 1;
     if (vkCreateFramebuffer(device_, &fi, nullptr, &shadow_framebuffer_) != VK_SUCCESS) {
       return Status::Fail("Create shadow framebuffer failed");
+    }
+
+    // Dedicated local-shadow atlas (do not share CSM depth — that stomped cascades).
+    if (auto st = CreateImage(kLocalShadowMapSize, kLocalShadowMapSize, VK_FORMAT_D32_SFLOAT,
+                              VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                                  VK_IMAGE_USAGE_SAMPLED_BIT,
+                              local_shadow_image_, local_shadow_mem_);
+        !st) {
+      return st;
+    }
+    {
+      VkImageViewCreateInfo lvi{};
+      lvi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+      lvi.image = local_shadow_image_;
+      lvi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+      lvi.format = VK_FORMAT_D32_SFLOAT;
+      lvi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+      lvi.subresourceRange.levelCount = 1;
+      lvi.subresourceRange.layerCount = 1;
+      if (vkCreateImageView(device_, &lvi, nullptr, &local_shadow_view_) != VK_SUCCESS) {
+        return Status::Fail("Create local shadow view failed");
+      }
+    }
+    local_shadow_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+    {
+      VkCommandBuffer cmd = BeginOneShot();
+      BarrierLocalShadowImage(cmd, VK_IMAGE_LAYOUT_UNDEFINED,
+                              VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+      EndOneShot(cmd);
+    }
+    {
+      VkFramebufferCreateInfo lfi{};
+      lfi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+      lfi.renderPass = shadow_render_pass_;
+      lfi.attachmentCount = 1;
+      lfi.pAttachments = &local_shadow_view_;
+      lfi.width = kLocalShadowMapSize;
+      lfi.height = kLocalShadowMapSize;
+      lfi.layers = 1;
+      if (vkCreateFramebuffer(device_, &lfi, nullptr, &local_shadow_framebuffer_) != VK_SUCCESS) {
+        return Status::Fail("Create local shadow framebuffer failed");
+      }
     }
 
     VkSamplerCreateInfo sci{};
@@ -4083,8 +4447,8 @@ class VulkanDevice final : public IDevice {
     rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rs.lineWidth = 1.f;
     rs.rasterizerDiscardEnable = VK_FALSE;
-    // Align with D3D12 shadow PSO (DepthBias=1500 ≈ mild constant; slope 2.0).
-    // Larger constants crushed cascade contact shadows and flattened lit response.
+    // Empirically matched to D3D12 DepthBias=1500 + SlopeScaledDepthBias=2.0 on D32_FLOAT
+    // (integer bias units ≠ Vulkan factor; do not copy 1500 literally).
     rs.depthBiasEnable = VK_TRUE;
     rs.depthBiasConstantFactor = 1.25f;
     rs.depthBiasClamp = 0.f;
@@ -4194,7 +4558,7 @@ class VulkanDevice final : public IDevice {
     VkDescriptorPoolSize sizes[3]{};
     sizes[0] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
     sizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 4};
-    sizes[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8};
+    sizes[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 9};
     VkDescriptorPoolCreateInfo pci{};
     pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pci.maxSets = 2;
@@ -4287,6 +4651,17 @@ class VulkanDevice final : public IDevice {
       if (auto st = UploadRgba2D(ibl_lut_, lut, 1, 1, 9, lit_linear_sampler_); !st) {
         return st;
       }
+    }
+
+    if (local_shadow_view_ != VK_NULL_HANDLE && shadow_sampler_ != VK_NULL_HANDLE) {
+      if (local_shadow_layout_ != VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL) {
+        VkCommandBuffer cmd = BeginOneShot();
+        BarrierLocalShadowImage(cmd, local_shadow_layout_,
+                                VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+        EndOneShot(cmd);
+      }
+      UpdateLitCombinedBinding(10, local_shadow_view_, shadow_sampler_,
+                               VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
     }
 
     VkDescriptorImageInfo ibl_info{};
@@ -4383,6 +4758,10 @@ class VulkanDevice final : public IDevice {
       vkDestroyFramebuffer(device_, shadow_framebuffer_, nullptr);
       shadow_framebuffer_ = VK_NULL_HANDLE;
     }
+    if (local_shadow_framebuffer_ != VK_NULL_HANDLE) {
+      vkDestroyFramebuffer(device_, local_shadow_framebuffer_, nullptr);
+      local_shadow_framebuffer_ = VK_NULL_HANDLE;
+    }
     if (shadow_render_pass_load_ != VK_NULL_HANDLE) {
       vkDestroyRenderPass(device_, shadow_render_pass_load_, nullptr);
       shadow_render_pass_load_ = VK_NULL_HANDLE;
@@ -4408,8 +4787,25 @@ class VulkanDevice final : public IDevice {
       shadow_mem_ = VK_NULL_HANDLE;
     }
     shadow_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (local_shadow_view_ != VK_NULL_HANDLE) {
+      vkDestroyImageView(device_, local_shadow_view_, nullptr);
+      local_shadow_view_ = VK_NULL_HANDLE;
+    }
+    if (local_shadow_image_ != VK_NULL_HANDLE) {
+      vkDestroyImage(device_, local_shadow_image_, nullptr);
+      local_shadow_image_ = VK_NULL_HANDLE;
+    }
+    if (local_shadow_mem_ != VK_NULL_HANDLE) {
+      vkFreeMemory(device_, local_shadow_mem_, nullptr);
+      local_shadow_mem_ = VK_NULL_HANDLE;
+    }
+    local_shadow_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
     shadow_desc_set_ = VK_NULL_HANDLE;
 
+    if (lit_pipeline_transparent_ != VK_NULL_HANDLE) {
+      vkDestroyPipeline(device_, lit_pipeline_transparent_, nullptr);
+      lit_pipeline_transparent_ = VK_NULL_HANDLE;
+    }
     if (lit_pipeline_ != VK_NULL_HANDLE) {
       vkDestroyPipeline(device_, lit_pipeline_, nullptr);
       lit_pipeline_ = VK_NULL_HANDLE;
@@ -4452,6 +4848,7 @@ class VulkanDevice final : public IDevice {
       vkDestroyRenderPass(device_, render_pass_, nullptr);
       render_pass_ = VK_NULL_HANDLE;
     }
+    DestroyPresentRenderPasses();
   }
 
   HWND hwnd_ = nullptr;
@@ -4488,6 +4885,8 @@ class VulkanDevice final : public IDevice {
   bool frame_recording_ = false;
   bool cleared_ = false;
   bool pass_active_ = false;
+  bool present_pass_active_ = false;
+  bool present_pass_load_ = false;
   bool used_graphics_ = false;
   ColorRgba clear_color_{0.f, 0.f, 0.f, 1.f};
 
@@ -4496,9 +4895,7 @@ class VulkanDevice final : public IDevice {
   bool post_stub_ready_ = false;
   bool post_resolve_warned_ = false;
   bool ibl_upload_logged_ = false;
-  bool local_shadow_warned_ = false;
-  bool local_shadow_sample_warned_ = false;
-  bool local_shadow_stub_active_ = false;
+  bool local_shadow_pass_active_ = false;
   float post_exposure_ = 1.f;
   int post_tonemap_mode_ = 2;
   std::vector<std::uint32_t> indirect_args_cpu_;
@@ -4512,6 +4909,8 @@ class VulkanDevice final : public IDevice {
   VkDeviceMemory scene_color_mem_ = VK_NULL_HANDLE;
   VkImageView scene_color_view_ = VK_NULL_HANDLE;
   VkImageLayout scene_color_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+  std::uint32_t scene_color_width_ = 0;
+  std::uint32_t scene_color_height_ = 0;
   bool post_resolved_this_frame_ = false;
   int ibl_lut_w_ = 0;
   int ibl_lut_h_ = 0;
@@ -4534,6 +4933,9 @@ class VulkanDevice final : public IDevice {
 
   VkRenderPass render_pass_ = VK_NULL_HANDLE;
   VkRenderPass render_pass_load_ = VK_NULL_HANDLE;
+  VkRenderPass present_render_pass_ = VK_NULL_HANDLE;
+  VkRenderPass present_render_pass_load_ = VK_NULL_HANDLE;
+  VkFramebuffer hdr_framebuffer_ = VK_NULL_HANDLE;
   VkImage depth_image_ = VK_NULL_HANDLE;
   VkDeviceMemory depth_mem_ = VK_NULL_HANDLE;
   VkImageView depth_view_ = VK_NULL_HANDLE;
@@ -4542,8 +4944,10 @@ class VulkanDevice final : public IDevice {
   VkDescriptorSetLayout lit_set_layout_ = VK_NULL_HANDLE;
   VkPipelineLayout lit_pipeline_layout_ = VK_NULL_HANDLE;
   VkPipeline lit_pipeline_ = VK_NULL_HANDLE;
+  VkPipeline lit_pipeline_transparent_ = VK_NULL_HANDLE;
   VkDescriptorPool lit_desc_pool_ = VK_NULL_HANDLE;
   VkDescriptorSet lit_desc_set_ = VK_NULL_HANDLE;
+  bool depth_clamp_enabled_ = false;
 
   VkImage shadow_image_ = VK_NULL_HANDLE;
   VkDeviceMemory shadow_mem_ = VK_NULL_HANDLE;
@@ -4557,6 +4961,11 @@ class VulkanDevice final : public IDevice {
   VkPipeline shadow_pipeline_ = VK_NULL_HANDLE;
   VkDescriptorSet shadow_desc_set_ = VK_NULL_HANDLE;
   VkImageLayout shadow_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+  VkImage local_shadow_image_ = VK_NULL_HANDLE;
+  VkDeviceMemory local_shadow_mem_ = VK_NULL_HANDLE;
+  VkImageView local_shadow_view_ = VK_NULL_HANDLE;
+  VkFramebuffer local_shadow_framebuffer_ = VK_NULL_HANDLE;
+  VkImageLayout local_shadow_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
 
   std::array<MeshSlotGpu, kMaxMeshSlots> mesh_slots_{};
   VkBuffer frame_ub_ = VK_NULL_HANDLE;

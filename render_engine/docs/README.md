@@ -17,9 +17,9 @@
 | 渲染可用 vs 游戏可用 vs 对标主流 | [PLAN.md](PLAN.md) **§1.9** → [game_kit PLAN](../../game_kit/docs/PLAN.md) |
 | 按什么顺序实现、怎么验收 | [PLAN.md](PLAN.md) → [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md) → [GETTING_STARTED_M1.md](GETTING_STARTED_M1.md) |
 | 模块怎么切、目录长什么样 | [ARCHITECTURE.md](ARCHITECTURE.md) |
-| 编码/依赖/双后端约定 | [STANDARDS.md](STANDARDS.md) → [THIRD_PARTY.md](THIRD_PARTY.md) |
+| 编码/依赖/双后端约定 | [STANDARDS.md](STANDARDS.md) → [THIRD_PARTY.md](THIRD_PARTY.md) → [VULKAN_PARITY.md](VULKAN_PARITY.md) |
 | 离线烘焙与工具 | [TOOLING.md](TOOLING.md) |
-| 怎么测 | [TESTING.md](TESTING.md)（分层 + **§8 自动化/人工/工具与覆盖水位**） |
+| 怎么测 | [TESTING.md](TESTING.md)（分层 + **§8 自动化/人工/工具与覆盖水位**）；双后端比图见 [VULKAN_PARITY.md](VULKAN_PARITY.md) |
 | 怎么调试调优 | [DEBUG_TUNE_TROUBLESHOOT.md](DEBUG_TUNE_TROUBLESHOOT.md) |
 | 怎么学 | [learn/README.md](learn/README.md) → [learn/PATH.md](learn/PATH.md) |
 | 为何这样设计 | [learn/ADR_INDEX.md](learn/ADR_INDEX.md) |
@@ -41,6 +41,7 @@
 | [STANDARDS.md](STANDARDS.md) | 编码、架构、通讯、L0/L1/L2、SoA |
 | [THIRD_PARTY.md](THIRD_PARTY.md) | 可引入三方与抽象边界 |
 | [TESTING.md](TESTING.md) | unit / integration / golden / CI；**§8 分工·水位·测法** |
+| [VULKAN_PARITY.md](VULKAN_PARITY.md) | **D3D12 ↔ Vulkan 差异矩阵、缺口、Sandbox parity 剖面** |
 | [SANDBOX_MCP.md](SANDBOX_MCP.md) | Harness 矩阵抽样（**保留冻结**）；MCP Cursor 适配（**不扩**） |
 | [DEBUG_TUNE_TROUBLESHOOT.md](DEBUG_TUNE_TROUBLESHOOT.md) | 调试·调优·排错 |
 | [GETTING_STARTED_M1.md](GETTING_STARTED_M1.md) | **M1 落地清单（可执行）** |

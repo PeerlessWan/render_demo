@@ -18,13 +18,18 @@ cbuffer FrameCB : register(b0) {
   float g_tiles_per_row;
   float g_enable_ibl;
   float g_ibl_intensity;
-  float g_enable_local_shadow;
-  float g_local_shadow_bias;
-  float g_local_shadow_tiles;
+  float g_enable_reflection;
+  float g_reflection_intensity;
   float g_local_count;
+  float g_enable_taa;
+  float2 g_pad_before_lights;
   float4 g_local_pos_range[4];
   float4 g_local_color_intensity[4];
-  float4x4 g_local_shadow_vp;
+  float4x4 g_local_shadow_vp[12];
+  float g_enable_local_shadow;
+  float g_local_shadow_bias;
+  float g_local_shadow_count;
+  float g_local_shadow_tiles;
 };
 
 cbuffer ObjectCB : register(b1) {
@@ -54,6 +59,8 @@ TextureCube g_ibl_prefilter : register(t6);
 SamplerState g_pref_samp : register(s6);
 Texture2D g_brdf_lut : register(t7);
 SamplerState g_lut_samp : register(s7);
+Texture2D g_local_shadow_map : register(t8);
+SamplerComparisonState g_local_shadow_samp : register(s8);
 
 struct VSInput {
   float3 position : POSITION;
@@ -134,6 +141,8 @@ float ShadowFactor(float3 world_pos) {
   float view_depth = max(dot(world_pos - g_eye, normalize(g_cam_forward)), 0.0);
   int start = SelectCascade(view_depth);
   int count = max((int)g_cascade_count, 1);
+
+  // Prefer the depth-selected cascade, then any other that covers this texel.
   float best = -1.0;
   float next_s = -1.0;
   [unroll] for (int c = 0; c < 4; ++c) {
@@ -172,25 +181,45 @@ float ShadowFactor(float3 world_pos) {
   return best >= 0.0 ? best : 0.85;
 }
 
-float LocalShadowFactor(float3 world_pos) {
-  if (g_enable_local_shadow < 0.5f) {
+float2 LocalShadowAtlasUv(float2 uv, int tile) {
+  float tiles = max(g_local_shadow_tiles, 1.0);
+  float tile_size = 1.0 / tiles;
+  float ix = (float)(tile % (int)tiles);
+  float iy = (float)(tile / (int)tiles);
+  float2 inset = uv * (tile_size * 0.998) + 0.001 * tile_size;
+  return inset + float2(ix, iy) * tile_size;
+}
+
+float LocalShadowFactor(float3 world_pos, int light_index) {
+  if (g_enable_local_shadow < 0.5f || light_index < 0 || light_index >= (int)g_local_shadow_count) {
     return 1.0f;
   }
-  float4 lp = mul(g_local_shadow_vp, float4(world_pos, 1.0f));
+  float3 lpos = g_local_pos_range[light_index].xyz;
+  float3 dir = world_pos - lpos;
+  float3 ad = abs(dir);
+  int face = 0;
+  if (ad.x >= ad.y && ad.x >= ad.z) {
+    face = dir.x >= 0.0 ? 0 : 1;
+  } else if (ad.y >= ad.z) {
+    face = dir.y >= 0.0 ? 2 : 3;
+  } else {
+    face = dir.z >= 0.0 ? 4 : 5;
+  }
+  int tile = light_index * 6 + face;
+  float4 lp = mul(g_local_shadow_vp[tile], float4(world_pos, 1.0f));
   float3 proj = lp.xyz / max(lp.w, 1e-5);
   float2 uv = proj.xy * float2(0.5, -0.5) + 0.5;
   if (uv.x < 0.001 || uv.x > 0.999 || uv.y < 0.001 || uv.y > 0.999 || proj.z < 0 || proj.z > 1) {
     return 1.0f;
   }
-  float tiles = max(g_local_shadow_tiles, 1.0);
-  float tile = 1.0 / tiles;
-  float2 atlas_uv = uv * (tile * 0.998) + 0.001 * tile;
-  float cmp = proj.z - max(g_local_shadow_bias, g_shadow_bias) * 1.25;
+  float2 atlas_uv = LocalShadowAtlasUv(uv, tile);
+  float cmp = proj.z - g_local_shadow_bias;
   float shadow = 0;
   float2 texel = 1.0 / 2048.0;
   [unroll] for (int y = -1; y <= 1; ++y) {
     [unroll] for (int x = -1; x <= 1; ++x) {
-      shadow += g_shadow_map.SampleCmpLevelZero(g_shadow_samp, atlas_uv + float2(x, y) * texel, cmp);
+      shadow += g_local_shadow_map.SampleCmpLevelZero(g_local_shadow_samp,
+                                                     atlas_uv + float2(x, y) * texel, cmp);
     }
   }
   return shadow / 9.0;
@@ -237,14 +266,23 @@ float4 PSMain(VSOutput input) : SV_Target {
   // Match D3D lit_cube: fade floor horizon specular harder.
   spec *= ndotv * ndotv * ndotv;
   float sh = ShadowFactor(input.world_pos);
-  float lsh = LocalShadowFactor(input.world_pos);
-  sh = min(sh, lsh);
   float3 diffuse = base * (1.0 - metallic);
   float3 sun_term = (diffuse * ndotl + g_sun_color * spec) * g_sun_intensity * sh * tex_ao;
   sun_term = min(sun_term, 8.0.xxx);
   // Additive IBL (same as D3D lit_cube.hlsl). Replacing ambient with irradiance
   // washed out CSM contact shadows and flattened the whole frame vs D3D12.
   float3 lit = g_ambient * base * tex_ao + sun_term;
+
+  // Fresnel reflection probe (same map as IBL prefilter after pack load).
+  if (g_enable_reflection > 0.5) {
+    float3 R = reflect(-v, n);
+    float lod = saturate(roughness) * 4.0;
+    float3 env = g_ibl_prefilter.SampleLevel(g_pref_samp, R, lod).rgb;
+    float fres = lerp(0.04, 1.0, metallic);
+    fres *= pow(1.0 - ndotv, 5.0) * (1.0 - metallic) + metallic;
+    lit += env * fres * g_reflection_intensity * tex_ao;
+  }
+
   if (g_enable_ibl > 0.5) {
     float3 irr = g_ibl_irradiance.Sample(g_ibl_samp, n).rgb;
     lit += diffuse * irr * g_ibl_intensity * tex_ao;
@@ -270,6 +308,7 @@ float4 PSMain(VSOutput input) : SV_Target {
     atten *= atten;
     float nd = saturate(dot(n, ld));
     float3 lcol = g_local_color_intensity[i].rgb * g_local_color_intensity[i].a;
+    float lsh = LocalShadowFactor(input.world_pos, i);
     lit += diffuse * nd * lcol * atten * tex_ao * lsh;
   }
 
@@ -277,6 +316,10 @@ float4 PSMain(VSOutput input) : SV_Target {
   if (alpha < 0.999) {
     lit = min(lit, 1.35.xxx);
     lit *= lerp(0.55, 1.0, alpha);
+  }
+  if (g_enable_taa > 0.5) {
+    // Soft hint only; real history TAA is ResolvePostEffects (D3D).
+    lit = lerp(lit, lit * 0.98 + g_ambient * base * 0.02, 0.15);
   }
   return float4(lit, alpha);
 }
