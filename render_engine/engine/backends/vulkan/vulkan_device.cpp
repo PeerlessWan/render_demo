@@ -115,7 +115,8 @@ constexpr VkDeviceSize kFrameUbSize =
     (sizeof(FrameGpu) + kUniformAlign - 1) / kUniformAlign * kUniformAlign;
 
 // Screen passes: D3D clip Y-up + Vulkan negative viewport height → upright FB.
-// Shadow atlas stays positive viewport + raw D3D light matrices (sample UV y*-0.5).
+// Shadow atlas uses the same Y-flip so cascade depth matches D3D UV (proj.y * -0.5).
+// Positive-height shadow VP previously inverted V vs D3D → SampleCmp missed casters.
 // Neg-height flips winding in FB → lit uses FRONT_FACE_CLOCKWISE with CCW meshes.
 inline VkViewport MakeViewport(float x, float y, float w, float h) {
   VkViewport vp{};
@@ -629,7 +630,8 @@ class VulkanDevice final : public IDevice {
     VkCommandBuffer cmd = command_buffers_[frame_index_];
     const float ox = static_cast<float>(ix) * tile;
     const float oy = static_cast<float>(iy) * tile;
-    VkViewport vp = MakeViewport(ox, oy, tile, tile);
+    // Same D3D Y-up → texture V mapping as lit_cube_vk SampleCascadeShadow.
+    VkViewport vp = MakeYFlippedViewport(ox, oy, tile, tile);
     vkCmdSetViewport(cmd, 0, 1, &vp);
 
     VkRect2D scissor{};

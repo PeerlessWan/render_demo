@@ -109,7 +109,7 @@ float2 CascadeAtlasUv(float2 uv, int cascade) {
 float SampleCascadeShadow(float3 world_pos, int c) {
   float4 lp = mul(g_cascade_vp[c], float4(world_pos, 1.0f));
   float3 proj = lp.xyz / max(lp.w, 1e-5);
-  // D3D clip Y-up → texture V-down (shadow atlas uses positive viewport).
+  // D3D clip Y-up → texture V-down (shadow atlas uses Y-flipped viewport on Vulkan).
   float2 uv = proj.xy * float2(0.5, -0.5) + 0.5;
   if (uv.x < 0.001 || uv.x > 0.999 || uv.y < 0.001 || uv.y > 0.999 || proj.z < 0.0 ||
       proj.z > 1.0) {
