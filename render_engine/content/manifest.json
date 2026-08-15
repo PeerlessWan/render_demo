@@ -1,0 +1,34 @@
+{
+  "assets": [
+    {
+      "id": "ibl.pack",
+      "type": "ibl",
+      "path": "ibl/ibl_meta.txt",
+      "deps": ["ibl.prefilter", "ibl.irradiance", "ibl.brdf"]
+    },
+    {
+      "id": "ibl.prefilter",
+      "type": "texture",
+      "path": "ibl/ibl_prefilter.marker",
+      "deps": []
+    },
+    {
+      "id": "ibl.irradiance",
+      "type": "texture",
+      "path": "ibl/ibl_irradiance.marker",
+      "deps": []
+    },
+    {
+      "id": "ibl.brdf",
+      "type": "texture",
+      "path": "ibl/ibl_brdf_lut.marker",
+      "deps": []
+    },
+    {
+      "id": "font.tiny_bmfont",
+      "type": "font",
+      "path": "fonts/tiny_bmfont.json",
+      "deps": []
+    }
+  ]
+}

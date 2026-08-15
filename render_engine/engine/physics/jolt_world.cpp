@@ -8,8 +8,12 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/ShapeCast.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
 #include <Jolt/Physics/SoftBody/SoftBodyMotionProperties.h>
@@ -203,6 +207,38 @@ class JoltWorld final : public IPhysicsWorld {
     return index;
   }
 
+  int CreateCapsule(const CapsuleDesc& desc) override {
+    const float radius = std::max(desc.radius, 0.05f);
+    const float half_h = std::max(desc.half_height, 0.05f);
+    JPH::RefConst<JPH::Shape> shape = new JPH::CapsuleShape(half_h, radius);
+
+    const bool is_static = desc.mass <= 0.f;
+    JPH::EMotionType motion =
+        is_static ? JPH::EMotionType::Kinematic : JPH::EMotionType::Dynamic;
+    JPH::ObjectLayer layer = Layers::kMoving;
+
+    JPH::BodyCreationSettings settings(shape, JPH::RVec3(desc.position.x, desc.position.y, desc.position.z),
+                                       JPH::Quat::sIdentity(), motion, layer);
+    if (motion == JPH::EMotionType::Dynamic && desc.mass > 0.f) {
+      settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+      settings.mMassPropertiesOverride.mMass = desc.mass;
+    }
+
+    const int index = static_cast<int>(body_ids_.size());
+    settings.mUserData = static_cast<JPH::uint64>(index);
+
+    JPH::BodyInterface& bodies = physics_.GetBodyInterface();
+    const JPH::BodyID id =
+        bodies.CreateAndAddBody(settings, JPH::EActivation::Activate);
+    if (id.IsInvalid()) {
+      return -1;
+    }
+    body_ids_.push_back(id);
+    // AABB half-extents approx for queries / ground snap.
+    half_extents_.push_back({radius, half_h + radius, radius});
+    return index;
+  }
+
   void Step(float dt) override {
     if (dt <= 0.f) {
       return;
@@ -255,15 +291,59 @@ class JoltWorld final : public IPhysicsWorld {
       bodies.SetMotionType(id, JPH::EMotionType::Kinematic, JPH::EActivation::Activate);
       bodies.SetObjectLayer(id, Layers::kMoving);
     }
+
     const JPH::RVec3 cur = bodies.GetPosition(id);
-    float y = static_cast<float>(cur.GetY()) + displacement.y;
-    const float floor_y = half_extents_[static_cast<std::size_t>(body_id)].y;
-    if (y < floor_y) {
-      y = floor_y;
+    const Vec3 he = half_extents_[static_cast<std::size_t>(body_id)];
+    JPH::Vec3 horiz(displacement.x, 0.f, displacement.z);
+    JPH::RVec3 new_pos = cur;
+
+    // Horizontal move via shape cast against world (ignore self).
+    const float horiz_len = horiz.Length();
+    if (horiz_len > 1e-5f) {
+      JPH::RefConst<JPH::Shape> shape = bodies.GetShape(id);
+      if (shape != nullptr) {
+        const JPH::RMat44 start = JPH::RMat44::sTranslation(cur);
+        const JPH::RShapeCast shape_cast(shape, JPH::Vec3::sOne(), start, horiz);
+        JPH::ShapeCastSettings settings;
+        settings.mBackFaceModeTriangles = JPH::EBackFaceMode::CollideWithBackFaces;
+        settings.mBackFaceModeConvex = JPH::EBackFaceMode::CollideWithBackFaces;
+        JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
+        JPH::IgnoreSingleBodyFilter body_filter(id);
+        physics_.GetNarrowPhaseQuery().CastShape(
+            shape_cast, settings, cur, collector, {}, {}, body_filter);
+        float fraction = 1.f;
+        if (collector.HadHit()) {
+          fraction = std::max(0.f, collector.mHit.mFraction - 0.01f);
+        }
+        new_pos = cur + JPH::RVec3(horiz * fraction);
+      } else {
+        new_pos = cur + JPH::RVec3(horiz);
+      }
     }
-    bodies.SetPosition(id,
-                       JPH::RVec3(cur.GetX() + displacement.x, y, cur.GetZ() + displacement.z),
-                       JPH::EActivation::Activate);
+
+    new_pos = JPH::RVec3(new_pos.GetX(), cur.GetY() + displacement.y, new_pos.GetZ());
+
+    // Ground snap: ray from character center downward.
+    const float snap_dist = he.y * 2.f + 0.75f;
+    const JPH::RVec3 ray_origin(new_pos.GetX(), new_pos.GetY() + 0.05f, new_pos.GetZ());
+    const JPH::RRayCast ray(ray_origin, JPH::Vec3(0, -1, 0) * snap_dist);
+    JPH::RayCastResult hit;
+    JPH::IgnoreSingleBodyFilter body_filter(id);
+    if (physics_.GetNarrowPhaseQuery().CastRay(ray, hit, {}, {}, body_filter)) {
+      const JPH::RVec3 point = ray.GetPointOnRay(hit.mFraction);
+      const float ground_y = static_cast<float>(point.GetY());
+      const float feet = static_cast<float>(new_pos.GetY()) - he.y;
+      if (feet <= ground_y + 0.4f) {
+        new_pos.SetY(ground_y + he.y);
+      }
+    } else {
+      const float floor_y = he.y;
+      if (new_pos.GetY() < floor_y) {
+        new_pos.SetY(floor_y);
+      }
+    }
+
+    bodies.SetPosition(id, new_pos, JPH::EActivation::Activate);
     return Status::Ok();
   }
 

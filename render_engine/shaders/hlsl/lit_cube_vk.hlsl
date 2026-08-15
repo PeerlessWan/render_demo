@@ -23,8 +23,10 @@ cbuffer FrameCB : register(b0) {
   float g_local_count;
   float g_enable_taa;
   float2 g_pad_before_lights;
-  float4 g_local_pos_range[4];
-  float4 g_local_color_intensity[4];
+  float4 g_local_pos_range[8];
+  float4 g_local_color_intensity[8];
+  float4 g_local_spot[8];        // xyz=dir, w=cosOuter (-1 = point/omni)
+  float4 g_local_spot_inner[2];  // cosInner for lights 0..7
   float4x4 g_local_shadow_vp[12];
   float g_enable_local_shadow;
   float g_local_shadow_bias;
@@ -130,12 +132,18 @@ float2 CascadeAtlasUv(float2 uv, int cascade) {
   float tile = 1.0 / tiles;
   float ix = (float)(cascade % (int)tiles);
   float iy = (float)(cascade / (int)tiles);
-  float2 inset = uv * (tile * 0.998) + 0.001 * tile;
+  float pad = 3.0 / 2048.0;
+  float usable = max(tile - 2.0 * pad, tile * 0.5);
+  float2 inset = uv * usable + pad;
   return inset + float2(ix, iy) * tile;
 }
 
-float SampleCascadeShadow(float3 world_pos, int c) {
-  float4 lp = mul(g_cascade_vp[c], float4(world_pos, 1.0f));
+float SampleCascadeShadow(float3 world_pos, float3 world_n, int c) {
+  float3 L = normalize(-g_sun_dir);
+  float ndotl = saturate(dot(world_n, L));
+  float3 sample_pos = world_pos + world_n * (0.02 + (1.0 - ndotl) * 0.04);
+
+  float4 lp = mul(g_cascade_vp[c], float4(sample_pos, 1.0f));
   float3 proj = lp.xyz / max(lp.w, 1e-5);
   // D3D clip Y-up → texture V-down (shadow atlas uses Y-flipped viewport on Vulkan).
   float2 uv = proj.xy * float2(0.5, -0.5) + 0.5;
@@ -144,18 +152,29 @@ float SampleCascadeShadow(float3 world_pos, int c) {
     return -1.0;
   }
   float2 atlas_uv = CascadeAtlasUv(uv, c);
-  float cmp = proj.z - g_shadow_bias * (1.0 + (float)c * 0.35);
-  float shadow = 0;
+  float slope = (1.0 - ndotl) * 2.5;
+  float cmp = proj.z - g_shadow_bias * (1.0 + (float)c * 0.35 + slope);
+
+  float tiles = max(g_tiles_per_row, 1.0);
+  float tile = 1.0 / tiles;
+  float ix = (float)(c % (int)tiles);
+  float iy = (float)(c / (int)tiles);
+  float2 tile_min = float2(ix, iy) * tile + 1.5 / 2048.0;
+  float2 tile_max = float2(ix + 1.0, iy + 1.0) * tile - 1.5 / 2048.0;
+
+  static const float2 kPoisson[8] = {
+      float2(-0.326, -0.406), float2(-0.840, -0.074), float2(-0.696, 0.457), float2(-0.203, 0.621),
+      float2(0.962, -0.195),  float2(0.473, -0.480),  float2(0.519, 0.767),  float2(0.185, -0.893)};
   float2 texel = 1.0 / 2048.0;
-  [unroll] for (int y = -1; y <= 1; ++y) {
-    [unroll] for (int x = -1; x <= 1; ++x) {
-      shadow += g_shadow_map.SampleCmpLevelZero(g_shadow_samp, atlas_uv + float2(x, y) * texel, cmp);
-    }
+  float shadow = 0;
+  [unroll] for (int i = 0; i < 8; ++i) {
+    float2 s_uv = clamp(atlas_uv + kPoisson[i] * texel * 2.5, tile_min, tile_max);
+    shadow += g_shadow_map.SampleCmpLevelZero(g_shadow_samp, s_uv, cmp);
   }
-  return shadow / 9.0;
+  return shadow / 8.0;
 }
 
-float ShadowFactor(float3 world_pos) {
+float ShadowFactor(float3 world_pos, float3 world_n) {
   if (g_enable_shadow < 0.5f) {
     return 1.0f;
   }
@@ -163,14 +182,13 @@ float ShadowFactor(float3 world_pos) {
   int start = SelectCascade(view_depth);
   int count = max((int)g_cascade_count, 1);
 
-  // Prefer the depth-selected cascade, then any other that covers this texel.
   float best = -1.0;
   float next_s = -1.0;
   [unroll] for (int c = 0; c < 4; ++c) {
     if (c >= count) {
       continue;
     }
-    float s = SampleCascadeShadow(world_pos, c);
+    float s = SampleCascadeShadow(world_pos, world_n, c);
     if (s < 0.0) {
       continue;
     }
@@ -195,10 +213,10 @@ float ShadowFactor(float3 world_pos) {
       prev = g_cascade_splits[2];
     }
     float span = max(split - prev, 1e-3);
-    float t = saturate((split - view_depth) / max(span * 0.25, 0.75));
+    float blend_w = max(span * 0.45, 3.0);
+    float t = saturate((split - view_depth) / blend_w);
     best = lerp(next_s, best, t);
   }
-  // Keep sun contribution stable when outside all cascades (no tint flip to local-only).
   return best >= 0.0 ? best : 0.85;
 }
 
@@ -216,17 +234,23 @@ float LocalShadowFactor(float3 world_pos, int light_index) {
     return 1.0f;
   }
   float3 lpos = g_local_pos_range[light_index].xyz;
-  float3 dir = world_pos - lpos;
-  float3 ad = abs(dir);
-  int face = 0;
-  if (ad.x >= ad.y && ad.x >= ad.z) {
-    face = dir.x >= 0.0 ? 0 : 1;
-  } else if (ad.y >= ad.z) {
-    face = dir.y >= 0.0 ? 2 : 3;
+  float cos_outer = g_local_spot[light_index].w;
+  int tile;
+  if (cos_outer > -0.999f) {
+    tile = light_index * 6;
   } else {
-    face = dir.z >= 0.0 ? 4 : 5;
+    float3 dir = world_pos - lpos;
+    float3 ad = abs(dir);
+    int face = 0;
+    if (ad.x >= ad.y && ad.x >= ad.z) {
+      face = dir.x >= 0.0 ? 0 : 1;
+    } else if (ad.y >= ad.z) {
+      face = dir.y >= 0.0 ? 2 : 3;
+    } else {
+      face = dir.z >= 0.0 ? 4 : 5;
+    }
+    tile = light_index * 6 + face;
   }
-  int tile = light_index * 6 + face;
   float4 lp = mul(g_local_shadow_vp[tile], float4(world_pos, 1.0f));
   float3 proj = lp.xyz / max(lp.w, 1e-5);
   float2 uv = proj.xy * float2(0.5, -0.5) + 0.5;
@@ -244,6 +268,17 @@ float LocalShadowFactor(float3 world_pos, int light_index) {
     }
   }
   return shadow / 9.0;
+}
+
+float SpotConeAtten(int light_index, float3 light_to_frag) {
+  float cos_outer = g_local_spot[light_index].w;
+  if (cos_outer <= -0.999f) {
+    return 1.0f;
+  }
+  float3 spot_dir = normalize(g_local_spot[light_index].xyz);
+  float cos_theta = dot(normalize(light_to_frag), spot_dir);
+  float cos_inner = g_local_spot_inner[light_index >> 2][light_index & 3];
+  return smoothstep(cos_outer, cos_inner, cos_theta);
 }
 
 float4 PSMain(VSOutput input) : SV_Target {
@@ -286,7 +321,7 @@ float4 PSMain(VSOutput input) : SV_Target {
                (1.0 - roughness) * lerp(0.04, 1.0, metallic) * ndotl;
   // Match D3D lit_cube: fade floor horizon specular harder.
   spec *= ndotv * ndotv * ndotv;
-  float sh = ShadowFactor(input.world_pos);
+  float sh = ShadowFactor(input.world_pos, n);
   float3 diffuse = base * (1.0 - metallic);
   float3 sun_term = (diffuse * ndotl + g_sun_color * spec) * g_sun_intensity * sh * tex_ao;
   sun_term = min(sun_term, 8.0.xxx);
@@ -316,7 +351,7 @@ float4 PSMain(VSOutput input) : SV_Target {
   }
 
   int lc = (int)g_local_count;
-  [unroll] for (int i = 0; i < 4; ++i) {
+  [unroll] for (int i = 0; i < 8; ++i) {
     if (i >= lc) {
       break;
     }
@@ -327,6 +362,7 @@ float4 PSMain(VSOutput input) : SV_Target {
     float3 ld = to_l / max(dist, 1e-5);
     float atten = saturate(1.0 - dist / range);
     atten *= atten;
+    atten *= SpotConeAtten(i, input.world_pos - lpos);
     float nd = saturate(dot(n, ld));
     float3 lcol = g_local_color_intensity[i].rgb * g_local_color_intensity[i].a;
     float lsh = LocalShadowFactor(input.world_pos, i);

@@ -77,4 +77,3 @@ include/engine/
 - [PREFAB_SCHEMA.md](PREFAB_SCHEMA.md)  
 - [RUNTIME_FOUNDATIONS.md](RUNTIME_FOUNDATIONS.md)  
 - [../../game_kit/docs/CONSTRAINTS.md](../../game_kit/docs/CONSTRAINTS.md)  
-- [../../editor/docs/CONSTRAINTS.md](../../editor/docs/CONSTRAINTS.md)  

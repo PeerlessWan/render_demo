@@ -22,6 +22,7 @@ void FillIndirectArgs(IndirectDrawArgs& out, std::uint32_t index_count, std::uin
 
 // CPU cull (frustum + optional HiZ) → compact visible worlds + single IndirectDrawArgs batch.
 // Acts as the "CS write IndirectArgs" stand-in until a GPU cull CS ships; same contract.
+// M26/C08: reserves capacity and front-to-back sorts survivors for early-Z.
 std::uint32_t CullInstancesToIndirect(std::span<const Mat4> worlds, std::span<const Aabb> local_bounds,
                                       const Mat4& view_proj, const render::OcclusionBuffer* occ,
                                       std::vector<Mat4>& out_visible, IndirectDrawArgs& out_args,

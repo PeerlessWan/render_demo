@@ -1,7 +1,9 @@
 #include "engine/app/application.h"
 #include "engine/core/log.h"
+#include "engine/gi/lightmap.h"
 #include "engine/gi/probe_volume.h"
 #include "engine/gi/reflection_probe.h"
+#include "engine/material/material.h"
 #include "engine/render/environment.h"
 #include "engine/render/quality.h"
 #include "engine/render/render_system.h"
@@ -9,9 +11,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #ifndef ENGINE_SHADER_DIR_A
 #error "ENGINE_SHADER_DIR_A must be set by CMake"
+#endif
+#ifndef ENGINE_CONTENT_DIR_A
+#error "ENGINE_CONTENT_DIR_A must be set by CMake"
 #endif
 
 namespace {
@@ -93,9 +99,37 @@ int main(int argc, char** argv) {
                                    {0.1f, 0.12f, 0.15f, 1.f});
   (void)a.device().UploadReflectionCubemap(reflection.rgba_faces().data(), reflection.face_size());
 
+  const auto lightmap_path =
+      std::filesystem::path(ENGINE_CONTENT_DIR_A) / "ibl" / "lightmap.rgba";
+  engine::gi::LightmapImage lightmap;
+  engine::material::PbrMaterial lightmap_mat;
+  lightmap_mat.use_lightmap = true;
+  lightmap_mat.albedo_tex = "ibl/lightmap.rgba";
+  if (auto st = engine::gi::LoadLightmapRgba(lightmap_path, lightmap); !st) {
+    engine::LogError(st.message());
+    return 1;
+  }
+  const auto lm_center = engine::gi::SampleLightmap(lightmap, 0.5f, 0.5f);
+  engine::LogInfo("Lightmap " + std::to_string(lightmap.width) + "x" +
+                  std::to_string(lightmap.height) + " center r=" + std::to_string(lm_center.r) +
+                  " use_lightmap=" + (lightmap_mat.use_lightmap ? "true" : "false"));
+
   engine::render::Environment env;
   engine::render::RenderSystem render;
   if (auto st = render.Init(a.device(), LitDesc()); !st) {
+    engine::LogError(st.message());
+    return 1;
+  }
+
+  // Minimal lit path: flat albedo × lightmap bake, then UploadLitAlbedoRgba.
+  std::vector<std::uint8_t> albedo(
+      static_cast<std::size_t>(lightmap.width * lightmap.height * 4), 200);
+  for (std::size_t i = 3; i < albedo.size(); i += 4) {
+    albedo[i] = 255;
+  }
+  engine::gi::MultiplyAlbedoByLightmap(albedo, lightmap.width, lightmap.height, lightmap);
+  if (auto st = a.device().UploadLitAlbedoRgba(albedo.data(), lightmap.width, lightmap.height, 0);
+      !st) {
     engine::LogError(st.message());
     return 1;
   }

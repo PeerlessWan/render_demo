@@ -39,6 +39,15 @@ Status Console::Execute(std::string_view line) {
   return it->second(tokens);
 }
 
+namespace {
+
+bool& GpuTimestampFlag() {
+  static bool available = false;
+  return available;
+}
+
+}  // namespace
+
 void Profiler::Begin(const char* name) { open_[name] = NowSeconds(); }
 
 void Profiler::End(const char* name) {
@@ -50,9 +59,32 @@ void Profiler::End(const char* name) {
   open_.erase(it);
 }
 
+void Profiler::BeginPass(const char* name) {
+  if (pass_stack_.empty()) {
+    last_pass_names_.clear();
+  }
+  const char* label = name ? name : "";
+  pass_stack_.emplace_back(label);
+  Begin(label);
+}
+
+void Profiler::EndPass() {
+  if (pass_stack_.empty()) {
+    return;
+  }
+  const std::string name = pass_stack_.back();
+  pass_stack_.pop_back();
+  End(name.c_str());
+  last_pass_names_.push_back(name);
+}
+
 double Profiler::last_ms(const char* name) const {
   const auto it = samples_ms_.find(name);
   return it == samples_ms_.end() ? 0.0 : it->second;
 }
+
+bool Profiler::GpuTimestampAvailable() { return GpuTimestampFlag(); }
+
+void Profiler::SetGpuTimestampAvailable(bool available) { GpuTimestampFlag() = available; }
 
 }  // namespace engine::debug

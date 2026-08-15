@@ -33,6 +33,9 @@ int main(int argc, char** argv) {
   int headless_frames = 0;
   ParseHeadless(argc, argv, headless_frames);
 
+  const bool hw_dxr = engine::rt::ProbeDxrHardwareSupport();
+  engine::SetFeatureOverride("raytracing", hw_dxr);
+
   const engine::FeatureSet features = engine::QueryFeatures();
   engine::rt::DxrDemoConfig demo;
   demo.enable_reflections = true;
@@ -40,7 +43,8 @@ int main(int argc, char** argv) {
   demo.max_bounces = 1;
 
   const bool can_run = engine::rt::CanRunDxrDemo(features, demo);
-  engine::LogInfo(std::string("CanRunDxrDemo=") + (can_run ? "true" : "false") +
+  engine::LogInfo(std::string("ProbeDxrHardwareSupport=") + (hw_dxr ? "true" : "false") +
+                  " CanRunDxrDemo=" + (can_run ? "true" : "false") +
                   " raytracing=" + (features.raytracing ? "true" : "false") +
                   " d3d12=" + (features.d3d12 ? "true" : "false"));
 
@@ -50,6 +54,15 @@ int main(int argc, char** argv) {
   const auto rt = engine::rt::Resolve(engine::rhi::Backend::D3D12, features, cfg);
   engine::LogInfo("RtStatus=" + std::to_string(static_cast<int>(rt)));
 
+  if (!can_run) {
+    engine::LogInfo("SKIP sample_19_dxr_intro (DXR unavailable or demo gates closed; "
+                    "no AS/SBT/DispatchRays in this sample — see ADR 0030)");
+    (void)headless_frames;
+    return 0;
+  }
+
+  engine::LogInfo("DXR capable: demo would DispatchRays here; full AS/SBT frame deferred "
+                  "(ADR 0030 M25 scope = Feature gate + Resolve, not production RT)");
   (void)headless_frames;
   return 0;
 }

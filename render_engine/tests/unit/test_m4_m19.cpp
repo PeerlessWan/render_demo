@@ -1,6 +1,7 @@
 #include "mini_test.h"
 
 #include "engine/animation/skeleton.h"
+#include "engine/assets/gltf_loader.h"
 #include "engine/assets/streaming_budget.h"
 #include "engine/core/feature.h"
 #include "engine/core/math.h"
@@ -149,12 +150,35 @@ TEST_CASE("ResolveMeshMaterial glass is opaque tint", "[render][material]") {
 
 TEST_CASE("Quality tiers differ", "[render]") {
   const auto low = engine::render::QualitySettings::FromTier(engine::render::QualityTier::Low);
+  const auto med = engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
   const auto high = engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
-  REQUIRE(low.shadow_cascades < high.shadow_cascades);
+  REQUIRE(low.shadow_cascades < med.shadow_cascades);
+  REQUIRE(med.shadow_cascades < high.shadow_cascades);
+  REQUIRE(low.shadow_cascades == 1);
+  REQUIRE(med.shadow_cascades == 2);
+  REQUIRE(high.shadow_cascades == 4);
+  REQUIRE(low.shadow_atlas_size < high.shadow_atlas_size || low.max_shadow_distance < high.max_shadow_distance);
+  REQUIRE(low.vegetation_cap < high.vegetation_cap);
+  REQUIRE(high.enable_dof);
   REQUIRE_FALSE(low.enable_ssao);
   REQUIRE(high.enable_ssao);
   REQUIRE_FALSE(low.enable_ssr);
   REQUIRE_FALSE(high.enable_ssr);  // SSR default-off until floor-stable
+}
+
+TEST_CASE("Spot light shadow matrix uses direction", "[render][m11]") {
+  engine::render::LocalLight spot;
+  spot.position = {0.f, 5.f, 0.f};
+  spot.direction = {0.f, -1.f, 0.f};
+  spot.spot_angle_deg = 35.f;
+  spot.spot_inner_deg = 20.f;
+  spot.range = 12.f;
+  REQUIRE(engine::render::IsSpotLight(spot));
+  const auto vp = engine::render::BuildLocalShadowMatrix(spot);
+  REQUIRE(std::isfinite(vp.m[0]));
+  REQUIRE(std::isfinite(vp.m[15]));
+  engine::render::LocalLight omni;
+  REQUIRE_FALSE(engine::render::IsSpotLight(omni));
 }
 
 TEST_CASE("CPU skinning moves vertex", "[animation]") {
@@ -174,6 +198,40 @@ TEST_CASE("CPU skinning moves vertex", "[animation]") {
   const float weights[4] = {1, 0, 0, 0};
   const auto v = engine::animation::SkinVertexCpu({0, 0, 0}, pose, bones, weights);
   REQUIRE(v.x > 1.5f);
+}
+
+TEST_CASE("glTF skin joints feed SkinVertexCpu", "[animation][assets][m6]") {
+  // Synthetic path mirroring LoadGltfMeshFile skin → Skeleton → SkinVertexCpu.
+  engine::assets::GltfSkinData skin;
+  engine::assets::GltfJoint root;
+  root.name = "root";
+  root.parent = -1;
+  root.inverse_bind = engine::Mat4::Identity();
+  skin.joints.push_back(root);
+  skin.vertex_joints.push_back({0, 0, 0, 0});
+  skin.vertex_weights.push_back({1.f, 0.f, 0.f, 0.f});
+
+  engine::animation::Skeleton skel;
+  for (const auto& gj : skin.joints) {
+    engine::animation::Joint j;
+    j.name = gj.name;
+    j.parent = gj.parent;
+    j.inverse_bind = gj.inverse_bind;
+    skel.joints.push_back(j);
+  }
+  engine::animation::AnimationClip clip;
+  clip.duration = 1.f;
+  clip.tracks.resize(1);
+  clip.tracks[0].push_back({0.f, engine::Quat::Identity(), {0, 0, 0}});
+  clip.tracks[0].push_back({1.f, engine::Quat::Identity(), {0, 3, 0}});
+  const auto pose = engine::animation::SampleClip(skel, clip, 1.f);
+  const auto& jn = skin.vertex_joints[0];
+  const auto& wt = skin.vertex_weights[0];
+  const int bones[4] = {jn[0], jn[1], jn[2], jn[3]};
+  const float weights[4] = {wt[0], wt[1], wt[2], wt[3]};
+  const auto v = engine::animation::SkinVertexCpu({1, 0, 0}, pose, bones, weights);
+  REQUIRE(v.y > 2.5f);
+  REQUIRE(std::fabs(v.x - 1.f) < 0.1f);
 }
 
 TEST_CASE("CPU morph targets blend deltas", "[animation]") {
@@ -242,6 +300,16 @@ TEST_CASE("Physics stack and raycast", "[physics]") {
   const auto hit = world->Raycast({0, 10, 0}, {0, -1, 0}, 100.f);
   REQUIRE(hit.hit);
   REQUIRE(hit.body_id == id);
+
+  engine::physics::CapsuleDesc cap;
+  cap.position = {0.f, 1.f, 0.f};
+  cap.radius = 0.3f;
+  cap.half_height = 0.4f;
+  const int cid = world->CreateCapsule(cap);
+  REQUIRE(cid >= 0);
+  REQUIRE(world->MoveCharacter(cid, {0.5f, 0.f, 0.f}));
+  REQUIRE(world->body_position(cid).x > 0.2f);
+  REQUIRE(world->body_position(cid).y > 0.5f);
 
   // Builtin SoftBody is SKIP (ADR 0029 / C22).
   engine::physics::SoftBodyDesc soft;
@@ -333,6 +401,20 @@ TEST_CASE("Console tokenize and execute", "[debug]") {
   REQUIRE_FALSE(console.Execute("missing"));
 }
 
+TEST_CASE("Profiler BeginPass CPU fallback and GpuTimestamp flag", "[debug][m8]") {
+  engine::debug::Profiler::SetGpuTimestampAvailable(false);
+  REQUIRE_FALSE(engine::debug::Profiler::GpuTimestampAvailable());
+  engine::debug::Profiler profiler;
+  profiler.BeginPass("Opaque");
+  profiler.EndPass();
+  REQUIRE(profiler.last_ms("Opaque") >= 0.0);
+  REQUIRE_FALSE(profiler.last_pass_names().empty());
+  REQUIRE(profiler.last_pass_names().back() == "Opaque");
+  engine::debug::Profiler::SetGpuTimestampAvailable(true);
+  REQUIRE(engine::debug::Profiler::GpuTimestampAvailable());
+  engine::debug::Profiler::SetGpuTimestampAvailable(false);
+}
+
 TEST_CASE("UI WantCapture flag", "[ui]") {
   engine::ui::RetainedUi ui;
   ui.Button("start", "Start", 10, 10, 80, 24);
@@ -399,8 +481,9 @@ TEST_CASE("Net HTTPS without OpenSSL is Unavailable", "[net][httplib]") {
 #if !defined(ENGINE_WITH_OPENSSL) || !ENGINE_WITH_OPENSSL
   REQUIRE_FALSE(st);
   REQUIRE(st.code() == engine::ErrorCode::Unavailable);
-  REQUIRE(err.find("HTTPS") != std::string::npos || err.find("OpenSSL") != std::string::npos ||
-          err.find("https") != std::string::npos);
+  REQUIRE(err.find("HTTPS") != std::string::npos);
+  REQUIRE(err.find("OpenSSL") != std::string::npos);
+  REQUIRE(err.find("does not install") != std::string::npos);
 #else
   // OpenSSL linked: must not report "without OpenSSL" Unavailable (DNS/cert may Failed).
   REQUIRE_FALSE(st);

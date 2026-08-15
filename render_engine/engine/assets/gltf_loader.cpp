@@ -92,6 +92,8 @@ Result<GltfMeshAsset> LoadWithCgltf(const std::filesystem::path& path, const IIm
   const cgltf_accessor* pos = nullptr;
   const cgltf_accessor* nrm = nullptr;
   const cgltf_accessor* uv0 = nullptr;
+  const cgltf_accessor* joints0 = nullptr;
+  const cgltf_accessor* weights0 = nullptr;
   for (cgltf_size i = 0; i < prim.attributes_count; ++i) {
     const cgltf_attribute& a = prim.attributes[i];
     if (a.type == cgltf_attribute_type_position) {
@@ -100,6 +102,10 @@ Result<GltfMeshAsset> LoadWithCgltf(const std::filesystem::path& path, const IIm
       nrm = a.data;
     } else if (a.type == cgltf_attribute_type_texcoord && a.index == 0) {
       uv0 = a.data;
+    } else if (a.type == cgltf_attribute_type_joints && a.index == 0) {
+      joints0 = a.data;
+    } else if (a.type == cgltf_attribute_type_weights && a.index == 0) {
+      weights0 = a.data;
     }
   }
   if (!pos) {
@@ -174,9 +180,64 @@ Result<GltfMeshAsset> LoadWithCgltf(const std::filesystem::path& path, const IIm
     }
   }
 
+  // Minimal skin / joints (M6): first skin + JOINTS_0 / WEIGHTS_0 when present.
+  if (data->skins_count > 0 && data->skins[0].joints_count > 0) {
+    const cgltf_skin& skin = data->skins[0];
+    out.skin.joints.resize(static_cast<std::size_t>(skin.joints_count));
+    std::vector<float> ibm;
+    if (skin.inverse_bind_matrices) {
+      ReadAccessorFloats(skin.inverse_bind_matrices, 16, ibm);
+    }
+    for (cgltf_size ji = 0; ji < skin.joints_count; ++ji) {
+      GltfJoint joint;
+      const cgltf_node* node = skin.joints[ji];
+      if (node && node->name) {
+        joint.name = node->name;
+      } else {
+        joint.name = "joint_" + std::to_string(ji);
+      }
+      joint.parent = -1;
+      if (node && node->parent) {
+        for (cgltf_size pj = 0; pj < skin.joints_count; ++pj) {
+          if (skin.joints[pj] == node->parent) {
+            joint.parent = static_cast<int>(pj);
+            break;
+          }
+        }
+      }
+      if (ji * 16 + 15 < ibm.size()) {
+        for (int k = 0; k < 16; ++k) {
+          joint.inverse_bind.m[static_cast<std::size_t>(k)] = ibm[ji * 16 + static_cast<std::size_t>(k)];
+        }
+      }
+      out.skin.joints[static_cast<std::size_t>(ji)] = std::move(joint);
+    }
+
+    const std::size_t vcount = out.vertices.size();
+    out.skin.vertex_joints.assign(vcount, {0, 0, 0, 0});
+    out.skin.vertex_weights.assign(vcount, {1.f, 0.f, 0.f, 0.f});
+    if (joints0 && weights0 && joints0->count == pos->count && weights0->count == pos->count) {
+      for (cgltf_size i = 0; i < pos->count; ++i) {
+        cgltf_uint jtmp[4]{};
+        float wtmp[4]{};
+        if (cgltf_accessor_read_uint(joints0, i, jtmp, 4)) {
+          out.skin.vertex_joints[static_cast<std::size_t>(i)] = {
+              static_cast<int>(jtmp[0]), static_cast<int>(jtmp[1]), static_cast<int>(jtmp[2]),
+              static_cast<int>(jtmp[3])};
+        }
+        if (cgltf_accessor_read_float(weights0, i, wtmp, 4)) {
+          out.skin.vertex_weights[static_cast<std::size_t>(i)] = {wtmp[0], wtmp[1], wtmp[2],
+                                                                  wtmp[3]};
+        }
+      }
+    }
+    out.has_skin = !out.skin.joints.empty();
+  }
+
   cgltf_free(data);
   LogInfo("gltf mesh loaded: " + std::to_string(out.vertices.size()) + " verts, " +
-          std::to_string(out.indices.size()) + " indices");
+          std::to_string(out.indices.size()) + " indices" +
+          (out.has_skin ? (", skin joints=" + std::to_string(out.skin.joints.size())) : ""));
   return Result<GltfMeshAsset>::Ok(std::move(out));
 }
 

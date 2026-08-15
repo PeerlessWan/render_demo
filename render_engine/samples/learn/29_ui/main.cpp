@@ -3,6 +3,7 @@
 #include "engine/render/environment.h"
 #include "engine/render/quality.h"
 #include "engine/render/render_system.h"
+#include "engine/rhi/i_device.h"
 #include "engine/ui/immediate_ui.h"
 #include "engine/ui/rml_ui.h"
 #include "engine/ui/retained_ui.h"
@@ -10,6 +11,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #ifndef ENGINE_SHADER_DIR_A
 #error "ENGINE_SHADER_DIR_A must be set by CMake"
@@ -50,6 +52,37 @@ engine::render::RenderSystemDesc LitDesc() {
   return r;
 }
 
+void BuildMainMenu(engine::ui::RetainedUi& ui) {
+  ui.Clear();
+  ui.Panel("menu", 40.f, 80.f, 280.f, 200.f, {0.08f, 0.09f, 0.12f, 0.94f});
+  ui.Label("menu_title", "Main Menu", 56.f, 100.f);
+  ui.Button("btn_play", "Play", 56.f, 140.f, 160.f, 32.f);
+  ui.Toggle("opt_ssao", "SSAO", 56.f, 188.f, 160.f, 24.f, true);
+  ui.Label("menu_hint", "Esc = menu", 56.f, 230.f);
+}
+
+void BuildHud(engine::ui::RetainedUi& ui, bool ssao_on) {
+  ui.Clear();
+  ui.Panel("hud", 12.f, 12.f, 220.f, 72.f, {0.1f, 0.12f, 0.16f, 0.85f});
+  ui.Label("title", "Learn 29 HUD", 24.f, 28.f);
+  ui.Toggle("opt_ssao", "SSAO", 24.f, 52.f, 120.f, 20.f, ssao_on);
+}
+
+std::vector<engine::rhi::ScreenQuad> ToScreenQuads(const std::vector<engine::ui::UiDrawRect>& rects) {
+  std::vector<engine::rhi::ScreenQuad> quads;
+  quads.reserve(rects.size());
+  for (const auto& r : rects) {
+    engine::rhi::ScreenQuad q;
+    q.x0 = r.x0;
+    q.y0 = r.y0;
+    q.x1 = r.x1;
+    q.y1 = r.y1;
+    q.color = r.color;
+    quads.push_back(q);
+  }
+  return quads;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -80,10 +113,11 @@ int main(int argc, char** argv) {
   }
 
   auto retained = engine::ui::CreateRetainedUiBackend();
-  retained->Panel("hud", 12.f, 12.f, 220.f, 80.f, {0.1f, 0.12f, 0.16f, 0.85f});
-  retained->Label("title", "Learn 29 UI", 24.f, 28.f);
-  retained->Toggle("opt_ssao", "SSAO", 24.f, 52.f, 120.f, 20.f, true);
+  bool in_menu = true;
+  bool ssao_on = true;
+  BuildMainMenu(*retained);
   engine::LogInfo(std::string("Retained backend: ") + engine::ui::QueryRetainedUiBackend().name);
+  engine::LogInfo("RmlUi: accepted external (thin adapter/stub is M15 100%口径)");
 
   engine::render::Environment env;
   engine::render::RenderSystem render;
@@ -92,24 +126,67 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  bool esc_was = false;
+  bool mouse_left_was = false;
+
   const auto status = a.Run([&](engine::Application& app_ref) {
     const float w = static_cast<float>(app_ref.window().width());
     const float h = static_cast<float>(app_ref.window().height());
-    imgui.BeginFrame(app_ref.window().input_snapshot(), w, h, app_ref.delta_time());
-    if (imgui.BeginWindow("Debug", 16.f, 16.f, 200.f, 100.f)) {
-      imgui.Text("Frame UI sample");
+    const auto& snap = app_ref.window().input_snapshot();
+
+    imgui.BeginFrame(snap, w, h, app_ref.delta_time());
+    if (imgui.BeginWindow("Debug", 16.f, 16.f, 220.f, 110.f)) {
+      imgui.Text(in_menu ? "State: Main Menu" : "State: Playing (HUD)");
+      imgui.Text("WantCapture = ImGui || Retained");
       imgui.EndWindow();
     }
     imgui.RefreshCapture();
-    app_ref.set_ui_want_capture(imgui.want_capture_mouse() || imgui.want_capture_keyboard());
+
+    const bool mouse_pressed = snap.mouse_left && !mouse_left_was;
+    mouse_left_was = snap.mouse_left;
+    const auto events =
+        retained->Pump(snap.mouse_x, snap.mouse_y, snap.mouse_left, mouse_pressed);
+    for (const auto& e : events) {
+      if (e.id == "btn_play" && e.type == engine::ui::UiEventType::Click) {
+        in_menu = false;
+        BuildHud(*retained, ssao_on);
+        engine::LogInfo("Retained: Play -> HUD");
+      } else if (e.id == "opt_ssao" && e.type == engine::ui::UiEventType::Toggle) {
+        ssao_on = e.bool_value;
+        auto fx = render.effect_tuning();
+        fx.enable_ssao = ssao_on;
+        render.set_effect_tuning(fx);
+      }
+    }
+
+    // Esc toggles main-menu-like state (window mode).
+    const bool esc_down = snap.keys[27];
+    if (esc_down && !esc_was) {
+      in_menu = !in_menu;
+      if (in_menu) {
+        BuildMainMenu(*retained);
+        retained->set_bool("opt_ssao", ssao_on);
+      } else {
+        BuildHud(*retained, ssao_on);
+      }
+    }
+    esc_was = esc_down;
+
+    const bool want =
+        imgui.want_capture_mouse() || imgui.want_capture_keyboard() || retained->want_capture();
+    app_ref.set_ui_want_capture(want);
+
+    const auto ui_rects = retained->BuildDrawList();
+    const auto ui_quads = ToScreenQuads(ui_rects);
 
     const float aspect = h > 0.f ? w / h : 1.f;
-    if (auto st = render.DrawFrame(app_ref.device(), app_ref.render_scene(), env, aspect); !st) {
+    if (auto st =
+            render.DrawFrame(app_ref.device(), app_ref.render_scene(), env, aspect, nullptr, &ui_quads);
+        !st) {
       engine::LogError(st.message());
       return;
     }
     (void)imgui.Render(app_ref.device());
-    (void)retained->BuildDrawList();
   });
   return status ? 0 : 1;
 }

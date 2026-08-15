@@ -92,6 +92,46 @@ TEST_CASE("CSM frustum slice corners finite", "[usable]") {
   REQUIRE((corners[4] - cam.position).length() > (corners[0] - cam.position).length());
 }
 
+TEST_CASE("CSM texel snap stable under small camera moves", "[usable][csm]") {
+  engine::render::CascadedShadowMap csm;
+  csm.set_cascade_count(1);
+  engine::render::Camera cam;
+  cam.position = {0.f, 2.f, 8.f};
+  cam.yaw = 0.f;
+  cam.pitch = -0.2f;
+  const engine::Vec3 light = engine::Normalize(engine::Vec3{0.45f, -1.f, 0.35f});
+  const engine::Vec3 world_pt{1.f, 0.f, -2.f};
+
+  csm.Build(cam, 16.f / 9.f, light, 2048, 80.f);
+  REQUIRE_FALSE(csm.cascades().empty());
+  const engine::Vec3 p0 = csm.cascades()[0].view_proj.TransformPoint(world_pt);
+
+  // Sub-texel camera translation must not change light-space of a static point.
+  cam.position.x += 0.0005f;
+  csm.Build(cam, 16.f / 9.f, light, 2048, 80.f);
+  const engine::Vec3 p1 = csm.cascades()[0].view_proj.TransformPoint(world_pt);
+  REQUIRE(std::fabs(p0.x - p1.x) < 1e-5f);
+  REQUIRE(std::fabs(p0.y - p1.y) < 1e-5f);
+
+  // Fractional light-space XY of a static point must stay put across larger moves
+  // (only whole-texel jumps allowed).
+  cam.position = {0.f, 2.f, 8.f};
+  csm.Build(cam, 16.f / 9.f, light, 2048, 80.f);
+  const engine::Vec3 a = csm.cascades()[0].view_proj.TransformPoint(world_pt);
+  cam.position.x += 0.35f;
+  cam.yaw = 0.15f;
+  csm.Build(cam, 16.f / 9.f, light, 2048, 80.f);
+  const engine::Vec3 b = csm.cascades()[0].view_proj.TransformPoint(world_pt);
+  // Ortho maps light XY to NDC; one texel ≈ 2/resolution in NDC.
+  const float texel_ndc = 2.f / 2048.f;
+  const float frac_a_x = a.x - std::floor(a.x / texel_ndc) * texel_ndc;
+  const float frac_b_x = b.x - std::floor(b.x / texel_ndc) * texel_ndc;
+  const float frac_a_y = a.y - std::floor(a.y / texel_ndc) * texel_ndc;
+  const float frac_b_y = b.y - std::floor(b.y / texel_ndc) * texel_ndc;
+  REQUIRE(std::fabs(frac_a_x - frac_b_x) < 1e-4f);
+  REQUIRE(std::fabs(frac_a_y - frac_b_y) < 1e-4f);
+}
+
 TEST_CASE("Orthographic light matrix finite", "[usable]") {
   const auto proj = engine::Mat4::Orthographic(-10, 10, -10, 10, 0.1f, 100.f);
   const auto view = engine::Mat4::LookAt({0, 20, 0}, {0, 0, 0}, {0, 0, 1});

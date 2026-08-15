@@ -65,6 +65,8 @@ Headless / golden dump 仍关 TAA/SSAO 保稳定；交互可两端同开。
 
 与既有约定相同：CSM Y-flip、独立 local atlas、Cull=NONE、负 viewport + FrontFace 配对。Bias 数字不可照抄。
 
+**画质债（W0）**：柱面 CSM 已加 Poisson PCF、tile clamp、法线/斜率 bias、近级联 log 偏置与 overlap；主观残留记看板 `T-csm-pillar-shimmer`（可再录盘绿 mask MAD 对照）。
+
 ### 3.4 Bindless
 
 - D3D：能力位 `bindless`（Tier≥2）；热路径默认 `pad=-1`（classic）。`bindless_hot_path=true` 且非 `gpu_headless` 时按 `tex_slot` 映射 heap 1/4。  

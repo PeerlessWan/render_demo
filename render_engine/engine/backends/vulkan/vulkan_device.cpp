@@ -25,6 +25,8 @@ namespace engine::rhi {
 namespace {
 
 constexpr std::uint32_t kFramesInFlight = 2;
+// Match D3D12: 4 CSM cascades + local-shadow tiles share one UB ring.
+constexpr std::uint32_t kShadowVpSlots = 16;
 // Opaque scene + CPU-expanded scale instances (Sandbox uses up to 1024).
 constexpr std::uint32_t kMaxLitDraws = 2048;
 constexpr VkDeviceSize kUniformAlign = 256;
@@ -78,8 +80,10 @@ struct FrameGpu {
   float local_count;
   float enable_taa;
   float _pad_before_lights[2];
-  float local_pos_range[4][4];
-  float local_color_intensity[4][4];
+  float local_pos_range[8][4];
+  float local_color_intensity[8][4];
+  float local_spot[8][4];     // xyz=dir, w=cosOuter (-1 = point/omni)
+  float local_spot_inner[8];  // cosInner for lights 0..7
   float local_shadow_vp[12][16];
   float enable_local_shadow;
   float local_shadow_bias;
@@ -160,8 +164,8 @@ struct PostCB {
   float prev_view_proj[16];
   float jitter_x;
   float jitter_y;
-  float pad0;
-  float pad1;
+  float vignette_strength;
+  float film_grain_strength;
 };
 static_assert(sizeof(PostCB) <= 512, "post CB exceeds upload buffer");
 constexpr VkDeviceSize kPostUbSize =
@@ -616,7 +620,7 @@ class VulkanDevice final : public IDevice {
     data.reflection_intensity = lighting_.reflection_intensity;
     data.local_count = static_cast<float>(lighting_.local_light_count);
     data.enable_taa = lighting_.enable_taa ? 1.f : 0.f;
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 8; ++i) {
       data.local_pos_range[i][0] = lighting_.local_pos[static_cast<std::size_t>(i)].x;
       data.local_pos_range[i][1] = lighting_.local_pos[static_cast<std::size_t>(i)].y;
       data.local_pos_range[i][2] = lighting_.local_pos[static_cast<std::size_t>(i)].z;
@@ -625,6 +629,11 @@ class VulkanDevice final : public IDevice {
       data.local_color_intensity[i][1] = lighting_.local_color[static_cast<std::size_t>(i)].g;
       data.local_color_intensity[i][2] = lighting_.local_color[static_cast<std::size_t>(i)].b;
       data.local_color_intensity[i][3] = lighting_.local_intensity[static_cast<std::size_t>(i)];
+      data.local_spot[i][0] = lighting_.local_spot[static_cast<std::size_t>(i)].x;
+      data.local_spot[i][1] = lighting_.local_spot[static_cast<std::size_t>(i)].y;
+      data.local_spot[i][2] = lighting_.local_spot[static_cast<std::size_t>(i)].z;
+      data.local_spot[i][3] = lighting_.local_spot[static_cast<std::size_t>(i)].w;
+      data.local_spot_inner[i] = lighting_.local_spot_inner[static_cast<std::size_t>(i)];
     }
     for (int i = 0; i < 12; ++i) {
       std::memcpy(data.local_shadow_vp[i],
@@ -703,7 +712,8 @@ class VulkanDevice final : public IDevice {
     std::memcpy(frame.view_proj,
                 lighting_.cascade_view_proj[static_cast<std::size_t>(cascade_index)].m.data(),
                 sizeof(frame.view_proj));
-    const VkDeviceSize frame_sh_off = static_cast<VkDeviceSize>(frame_index_) * kUniformAlign;
+    // Per-cascade slot: must not overwrite other cascades before GPU executes.
+    const VkDeviceSize frame_sh_off = ShadowVpUbOffset(cascade_index);
     void* mapped = nullptr;
     if (vkMapMemory(device_, shadow_frame_ub_mem_, frame_sh_off, sizeof(frame), 0, &mapped) !=
         VK_SUCCESS) {
@@ -732,6 +742,7 @@ class VulkanDevice final : public IDevice {
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
     bound_cascade_ = cascade_index;
+    bound_shadow_vp_slot_ = cascade_index;
     return Status::Ok();
   }
 
@@ -771,7 +782,7 @@ class VulkanDevice final : public IDevice {
       vkUnmapMemory(device_, object_ub_mem_);
 
       const std::uint32_t dyn_offsets[2] = {
-          static_cast<std::uint32_t>(frame_index_) * static_cast<std::uint32_t>(kUniformAlign),
+          static_cast<std::uint32_t>(ShadowVpUbOffset(bound_shadow_vp_slot_)),
           static_cast<std::uint32_t>(slot)};
       vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline_layout_, 0, 1,
                               &shadow_desc_set_, 2, dyn_offsets);
@@ -833,6 +844,7 @@ class VulkanDevice final : public IDevice {
     local_shadow_pass_active_ = true;
     shadow_draws_this_pass_ = 0;
     used_graphics_ = true;
+    bound_shadow_vp_slot_ = 4;
     engine::SetFeatureOverride("local_shadow", true);
     return BindLocalShadowTile(0);
   }
@@ -854,7 +866,8 @@ class VulkanDevice final : public IDevice {
     if (tile == 0) {
       std::memcpy(frame.view_proj, lighting_.local_shadow_vp.m.data(), sizeof(frame.view_proj));
     }
-    const VkDeviceSize frame_sh_off = static_cast<VkDeviceSize>(frame_index_) * kUniformAlign;
+    const int vp_slot = 4 + tile;
+    const VkDeviceSize frame_sh_off = ShadowVpUbOffset(vp_slot);
     void* mapped = nullptr;
     if (vkMapMemory(device_, shadow_frame_ub_mem_, frame_sh_off, sizeof(frame), 0, &mapped) !=
         VK_SUCCESS) {
@@ -880,6 +893,7 @@ class VulkanDevice final : public IDevice {
     scissor.extent.width = static_cast<std::uint32_t>(tile_px);
     scissor.extent.height = static_cast<std::uint32_t>(tile_px);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
+    bound_shadow_vp_slot_ = vp_slot;
     return Status::Ok();
   }
   Status EndLocalShadowPass() override {
@@ -2691,22 +2705,21 @@ class VulkanDevice final : public IDevice {
     out_rgba.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4, 0);
     const bool bgra = surface_format_.format == VK_FORMAT_B8G8R8A8_UNORM ||
                       surface_format_.format == VK_FORMAT_B8G8R8A8_SRGB;
-    for (int y = 0; y < h; ++y) {
-      const auto* row = src + static_cast<std::size_t>(y) * static_cast<std::size_t>(row_pitch);
-      for (int x = 0; x < w; ++x) {
-        const std::size_t di =
-            (static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)) *
-            4;
-        if (bgra) {
-          out_rgba[di + 0] = row[x * 4 + 2];
-          out_rgba[di + 1] = row[x * 4 + 1];
-          out_rgba[di + 2] = row[x * 4 + 0];
-          out_rgba[di + 3] = row[x * 4 + 3];
-        } else {
-          out_rgba[di + 0] = row[x * 4 + 0];
-          out_rgba[di + 1] = row[x * 4 + 1];
-          out_rgba[di + 2] = row[x * 4 + 2];
-          out_rgba[di + 3] = row[x * 4 + 3];
+    const std::size_t row_bytes = static_cast<std::size_t>(w) * 4u;
+    if (!bgra) {
+      for (int y = 0; y < h; ++y) {
+        const auto* row = src + static_cast<std::size_t>(y) * static_cast<std::size_t>(row_pitch);
+        std::memcpy(out_rgba.data() + static_cast<std::size_t>(y) * row_bytes, row, row_bytes);
+      }
+    } else {
+      for (int y = 0; y < h; ++y) {
+        const auto* row = src + static_cast<std::size_t>(y) * static_cast<std::size_t>(row_pitch);
+        std::uint8_t* dst = out_rgba.data() + static_cast<std::size_t>(y) * row_bytes;
+        for (int x = 0; x < w; ++x) {
+          dst[x * 4 + 0] = row[x * 4 + 2];
+          dst[x * 4 + 1] = row[x * 4 + 1];
+          dst[x * 4 + 2] = row[x * 4 + 0];
+          dst[x * 4 + 3] = row[x * 4 + 3];
         }
       }
     }
@@ -4060,6 +4073,13 @@ class VulkanDevice final : public IDevice {
     return UINT32_MAX;
   }
 
+  VkDeviceSize ShadowVpUbOffset(int slot) const {
+    const int s = (std::max)(0, (std::min)(slot, static_cast<int>(kShadowVpSlots) - 1));
+    return (static_cast<VkDeviceSize>(frame_index_) * kShadowVpSlots +
+            static_cast<VkDeviceSize>(s)) *
+           kUniformAlign;
+  }
+
   VkCommandBuffer BeginOneShot() {
     VkCommandBufferAllocateInfo ai{};
     ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -4886,6 +4906,8 @@ class VulkanDevice final : public IDevice {
     std::memcpy(cb.prev_view_proj, desc.prev_view_proj.m.data(), sizeof(cb.prev_view_proj));
     cb.jitter_x = desc.jitter_x;
     cb.jitter_y = desc.jitter_y;
+    cb.vignette_strength = desc.vignette_strength;
+    cb.film_grain_strength = desc.film_grain_strength;
 
     const VkDeviceSize off = static_cast<VkDeviceSize>(frame_index_) * kPostUbSize;
     void* mapped = nullptr;
@@ -5644,10 +5666,9 @@ class VulkanDevice final : public IDevice {
     sci.magFilter = VK_FILTER_LINEAR;
     sci.minFilter = VK_FILTER_LINEAR;
     sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    sci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-    sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-    sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-    sci.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    sci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sci.compareEnable = VK_TRUE;
     sci.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     if (vkCreateSampler(device_, &sci, nullptr, &shadow_sampler_) != VK_SUCCESS) {
@@ -5724,10 +5745,11 @@ class VulkanDevice final : public IDevice {
     rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rs.lineWidth = 1.f;
     rs.rasterizerDiscardEnable = VK_FALSE;
-    // Empirically matched to D3D12 DepthBias=1500 + SlopeScaledDepthBias=2.0 on D32_FLOAT
-    // (integer bias units ≠ Vulkan factor; do not copy 1500 literally).
+    // Depth bias: keep slope matched to D3D12 (SlopeScaledDepthBias=2).
+    // Constant factor uses Vulkan's r-scaled units (not D3D integer DepthBias=1500).
+    // 1.25 was under-biased vs D3D on D32 → more acne / softer-looking contacts.
     rs.depthBiasEnable = VK_TRUE;
-    rs.depthBiasConstantFactor = 1.25f;
+    rs.depthBiasConstantFactor = 2.5f;
     rs.depthBiasClamp = 0.f;
     rs.depthBiasSlopeFactor = 2.0f;
 
@@ -5806,8 +5828,9 @@ class VulkanDevice final : public IDevice {
         !st) {
       return st;
     }
-    if (auto st = CreateBuffer(kUniformAlign * kFramesInFlight, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                               host, shadow_frame_ub_, shadow_frame_ub_mem_);
+    if (auto st = CreateBuffer(kUniformAlign * kShadowVpSlots * kFramesInFlight,
+                               VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, host, shadow_frame_ub_,
+                               shadow_frame_ub_mem_);
         !st) {
       return st;
     }
@@ -6388,6 +6411,7 @@ class VulkanDevice final : public IDevice {
   VkSampler lit_linear_sampler_ = VK_NULL_HANDLE;
   bool shadow_pass_active_ = false;
   int bound_cascade_ = -1;
+  int bound_shadow_vp_slot_ = 0;
   std::uint32_t lit_draws_this_frame_ = 0;
   std::uint32_t shadow_draws_this_pass_ = 0;
   FrameLighting lighting_{};

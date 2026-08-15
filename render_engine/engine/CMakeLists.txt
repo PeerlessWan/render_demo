@@ -23,6 +23,7 @@ add_library(engine_assets STATIC
   assets/image_loader_stb.cpp
   assets/texture_loader_dds.cpp
   assets/gltf_loader.cpp
+  assets/shader_hot_reload.cpp
 )
 target_include_directories(engine_assets PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_assets PUBLIC engine_core)
@@ -90,6 +91,7 @@ target_link_libraries(engine_debug PUBLIC engine_core)
 
 add_library(engine_animation STATIC
   animation/skeleton.cpp
+  animation/state_machine.cpp
 )
 target_include_directories(engine_animation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_animation PUBLIC engine_core)
@@ -223,6 +225,8 @@ add_library(engine_render2d STATIC
   render2d/sprite.cpp
   render2d/tilemap_stream.cpp
   render2d/atlas.cpp
+  render2d/fx2d.cpp
+  render2d/bmfont.cpp
 )
 target_include_directories(engine_render2d PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_render2d PUBLIC engine_core)
@@ -237,6 +241,7 @@ add_library(engine_gi STATIC
   gi/probe_volume.cpp
   gi/reflection_probe.cpp
   gi/scene_capture.cpp
+  gi/lightmap.cpp
 )
 target_include_directories(engine_gi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_gi PUBLIC engine_core)
@@ -249,9 +254,10 @@ target_link_libraries(engine_terrain PUBLIC engine_core)
 
 add_library(engine_vfx STATIC
   vfx/particles.cpp
+  vfx/trail_ribbon.cpp
 )
 target_include_directories(engine_vfx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(engine_vfx PUBLIC engine_core)
+target_link_libraries(engine_vfx PUBLIC engine_core engine_debug)
 
 add_library(engine_gpu_driven STATIC
   gpu_driven/path.cpp
@@ -265,6 +271,9 @@ add_library(engine_rt STATIC
 )
 target_include_directories(engine_rt PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_rt PUBLIC engine_core engine_rhi)
+if(WIN32)
+  target_link_libraries(engine_rt PRIVATE d3d12 dxgi)
+endif()
 
 add_library(engine_net STATIC
   net/net_system.cpp

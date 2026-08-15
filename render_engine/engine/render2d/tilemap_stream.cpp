@@ -3,6 +3,31 @@
 #include <cmath>
 
 namespace engine::render2d {
+namespace {
+
+float LerpRotKeys(const std::vector<BoneRotKey2D>& keys, float t) {
+  if (keys.empty()) {
+    return 0.f;
+  }
+  if (keys.size() == 1 || t <= keys.front().time) {
+    return keys.front().rot;
+  }
+  if (t >= keys.back().time) {
+    return keys.back().rot;
+  }
+  for (std::size_t i = 0; i + 1 < keys.size(); ++i) {
+    const auto& a = keys[i];
+    const auto& b = keys[i + 1];
+    if (t >= a.time && t <= b.time) {
+      const float span = b.time - a.time;
+      const float u = span > 1e-6f ? (t - a.time) / span : 0.f;
+      return a.rot + (b.rot - a.rot) * u;
+    }
+  }
+  return keys.back().rot;
+}
+
+}  // namespace
 
 void TilemapStreamer::Configure(int map_w, int map_h, int chunk_size, std::size_t budget_chunks) {
   map_w_ = map_w;
@@ -89,6 +114,38 @@ std::size_t TilemapStreamer::resident_count() const {
   return n;
 }
 
+void TilemapStreamer::ExpandResidentToSprites(std::vector<Sprite>& out,
+                                             const TileExpandDesc& desc) const {
+  for (const auto& c : chunks_) {
+    if (!c.resident) {
+      continue;
+    }
+    for (int ly = 0; ly < c.size; ++ly) {
+      for (int lx = 0; lx < c.size; ++lx) {
+        const int gid = c.gids[static_cast<std::size_t>(ly * c.size + lx)];
+        if (desc.skip_zero_gid && gid == 0) {
+          continue;
+        }
+        const int wx = c.chunk_x * c.size + lx;
+        const int wy = c.chunk_y * c.size + ly;
+        if (wx >= map_w_ || wy >= map_h_) {
+          continue;
+        }
+        Sprite s;
+        s.atlas_id = desc.atlas_id;
+        s.frame = gid;
+        s.position = {static_cast<float>(wx) * desc.tile_w, static_cast<float>(wy) * desc.tile_h};
+        s.size = {desc.tile_w, desc.tile_h};
+        s.sort_layer = desc.sort_layer;
+        s.sort_y = s.position.y;
+        s.nearest = true;
+        s.color = desc.color;
+        out.push_back(std::move(s));
+      }
+    }
+  }
+}
+
 BonePose2D SampleSkeleton2D(const Skeleton2D& skel, float time) {
   BonePose2D pose;
   pose.positions.resize(skel.bones.size());
@@ -103,6 +160,53 @@ BonePose2D SampleSkeleton2D(const Skeleton2D& skel, float time) {
     }
   }
   return pose;
+}
+
+BonePose2D SampleSkeletonClip2D(const Skeleton2D& skel, const SkeletonClip2D& clip, float time) {
+  float t = time;
+  if (clip.duration > 1e-6f) {
+    if (clip.loop) {
+      t = std::fmod(t, clip.duration);
+      if (t < 0.f) {
+        t += clip.duration;
+      }
+    } else if (t > clip.duration) {
+      t = clip.duration;
+    }
+  }
+
+  BonePose2D pose;
+  pose.positions.resize(skel.bones.size());
+  pose.rotations.resize(skel.bones.size());
+  for (std::size_t i = 0; i < skel.bones.size(); ++i) {
+    float extra = 0.f;
+    if (i < clip.channels.size()) {
+      extra = LerpRotKeys(clip.channels[i], t);
+    }
+    pose.rotations[i] = skel.bones[i].bind_rot + extra;
+    pose.positions[i] = skel.bones[i].bind_pos;
+    if (skel.bones[i].parent >= 0) {
+      const auto& p = pose.positions[static_cast<std::size_t>(skel.bones[i].parent)];
+      const float rad = pose.rotations[static_cast<std::size_t>(skel.bones[i].parent)];
+      const float c = std::cos(rad);
+      const float s = std::sin(rad);
+      const Vec2 local = skel.bones[i].bind_pos;
+      pose.positions[i] = Vec2{p.x + c * local.x - s * local.y, p.y + s * local.x + c * local.y};
+    }
+  }
+  return pose;
+}
+
+SkeletonClip2D MakeTinyWalkClip2D() {
+  SkeletonClip2D clip;
+  clip.name = "walk";
+  clip.duration = 1.f;
+  clip.loop = true;
+  clip.channels.resize(2);
+  // Root stays; child swings ±0.35 rad over the cycle.
+  clip.channels[0] = {{0.f, 0.f}, {1.f, 0.f}};
+  clip.channels[1] = {{0.f, -0.35f}, {0.5f, 0.35f}, {1.f, -0.35f}};
+  return clip;
 }
 
 }  // namespace engine::render2d

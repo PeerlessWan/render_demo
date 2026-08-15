@@ -2,23 +2,12 @@
 
 #include "engine/core/math.h"
 #include "engine/core/result.h"
+#include "engine/render2d/sprite.h"
 
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace engine::render2d {
-
-struct AtlasFrame {
-  int x = 0, y = 0, w = 16, h = 16;
-};
-
-struct TextureAtlas {
-  std::string id;
-  int width = 0;
-  int height = 0;
-  std::unordered_map<std::string, AtlasFrame> frames;
-};
 
 struct Bone2D {
   std::string name;
@@ -34,6 +23,30 @@ struct Skeleton2D {
 struct BonePose2D {
   std::vector<Vec2> positions;
   std::vector<float> rotations;
+};
+
+// Tiny clip: per-bone rotation keys (degrees) over normalized time [0, duration].
+struct BoneRotKey2D {
+  float time = 0.f;
+  float rot = 0.f;
+};
+
+struct SkeletonClip2D {
+  std::string name;
+  float duration = 1.f;
+  bool loop = true;
+  // channels[bone_index] = keys sorted by time (may be empty → bind pose).
+  std::vector<std::vector<BoneRotKey2D>> channels;
+};
+
+// Options for expanding resident tile chunks into Sprite draw list (CPU path).
+struct TileExpandDesc {
+  float tile_w = 16.f;
+  float tile_h = 16.f;
+  int sort_layer = 0;
+  std::string atlas_id = "tiles";
+  bool skip_zero_gid = true;
+  ColorRgba color{1.f, 1.f, 1.f, 1.f};
 };
 
 // M21: chunk streaming for large tilemaps.
@@ -52,6 +65,10 @@ class TilemapStreamer {
   void UpdateResidence(int focus_x, int focus_y, int radius_chunks);
   [[nodiscard]] std::size_t resident_count() const;
   [[nodiscard]] const TileChunk* FindChunk(int cx, int cy) const;
+  [[nodiscard]] const std::vector<TileChunk>& chunks() const { return chunks_; }
+
+  // Append one Sprite per non-empty tile in resident chunks (CPU expand for draw).
+  void ExpandResidentToSprites(std::vector<Sprite>& out, const TileExpandDesc& desc = {}) const;
 
  private:
   int map_w_ = 0;
@@ -62,6 +79,13 @@ class TilemapStreamer {
   std::vector<TileChunk> chunks_;
 };
 
+// Procedural wave sample (no clip data).
 BonePose2D SampleSkeleton2D(const Skeleton2D& skel, float time);
+
+// Sample with tiny clip keys; advances via caller-supplied time (loop when clip.loop).
+BonePose2D SampleSkeletonClip2D(const Skeleton2D& skel, const SkeletonClip2D& clip, float time);
+
+// Build a minimal 2-bone walk-ish clip for unit tests / learn smoke.
+SkeletonClip2D MakeTinyWalkClip2D();
 
 }  // namespace engine::render2d

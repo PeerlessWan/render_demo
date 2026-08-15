@@ -1,9 +1,9 @@
 # Learn 19 — DXR 入门与降级（选修）
 
-> 在无窗口环境下探测 **FeatureSet + CanRunDxrDemo + RtStatus::Resolve**，理解 M8 光追能力的 **特性门控与降级策略**；本课不录制 AS/SBT 也不发射 rays。
+> 在无窗口环境下探测 **ProbeDxrHardwareSupport + FeatureSet + CanRunDxrDemo + RtStatus::Resolve**，理解 M8/M25 光追能力的 **特性门控与降级策略**；本课不录制 AS/SBT 也不发射 rays（见 ADR 0030）。
 
-**选修说明**：无 DXR 硬件须 **跑通降级**（日志 + exit 0），非报红。  
-**对齐里程碑**：M8。完整 AS/raygen **SKIP**，见 CH35 / Sandbox。
+**选修说明**：无 DXR 硬件须 **跑通降级**（日志 `SKIP` + exit 0），非报红。  
+**对齐里程碑**：M8 / M25 deepen。完整 AS/raygen **SKIP**，见 ADR 0030 / CH35。
 
 ## 怎么跑
 
@@ -15,8 +15,9 @@ build\samples\learn\19_dxr_intro\Debug\sample_19_dxr_intro.exe
 典型日志（因机器而异）：
 
 ```text
-CanRunDxrDemo=true|false raytracing=... d3d12=...
+ProbeDxrHardwareSupport=true|false CanRunDxrDemo=true|false raytracing=... d3d12=...
 RtStatus=0|1|2|3
+SKIP sample_19_dxr_intro (...)   # 无 DXR 时
 ```
 
 `RtStatus` 整数值对应 `RtStatus` 枚举序（0=Disabled …，以 `raytracing.h` 为准）。
@@ -25,7 +26,7 @@ CMake target：**`sample_19_dxr_intro`**。无 shader、无 Application。
 
 ## 知识点
 
-1. **FeatureSet 集中真相**：`QueryFeatures()` 汇总能力；业务不散落 DXGI 查询。
+1. **ProbeDxrHardwareSupport**：临时建 D3D12 device，查 `OPTIONS5.RaytracingTier`；结果写入 `SetFeatureOverride("raytracing", …)`。
 2. **CanRunDxrDemo 门控**：需 `raytracing && d3d12`，且 demo 至少开 reflections 或 shadows。
 3. **Resolve 四级状态**：Disabled / Supported / UnsupportedFallback / Unavailable。
 4. **allow_fallback=true**：无 HW RT 时走 Fallback 而非 Unavailable（本 demo 配置）。
@@ -113,7 +114,8 @@ flowchart TD
 |---|---|
 | `samples/learn/19_dxr_intro/main.cpp` | 探测与日志 |
 | `engine/rt/raytracing.h` | 类型与 API 声明 |
-| `engine/rt/raytracing.cpp` | `CanRunDxrDemo`、`Resolve`、`EnsureSafe` |
+| `engine/rt/raytracing.cpp` | `ProbeDxrHardwareSupport`、`CanRunDxrDemo`、`Resolve`、`EnsureSafe` |
+| ADR 0030 | M25 DXR demo 范围（门控优先） |
 | `engine/core/feature.h` | `FeatureSet`、`QueryFeatures()` |
 | `engine/rhi/backend.h` | `Backend::D3D12` |
 | CMake `sample_19_dxr_intro` | engine_rt + engine_core |

@@ -2,6 +2,7 @@
 
 #include "engine/core/clock.h"
 #include "engine/core/log.h"
+#include "engine/debug/console.h"
 #include "engine/net/net_system.h"
 
 #include <cmath>
@@ -100,6 +101,7 @@ Result<std::unique_ptr<Application>> Application::Create(const ApplicationDesc& 
   if (!device) {
     return Result<std::unique_ptr<Application>>::Fail(device.status());
   }
+  debug::Profiler::SetGpuTimestampAvailable(device.value()->GpuTimestampAvailable());
 
   const bool app_headless = desc.headless || desc.gpu_headless || device_desc.headless;
   const bool fixed_dt = desc.headless || desc.gpu_headless;

@@ -12,19 +12,21 @@ cmake --build build --config Debug --target sample_29_ui
 build\samples\learn\29_ui\Debug\sample_29_ui.exe --headless --headless_frames=2
 ```
 
-窗口模式：ImGui 「Debug」窗 + retained HUD 矩形；日志 `ImmediateUi available=`、`Retained backend:`。
+窗口模式：ImGui 「Debug」窗 + **主菜单 / HUD 切换**（Play 按钮或 Esc）；retained 矩形经 `ScreenQuad` 进 DrawFrame；`WantCapture` = ImGui **或** Retained 命中。
 
 UI 着色器：`ui_imgui.vs/ps.cso`。CMake target：**`sample_29_ui`**。
+
+**RmlUi**：本 Sample 走薄适配/stub；**真 RmlUi 外置为已接受的 M15 100% 口径**（见 `third_party/RmlUi/README.engine.md`）。
 
 ## 知识点
 
 1. **ImmediateUi**：每帧 BeginFrame → 窗口/控件 → RefreshCapture → Render。
-2. **RetainedUi**：Panel/Label/Toggle 声明式；`BuildDrawList` → `UiDrawRect`。
-3. **输入捕获**：`want_capture_mouse/keyboard` → `set_ui_want_capture`。
-4. **帧顺序**：DrawFrame(3D) → ImGui Render；retained 本 demo 仅 BuildDrawList。
-5. **Init 容错**：ImGui 缺 shader → Warn，不 crash。
-6. **WindowInputSnapshot**：每帧输入快照喂 ImGui。
-7. **DrawFrame ui_quads 参数 SKIP**：retained 矩形未传入 DrawFrame（练习可接）。
+2. **RetainedUi**：主菜单（Play）与游戏 HUD 两套布局；`Pump` 驱动 Toggle/Click。
+3. **输入捕获**：`want_capture`（ImGui **或** Retained）→ `set_ui_want_capture`。
+4. **帧顺序**：DrawFrame(3D + retained ScreenQuads) → ImGui Render。
+5. **Esc / Play**：主菜单态 ↔ HUD 态切换（main-menu-like）。
+6. **WindowInputSnapshot**：每帧输入快照喂 ImGui 与 Retained Pump。
+7. **opt_ssao Toggle**：写入 `EffectTuning.enable_ssao`。
 8. **delta_time**：ImGui BeginFrame 需要，用于动画/重复键。
 9. **与 ActionMap 分层**：UI capture true 时 gameplay 应 suppressed（InputSystem 层）。
 10. **Low quality 3D**：UI 与 lit 解耦；3D 用 Low 减干扰。
@@ -52,23 +54,20 @@ UI 着色器：`ui_imgui.vs/ps.cso`。CMake target：**`sample_29_ui`**。
 
 ```text
 ImmediateUi.Init(device, ui_imgui.vs/ps)
-RetainedUi: Panel("hud") + Label + Toggle("opt_ssao", default true)
-Log Retained backend name (QueryRetainedUiBackend)
+RetainedUi: Main Menu (Play / SSAO) 或 HUD；Esc 切换
+Log Retained backend name + RmlUi accepted-external
 RenderSystem.Init(LitDesc Low)
 ```
 
 ### 每帧
 
 ```text
-imgui.BeginFrame(input, w, h, delta_time)
-if BeginWindow("Debug"): Text; EndWindow
-imgui.RefreshCapture()
-app.set_ui_want_capture(mouse || keyboard)
-
-render.DrawFrame(...)   // 3D
-
-imgui.Render(device)
-retained.BuildDrawList()   // 未接 DrawFrame ui_quads
+imgui.BeginFrame(...); Debug window; RefreshCapture
+retained.Pump(mouse) → Play / SSAO events
+Esc toggle menu ↔ HUD
+want_capture = ImGui || Retained → set_ui_want_capture
+DrawFrame(..., ui_quads from BuildDrawList)
+imgui.Render
 ```
 
 ### 输入流（概念）

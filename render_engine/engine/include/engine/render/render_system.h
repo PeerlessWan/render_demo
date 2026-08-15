@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/result.h"
+#include "engine/debug/console.h"
 #include "engine/debug/debug_draw.h"
 #include "engine/post/post_stack.h"
 #include "engine/render/camera.h"
@@ -75,6 +76,13 @@ struct EffectTuning {
   bool enable_ibl = false;
   float ibl_intensity = 1.f;
   bool enable_skybox = true;
+  // M7 resolution-scale / upscaler path (1 = native). Jitter feeds BuiltinBilinearUpscaler.
+  float render_resolution_scale = 1.f;
+  float upscale_jitter_x = 0.f;
+  float upscale_jitter_y = 0.f;
+  // M26/C04 cinematic (0 = off).
+  float vignette_strength = 0.f;
+  float film_grain_strength = 0.f;
 };
 
 class RenderSystem {
@@ -100,6 +108,8 @@ class RenderSystem {
   void set_local_lights(const std::vector<LocalLight>& lights);
   void set_shadows_enabled(bool on);
   void set_post_enabled(std::string_view name, bool on);
+  // Optional: CPU BeginPass/EndPass around device GpuPass* (M8 profiler deepen).
+  void SetProfiler(debug::Profiler* profiler) { profiler_ = profiler; }
 
   // Draw during OpaqueLit (before post). Avoids post-then-HDR RT DEVICE_REMOVED.
   // Worlds are also CSM-cast so scale pillars match D3D12/Vulkan contact shadows.
@@ -132,6 +142,7 @@ class RenderSystem {
   bool pending_instanced_ = false;
   rhi::LitDrawItem pending_instanced_proto_{};
   std::vector<Mat4> pending_instanced_worlds_;
+  debug::Profiler* profiler_ = nullptr;
 };
 
 }  // namespace engine::render

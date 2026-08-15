@@ -51,6 +51,7 @@ if(ENGINE_BUILD_TOOLS)
   add_subdirectory(tools/lightmap_baker)
   add_subdirectory(tools/asset_cook)
   add_subdirectory(tools/sandbox_mcp)
+  add_subdirectory(tools/content_lint)
 endif()
 
 if(ENGINE_BUILD_TESTS)

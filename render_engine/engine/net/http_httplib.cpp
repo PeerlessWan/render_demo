@@ -70,7 +70,9 @@ Status DoRequest(std::string_view url, bool is_post, std::string_view body, Http
 
 #ifndef CPPHTTPLIB_OPENSSL_SUPPORT
   if (parsed.is_https) {
-    out.error = "HTTPS unavailable (cpp-httplib built without OpenSSL)";
+    out.error =
+        "HTTPS Unavailable: OpenSSL not linked. Configure with ENGINE_WITH_OPENSSL=ON and "
+        "OPENSSL_ROOT_DIR pointing at a system OpenSSL SDK (engine does not install OpenSSL).";
     return Status::Fail(ErrorCode::Unavailable, out.error);
   }
 #endif
@@ -104,8 +106,11 @@ Status DoRequest(std::string_view url, bool is_post, std::string_view body, Http
 #ifndef CPPHTTPLIB_OPENSSL_SUPPORT
     // HTTPS without OpenSSL throws invalid_argument from Client ctor.
     if (parsed.is_https) {
-      return Status::Fail(ErrorCode::Unavailable,
-                          "HTTPS unavailable (OpenSSL not linked): " + std::string(ex.what()));
+      out.error =
+          "HTTPS Unavailable: OpenSSL not linked. Set OPENSSL_ROOT_DIR + ENGINE_WITH_OPENSSL=ON "
+          "(engine does not install OpenSSL). Detail: " +
+          std::string(ex.what());
+      return Status::Fail(ErrorCode::Unavailable, out.error);
     }
 #endif
     return Status::Fail(ErrorCode::Failed, out.error);

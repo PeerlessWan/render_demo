@@ -33,8 +33,9 @@ build\samples\learn\15_probes_gi\Debug\sample_15_probes_gi.exe --headless --head
 6. **Probe 网格参数**：`Configure(origin, spacing, nx, ny, nz)` 决定 probe 世界位置；本 demo 为 2×2×2、spacing 2m。
 7. **采样点与日志**：`Sample({0.4,0.4,0.4})` 在启动时执行一次，用于验证 CPU 路径无需 GPU 即可观测。
 8. **Reflection face_size**：本 demo 为 32；上传字节数 = 6 × 32 × 32 × 4。
-9. **Lightmap SKIP**：PATH 标题含 Lightmap，本 sample **未实现** 烘焙 lightmap，仅 probe + reflection。
+9. **Lightmap 运行时**：加载 `content/ibl/lightmap.rgba`（`lightmap_baker` 输出）+ `gi::SampleLightmap`；`PbrMaterial::use_lightmap` + 扁平 albedo×lightmap 后 `UploadLitAlbedoRgba`。
 10. **模块边界**：`engine_gi` 提供数据结构；RHI 负责 upload；RenderSystem 负责最终 composite（CH26 更完整）。
+11. **ProbeVolume ≠ DDGI**：CPU 网格 stub；与 Lightmap/IBL **共存**（独立开关），见 [docs/gi/README.md](../../../docs/gi/README.md)。Sandbox F1：**Probe GI** 叠 ambient，**Lightmap** 乘算 albedo——互不替代。
 
 ## 名词解释
 
@@ -46,6 +47,7 @@ build\samples\learn\15_probes_gi\Debug\sample_15_probes_gi.exe --headless --head
 | **Irradiance** | 漫反射间接光近似；probe 存 per-probe RGBA 占位值。 |
 | **Cubemap upload** | 6 × face_size² × 4 字节 RGBA8，按 face 顺序排列。 |
 | **GI stub** | 教学/契约层：数据结构正确、效果可观察，算法可后续替换。 |
+| **共存（M22）** | ProbeVolume ambient 叠加 + Lightmap albedo 乘算 + IBL；**不宣称 DDGI**。 |
 | **face-major** | 六面顺序 +x,-x,+y,-y,+z,-z 各自一块连续 RGBA8。 |
 | **dirty 标志** | ReflectionProbe 更新后标记，直到 GPU 消费/upload。 |
 | **Environment** | 天空/雾/IBL 一体配置；本章未填 IBL 三路径。 |
@@ -115,7 +117,9 @@ flowchart LR
 | `engine/gi/probe_volume.cpp` | CPU 更新与 `Sample` |
 | `engine/gi/reflection_probe.h` | `UpdateFromEnvironment`、`rgba_faces()` |
 | `engine/gi/reflection_probe.cpp` | 六面 RGBA 生成 |
+| `engine/gi/lightmap.h` | `LoadLightmapRgba` / `SampleLightmap` / `MultiplyAlbedoByLightmap` |
 | `IDevice::UploadReflectionCubemap` | RHI 上传（D3D12 主路径） |
+| `IDevice::UploadLitAlbedoRgba` | lightmap 乘算后写入 lit albedo |
 | `RenderSystem::Init` / `DrawFrame` | 标准 lit 帧 |
 | `Application::world()` | 场景节点 `CreateNode` / `set_mesh` |
 | CMake `sample_15_probes_gi` | `engine_app` + `engine_d3d12` + `engine_gi` |
@@ -133,8 +137,8 @@ flowchart LR
 
 ## 常见坑
 
-- **把 CPU GI 当成最终画质**：本章重点是 **数据契约**；真实动态 GI 在 CH35 / Sandbox 开关。
-- **Lightmap 未实现**：勿假设烘焙 lightmap 已接入；练习中只讨论 probe/reflection。
+- **把 CPU GI 当成最终画质 / DDGI**：本章与 Sandbox Probe GI 都是 **数据契约 + ambient 叠加**；真实动态 GI / DDGI 未实现。
+- **Lightmap 是 bake×albedo 上传**：完整 shader 侧 lightmap UV 通道仍可加深；本课用 `use_lightmap` + `UploadLitAlbedoRgba` 打通运行时路径。与 ProbeVolume 可同时开（见 docs/gi）。
 - **未先编 shader**：缺 `.cso` 时 `RenderSystem::Init` 失败；需 build target 触发 `sample_sandbox_shaders`。
 - **Vulkan parity**：反射 upload 在 Vulkan 可能是 stub；D3D12 为学习默认路径。
 - **Headless 看不到 cubemap 视觉**：靠日志；视觉验证需窗口 + CH26 `enable_reflection_probe`。

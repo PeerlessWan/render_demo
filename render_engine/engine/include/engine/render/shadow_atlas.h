@@ -17,6 +17,10 @@ class ShadowAtlas {
   explicit ShadowAtlas(int size = 2048) : size_(size) {}
   bool Allocate(int light_id, int extent, ShadowAtlasSlot& out);
   void Reset();
+  void set_size(int size) {
+    size_ = size < 256 ? 256 : size;
+    Reset();
+  }
   [[nodiscard]] int size() const { return size_; }
   [[nodiscard]] const std::vector<ShadowAtlasSlot>& slots() const { return slots_; }
 

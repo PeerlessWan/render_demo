@@ -25,8 +25,8 @@ Upscaled 4x4 -> 8x8 bytes=256
 ## 知识点
 
 1. **接口优先于实现**：`IUpscaler::Upscale` 定义 RGBA8 输入输出与尺寸；DLSS/FSR 以后换实现不改调用方。
-2. **CreateUpscaler 工厂**：当前返回 `BuiltinBilinearUpscaler`；ADR 0008 预留厂商适配器。
-3. **与渲染分辨率解耦**：真实超分在 **低分辨率渲染 + jitter + motion vectors** 之后；本章仅 CPU 验证尺寸变换。
+2. **CreateUpscaler 工厂**：当前返回 `BuiltinBilinearUpscaler`；ADR 0008 预留厂商适配器。**FSR = future**（未授权 SDK 前禁止假名）。
+3. **与渲染分辨率解耦**：真实超分在 **低分辨率渲染 + jitter + motion vectors** 之后；本章仅 CPU 验证尺寸变换。`ResolutionScale` + `EffectTuning.render_resolution_scale` / `upscale_jitter_*` 为内置分辨率缩放路径。
 4. **测试图案可诊断**：角点 `(0,0)` 与 `(3,3)` 颜色不同，便于断言插值是否正确。
 5. **Status 传播**：失败时 `LogError` + `return 1`；符合 learn「可失败得漂亮」。
 6. **headless 参数**：与其他 sample CLI 统一；本进程不循环帧，`headless_frames` 无实际帧循环。

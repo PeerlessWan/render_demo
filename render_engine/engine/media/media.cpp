@@ -37,16 +37,20 @@ class D3D12VaStub final : public IVideoDecoder {
     if (path.empty()) {
       return Status::Fail(ErrorCode::InvalidArgument, "empty video path");
     }
-    // Feature probe stub: report unavailable until real D3D12VA adapter lands.
+    // Stub only this wave: no ID3D12VideoDevice / decoder linked (ADR 0012).
     available_ = false;
-    return Status::Fail(ErrorCode::Unavailable,
-                        "D3D12 Video Acceleration unavailable: stub build has no VA device "
-                        "(enable future D3D12VA adapter; path=" +
-                            path + ")");
+    return Status::Fail(
+        ErrorCode::Unavailable,
+        "D3D12VA Unavailable: stub build has no ID3D12VideoDevice/decoder. "
+        "Feature::VideoTexture stays false until a real D3D12VA adapter is linked. "
+        "Diagnose: check GPU VA support + ENGINE video Feature; path=" +
+            path);
   }
   Status DecodeNextFrame(std::vector<std::uint8_t>&, int&, int&) override {
-    return Status::Fail(ErrorCode::Unavailable,
-                        "D3D12 Video Acceleration unavailable: DecodeNextFrame requires VA device");
+    return Status::Fail(
+        ErrorCode::Unavailable,
+        "D3D12VA Unavailable: DecodeNextFrame called on stub (no VA session). "
+        "Open() must succeed on a real adapter first; this build is diagnostic-only.");
   }
   bool feature_available() const override { return available_; }
   const char* backend_name() const override { return "d3d12va_stub"; }

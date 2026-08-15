@@ -29,6 +29,12 @@ Aabb TransformAabb(const Aabb& local, const Mat4& world) {
   return out;
 }
 
+float ViewDepthKey(const Mat4& world, const Mat4& view_proj) {
+  // Translation column → NDC.z proxy for front-to-back order (M26/C08 deepen).
+  const Vec3 t{world.m[12], world.m[13], world.m[14]};
+  return view_proj.TransformPoint(t).z;
+}
+
 }  // namespace
 
 void FillIndirectArgs(IndirectDrawArgs& out, std::uint32_t index_count,
@@ -44,9 +50,13 @@ std::uint32_t CullInstancesToIndirect(std::span<const Mat4> worlds, std::span<co
                                       const Mat4& view_proj, const render::OcclusionBuffer* occ,
                                       std::vector<Mat4>& out_visible, IndirectDrawArgs& out_args,
                                       std::uint32_t index_count_per_instance) {
+  // CPU stand-in for a future GPU cull CS that writes IndirectArgs (C08).
+  // Improvement: reserve + front-to-back sort of survivors for better early-Z.
   out_visible.clear();
+  out_visible.reserve(worlds.size());
   const std::size_t n = worlds.size();
   const Aabb default_local{{-0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}};
+  const Frustum f = Frustum::FromViewProj(view_proj);
   for (std::size_t i = 0; i < n; ++i) {
     const Aabb local = i < local_bounds.size() ? local_bounds[i] : default_local;
     const Aabb world_box = TransformAabb(local, worlds[i]);
@@ -54,13 +64,15 @@ std::uint32_t CullInstancesToIndirect(std::span<const Mat4> worlds, std::span<co
     if (occ) {
       visible = occ->IsVisible(world_box, view_proj);
     } else {
-      const Frustum f = Frustum::FromViewProj(view_proj);
       visible = f.ContainsAabb(world_box);
     }
     if (visible) {
       out_visible.push_back(worlds[i]);
     }
   }
+  std::sort(out_visible.begin(), out_visible.end(), [&](const Mat4& a, const Mat4& b) {
+    return ViewDepthKey(a, view_proj) < ViewDepthKey(b, view_proj);
+  });
   FillIndirectArgs(out_args, index_count_per_instance,
                    static_cast<std::uint32_t>(out_visible.size()));
   engine::SetFeatureOverride("execute_indirect", true);

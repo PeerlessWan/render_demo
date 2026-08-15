@@ -13,11 +13,13 @@ std::vector<float> CascadedShadowMap::ComputeSplits(float z_near, float z_far, i
                                                     float lambda) {
   std::vector<float> splits;
   splits.reserve(static_cast<std::size_t>(count));
+  // Bias lambda toward logarithmic near splits so cascade 0 keeps texel density on pillars.
+  const float lam = std::clamp(lambda, 0.f, 1.f);
   for (int i = 1; i <= count; ++i) {
     const float p = static_cast<float>(i) / static_cast<float>(count);
     const float log_s = z_near * std::pow(z_far / z_near, p);
     const float uni_s = z_near + (z_far - z_near) * p;
-    splits.push_back(lambda * log_s + (1.f - lambda) * uni_s);
+    splits.push_back(lam * log_s + (1.f - lam) * uni_s);
   }
   return splits;
 }
@@ -58,7 +60,6 @@ Mat4 CascadedShadowMap::FitLightMatrix(const Vec3& light_dir, const std::array<V
   center = center * (1.f / 8.f);
 
   const Vec3 dir = Normalize(light_dir);
-  // Stable up: avoid parallel with light.
   Vec3 up{0.f, 1.f, 0.f};
   if (std::fabs(Dot(dir, up)) > 0.95f) {
     up = Vec3{0.f, 0.f, 1.f};
@@ -68,47 +69,30 @@ Mat4 CascadedShadowMap::FitLightMatrix(const Vec3& light_dir, const std::array<V
   for (const auto& c : corners) {
     radius = std::max(radius, (c - center).length());
   }
-  // Fixed sphere extent stops XY bounds from crawling when the camera turns.
   radius = std::max(radius + 1.f, 8.f);
+  // World-unit quantum — avoids res-coupled near-identity ceil that fails to stabilize.
+  constexpr float kRadiusQuantum = 0.5f;
+  radius = std::ceil(radius / kRadiusQuantum) * kRadiusQuantum;
   const float extent = radius;
 
-  // Pull the light back along -dir; depth range covers casters behind the slice.
   const float z_pull = extent + 20.f;
-  Vec3 eye = center - dir * z_pull;
+  const Vec3 eye = center - dir * z_pull;
   Mat4 light_view = Mat4::LookAt(eye, center, up);
 
-  // Texel-snap the sphere center in light space so the shadow map doesn't shimmer
-  // when the camera (and thus the cascade sphere) moves.
   const float res = static_cast<float>(std::max(map_resolution, 1));
   const float units_per_texel = (extent * 2.f) / res;
   if (units_per_texel > 1e-6f) {
-    const Vec3 center_ls = light_view.TransformPoint(center);
-    const float snap_x = std::floor(center_ls.x / units_per_texel + 0.5f) * units_per_texel;
-    const float snap_y = std::floor(center_ls.y / units_per_texel + 0.5f) * units_per_texel;
-    const float dx = snap_x - center_ls.x;
-    const float dy = snap_y - center_ls.y;
-    // Match Mat4::LookAt basis: s=Cross(f,up), u=Cross(s,f), f=dir.
-    const Vec3 s = Normalize(Cross(dir, up));
-    const Vec3 u = Cross(s, dir);
-    center = center + s * dx + u * dy;
-    eye = center - dir * z_pull;
-    light_view = Mat4::LookAt(eye, center, up);
+    const Vec3 origin_ls = light_view.TransformPoint(Vec3{0.f, 0.f, 0.f});
+    const float dx =
+        std::floor(origin_ls.x / units_per_texel + 0.5f) * units_per_texel - origin_ls.x;
+    const float dy =
+        std::floor(origin_ls.y / units_per_texel + 0.5f) * units_per_texel - origin_ls.y;
+    light_view = Mat4::Translation(Vec3{dx, dy, 0.f}) * light_view;
   }
 
-  // Depth: cover casters beyond the sphere (stable Z range in light space).
-  float z_min = 1e9f;
-  float z_max = -1e9f;
-  for (const auto& c : corners) {
-    const Vec3 lp = light_view.TransformPoint(c);
-    z_min = std::min(z_min, lp.z);
-    z_max = std::max(z_max, lp.z);
-  }
-  z_min -= extent * 1.0f + 10.f;
-  z_max += extent * 0.5f + 4.f;
-
-  const Mat4 light_proj =
-      Mat4::Orthographic(-extent, extent, -extent, extent, z_min, z_max);
-  return light_proj * light_view;
+  const float z_near = -z_pull - extent - 20.f;
+  const float z_far = -z_pull + extent + 10.f;
+  return Mat4::Orthographic(-extent, extent, -extent, extent, z_near, z_far) * light_view;
 }
 
 void CascadedShadowMap::Build(const Camera& camera, float aspect, const Vec3& light_dir,
@@ -118,14 +102,19 @@ void CascadedShadowMap::Build(const Camera& camera, float aspect, const Vec3& li
   const float z_far = std::min(camera.z_far, max_shadow_distance);
   tiles_per_row_ = count_ <= 1 ? 1 : 2;
   const int tile = atlas_size / tiles_per_row_;
-  const auto splits = ComputeSplits(z_near, z_far, count_);
+  // Stronger log bias → denser near cascade (pillar contact shadows).
+  const auto splits = ComputeSplits(z_near, z_far, count_, 0.75f);
 
   float prev = z_near;
   for (int i = 0; i < count_; ++i) {
     CsmCascade c;
     c.split = splits[static_cast<std::size_t>(i)];
+    const float span = c.split - prev;
+    const float overlap = span * 0.2f;
+    const float slice_near = (i == 0) ? prev : std::max(z_near, prev - overlap);
+    const float slice_far = (i + 1 >= count_) ? c.split : (c.split + overlap);
     std::array<Vec3, 8> corners{};
-    FrustumSliceCorners(camera, aspect, prev, c.split, corners);
+    FrustumSliceCorners(camera, aspect, slice_near, slice_far, corners);
     c.view_proj = FitLightMatrix(light_dir, corners, tile);
     c.atlas_x = (i % tiles_per_row_) * tile;
     c.atlas_y = (i / tiles_per_row_) * tile;

@@ -150,7 +150,7 @@
 | cpp-httplib | header vendored (`third_party/cpp-httplib`) | MIT | 头文件 | 经 `IHttpClient`/`http_httplib`；HTTPS：系统 OpenSSL（`find_package` / `OPENSSL_ROOT_DIR`）；`ENGINE_WITH_OPENSSL`；未链则 Unavailable；Win 链 `ws2_32`/`crypt32` |
 | dds-ktx | ~v1.1+ (`third_party/dds-ktx`) | BSD-2-Clause | 头文件 | 经 `ITextureLoader`；Sample 不直链 |
 | IXWebSocket | TBD | BSD | 静态/动态 | |
-| MsQuic | TBD | MIT | 通常动态 | 注意平台构建 |
+| MsQuic | TBD | MIT | 通常动态 | **本波未捆绑**（ADR 0031 QUIC SKIP）；启用须另批 |
 
 ### 7.1 内容素材（非代码库）
 

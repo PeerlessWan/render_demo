@@ -92,11 +92,15 @@ struct PostResolveDesc {
   Mat4 prev_view_proj = Mat4::Identity();
   float jitter_x = 0.f;
   float jitter_y = 0.f;
+  // M26/C04: cinematic knobs (0 = off).
+  float vignette_strength = 0.f;
+  float film_grain_strength = 0.f;
 
   [[nodiscard]] bool NeedsResolve() const {
     return enable_ssao || enable_taa || enable_tonemap || enable_auto_exposure || enable_bloom ||
            enable_fog || enable_ssr || enable_dof || enable_motion_blur ||
-           (exposure > 1.0001f || exposure < 0.9999f);
+           (exposure > 1.0001f || exposure < 0.9999f) || vignette_strength > 1e-4f ||
+           film_grain_strength > 1e-4f;
   }
 };
 
@@ -137,16 +141,21 @@ struct FrameLighting {
   float reflection_intensity = 0.45f;
   bool enable_ibl = false;
   float ibl_intensity = 1.f;
-  // Up to 4 local (point) lights.
+  // M26/C02: up to 8 local (point/spot) lights in FrameCB (CPU list may be larger).
   int local_light_count = 0;
-  std::array<Vec3, 4> local_pos{};
-  std::array<float, 4> local_range{};
-  std::array<ColorRgba, 4> local_color{};
-  std::array<float, 4> local_intensity{};
+  std::array<Vec3, 8> local_pos{};
+  std::array<float, 8> local_range{};
+  std::array<ColorRgba, 8> local_color{};
+  std::array<float, 8> local_intensity{};
+  // Spot cone: xyz = world direction, w = cos(outer half-angle). Point/omni → w = -1.
+  std::array<Vec4, 8> local_spot{};
+  // cos(inner half-angle) for lights 0..7 (HLSL: float4[2]).
+  std::array<float, 8> local_spot_inner{-1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f};
   // First casting local lights: cubemap face atlas (up to 2 lights × 6 faces = 12 tiles).
+  // Spot lights reuse tile light_index*6 + 0 with a single perspective VP.
   Mat4 local_shadow_vp = Mat4::Identity();  // tile 0 compat (+X of light 0)
   std::array<Mat4, 12> local_shadow_vps{};
-  int local_shadow_count = 0;       // number of lights casting cube shadows
+  int local_shadow_count = 0;       // number of lights casting cube/spot shadows
   int local_shadow_tile_count = 0;  // local_shadow_count * 6
   int local_shadow_tiles_per_row = 4;
   bool enable_local_shadow = false;
@@ -243,9 +252,10 @@ class IDevice {
   virtual Status SetupPostMesh(const PostShaders& shaders) = 0;
   virtual Status ResolvePostEffects(const PostResolveDesc& desc) = 0;
 
-  // Optional GPU pass timestamps (D3D12). No-ops on backends without support.
+  // Optional GPU pass timestamps (D3D12 TIMESTAMP query heap). No-ops elsewhere.
   virtual void GpuPassBegin(const char* /*name*/) {}
   virtual void GpuPassEnd() {}
+  [[nodiscard]] virtual bool GpuTimestampAvailable() const { return false; }
   [[nodiscard]] virtual std::vector<GpuPassTiming> LastGpuPassTimings() const { return {}; }
 
   // Screen-space UI/2D quads (NDC via pixel→viewport).

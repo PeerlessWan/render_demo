@@ -29,7 +29,7 @@ CMake target：**`sample_25_physics`**。无 Application、无 shader。
 3. **Step(1/60) × 4**：固定步；产品应用 accumulator 与渲染帧解耦。
 4. **body_position**：读回动态体位置；本 demo 只日志 y。
 5. **Raycast**：`(origin, dir, max_dist)` → `RayHit`；竖直向下测地面。
-6. **MoveCharacter SKIP**：API 存在，本 demo 未调用。
+6. **MoveCharacter + CreateCapsule**：本 demo 用模拟 WASD 位移驱动胶囊角色（水平移动 + 贴地/碰撞）。
 7. **渲染解耦**：无 `DrawFrame`；游戏应在 Run 里 sync transform。
 8. **trigger SKIP**：`is_trigger` 字段未演示。
 9. **headless CLI**：ParseHeadless 统一参数，无帧循环。

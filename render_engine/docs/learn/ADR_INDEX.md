@@ -42,6 +42,9 @@ ADR 记录 **为什么这样设计**，是学习封装的核心（比 API 列表
 | 0027 | 宿主分层：脚本与编辑器在引擎外（或可选插件） | [0027-…](adr/0027-hosting-script-editor-boundary.md) | — | Accepted |
 | 0028 | 多品类：薄 game_kit + genre_kits + games | [0028-…](adr/0028-genre-kits-layering.md) | — | Accepted |
 | 0029 | 物理加深边界：薄 SoftBody/Cloth 进引擎；服装管线外置 | [0029-…](adr/0029-physics-softbody-boundary.md) | CH25 | Accepted |
+| 0030 | M25 DXR demo 范围：Feature 门控优先，非完整光追帧 | [0030-…](adr/0030-m25-dxr-demo-scope.md) | CH19 | Accepted |
+| 0031 | M19 QUIC SKIP：本波不捆绑 MsQuic | [0031-…](adr/0031-m19-quic-skip-msquic.md) | CH31 | Accepted |
+| 0032 | M26/P3：Forward+ 钉死与 C01/C02/C10/C08/C04/C16/C20 加深簇 | [0032-…](adr/0032-m26-forward-plus-cluster.md) | — | Accepted |
 
 ## 模板
 

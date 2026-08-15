@@ -17,6 +17,7 @@ struct SandboxUiStrings {
   const char* show_grid;
   const char* show_axes;
   const char* probe_gi;
+  const char* lightmap;
   const char* morph_bulge;
   const char* morph_squash;
   const char* shadows;
@@ -33,6 +34,8 @@ struct SandboxUiStrings {
   const char* bloom;
   const char* fog;
   const char* vsync;
+  const char* record_frames;
+  const char* record_frames_hint;
   const char* sun_intensity;
   const char* ambient_scale;
   const char* exposure;
@@ -54,6 +57,9 @@ struct SandboxUiStrings {
   const char* quality_low;
   const char* quality_med;
   const char* quality_high;
+  const char* record_png;
+  const char* record_on;
+  const char* record_off;
   const char* quit;
   const char* hint_keys;
   const char* cpu_scopes;
@@ -76,10 +82,11 @@ inline const SandboxUiStrings& SandboxUi(SandboxUiLang lang) {
       "Hint",
       "Profiler",
       "LMB/RMB drag look | Wheel zoom | MMB pan",
-      "WASD/QE | Shift | F1 FX | F2 Profiler | F3 grid",
+      "WASD/QE | Shift | F1 FX | F2 Profiler | F3 grid | F5 Record",
       "Show grid (F3)",
       "Show axes (F4)",
       "Probe GI",
+      "Lightmap",
       "Morph bulge",
       "Morph squash",
       "Shadows",
@@ -117,8 +124,11 @@ inline const SandboxUiStrings& SandboxUi(SandboxUiLang lang) {
       "Low",
       "Med",
       "High",
+      "Record BMP 60Hz (F5)",
+      "REC ON",
+      "REC OFF",
       "Quit",
-      "F1 FX | F2 Profiler | F3 Grid | F4 Axes",
+      "F1 FX | F2 Profiler | F3 Grid | F4 Axes | F5 Record",
       "CPU scopes (1s)",
       "FPS",
       "Frame",
@@ -137,10 +147,11 @@ inline const SandboxUiStrings& SandboxUi(SandboxUiLang lang) {
       "提示",
       "性能分析",
       "左键/右键拖拽视角 | 滚轮缩放 | 中键平移",
-      "WASD/QE 移动 | Shift 加速 | F1 效果 | F2 分析 | F3 网格",
+      "WASD/QE 移动 | Shift 加速 | F1 效果 | F2 分析 | F3 网格 | F5 录制",
       "显示网格 (F3)",
       "显示坐标轴 (F4)",
       "探针 GI",
+      "Lightmap 烘焙乘算",
       "变形鼓起",
       "变形压扁",
       "阴影",
@@ -178,8 +189,11 @@ inline const SandboxUiStrings& SandboxUi(SandboxUiLang lang) {
       "低",
       "中",
       "高",
+      "录制 BMP 60Hz (F5)",
+      "录制中",
+      "未录制",
       "退出",
-      "F1 效果 | F2 分析 | F3 网格 | F4 坐标轴",
+      "F1 效果 | F2 分析 | F3 网格 | F4 坐标轴 | F5 录制",
       "CPU 作用域 (1秒)",
       "帧率",
       "帧时间",

@@ -6,6 +6,7 @@
 #include "engine/core/feature.h"
 #include "engine/debug/sandbox_harness.h"
 #include "engine/media/upscaler.h"
+#include "engine/media/media.h"
 #include "engine/render/camera.h"
 #include "engine/render/occlusion.h"
 #include "engine/render2d/atlas.h"
@@ -112,6 +113,18 @@ TEST_CASE("LoadAtlasJson failure path", "[wave][render2d]") {
   REQUIRE(frames.empty());
 }
 
+TEST_CASE("D3D12VA stub Open is Unavailable diagnostic", "[m7][media]") {
+  auto dec = engine::media::CreateD3D12VaDecoderOrStub();
+  REQUIRE(dec);
+  REQUIRE_FALSE(dec->feature_available());
+  const auto st = dec->Open("clip.mp4");
+  REQUIRE_FALSE(st);
+  REQUIRE(st.code() == engine::ErrorCode::Unavailable);
+  REQUIRE(st.message().find("D3D12VA") != std::string::npos);
+  REQUIRE(st.message().find("stub") != std::string::npos ||
+          st.message().find("Unavailable") != std::string::npos);
+}
+
 TEST_CASE("Upscaler create and pass-through", "[wave][media]") {
   auto upscaler = engine::media::CreateUpscaler();
   REQUIRE(upscaler);
@@ -121,6 +134,27 @@ TEST_CASE("Upscaler create and pass-through", "[wave][media]") {
   REQUIRE(upscaler->Upscale(src, 1, 1, dst, 1, 1));
   REQUIRE(dst.size() == 4);
   REQUIRE(dst[0] == 255);
+}
+
+TEST_CASE("Upscaler resolution-scale and jitter", "[wave][media][m7]") {
+  int rw = 0;
+  int rh = 0;
+  engine::media::ResolutionScale::ComputeRenderSize(1920, 1080, 0.5f, rw, rh);
+  REQUIRE(rw == 960);
+  REQUIRE(rh == 540);
+  REQUIRE(engine::media::ResolutionScale::ClampScale(2.f) == 1.f);
+
+  auto upscaler = engine::media::CreateUpscaler();
+  REQUIRE(upscaler);
+  std::vector<std::uint8_t> src(4 * 4 * 4, 0);
+  src[0] = 255;
+  src[3] = 255;
+  std::vector<std::uint8_t> dst;
+  engine::media::UpscaleParams p;
+  p.jitter_x = 0.1f;
+  p.jitter_y = -0.05f;
+  REQUIRE(upscaler->Upscale(src, 4, 4, dst, 8, 8, p));
+  REQUIRE(dst.size() == 8 * 8 * 4);
 }
 
 TEST_CASE("ProbeFaceViewProj produces finite matrix", "[wave][gi]") {

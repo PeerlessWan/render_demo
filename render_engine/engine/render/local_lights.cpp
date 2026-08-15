@@ -77,6 +77,12 @@ material::PbrMaterial ResolveMeshMaterial(std::string_view mesh_id) {
     m.metallic = 0.f;
     m.mesh_slot = 2;
     m.uv_scale = 1.f;
+  } else if (mesh_id == "water") {
+    m.base_color = {0.22f, 0.45f, 0.72f, 1.f};
+    m.roughness = 0.08f;
+    m.metallic = 0.05f;
+    m.mesh_slot = 5;
+    m.uv_scale = 1.f;
   } else if (mesh_id == "morph") {
     m.base_color = {0.95f, 0.55f, 0.35f, 1.f};
     m.roughness = 0.35f;
@@ -96,10 +102,24 @@ material::PbrMaterial ResolveMeshMaterial(std::string_view mesh_id) {
 }
 
 Mat4 BuildLocalShadowMatrix(const LocalLight& light, const Vec3& look_at) {
+  constexpr float kDegToRad = 0.01745329252f;
   Vec3 target = look_at;
-  Vec3 to = target - light.position;
-  if (to.length_squared() < 1e-6f) {
-    target = light.position + Vec3{0.f, -1.f, 0.f};
+  float fovy = 1.04719755f;  // ~60° default for non-spot helper path
+  if (IsSpotLight(light)) {
+    Vec3 dir = light.direction;
+    if (dir.length_squared() < 1e-6f) {
+      dir = Vec3{0.f, -1.f, 0.f};
+    }
+    dir = Normalize(dir);
+    target = light.position + dir;
+    // spot_angle_deg is half-angle from axis → full cone FOV = 2×.
+    const float half = std::max(light.spot_angle_deg, 1.f) * kDegToRad;
+    fovy = std::min(half * 2.f, 3.0f);
+  } else {
+    Vec3 to = target - light.position;
+    if (to.length_squared() < 1e-6f) {
+      target = light.position + Vec3{0.f, -1.f, 0.f};
+    }
   }
   Vec3 up{0.f, 1.f, 0.f};
   const Vec3 forward = Normalize(target - light.position);
@@ -108,7 +128,7 @@ Mat4 BuildLocalShadowMatrix(const LocalLight& light, const Vec3& look_at) {
   }
   const Mat4 view = Mat4::LookAt(light.position, target, up);
   const float z_far = std::max(light.range, 1.f);
-  const Mat4 proj = Mat4::Perspective(1.04719755f, 1.f, 0.05f, z_far);
+  const Mat4 proj = Mat4::Perspective(fovy, 1.f, 0.05f, z_far);
   return proj * view;
 }
 

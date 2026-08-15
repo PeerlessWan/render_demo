@@ -57,6 +57,21 @@ int main(int argc, char** argv) {
   }
   engine::LogInfo("Upscaled 4x4 -> 8x8 bytes=" + std::to_string(dst.size()));
 
+  int rw = 0;
+  int rh = 0;
+  engine::media::ResolutionScale::ComputeRenderSize(1280, 720, 0.5f, rw, rh);
+  engine::LogInfo("ResolutionScale 1280x720 @0.5 -> " + std::to_string(rw) + "x" +
+                  std::to_string(rh));
+  engine::media::UpscaleParams jp;
+  jp.jitter_x = 0.02f;
+  jp.jitter_y = -0.01f;
+  std::vector<std::uint8_t> dst_j;
+  if (auto st = upscaler->Upscale(src, 4, 4, dst_j, 8, 8, jp); !st) {
+    engine::LogError(st.message());
+    return 1;
+  }
+  engine::LogInfo("Upscaled with EffectTuning-style jitter bytes=" + std::to_string(dst_j.size()));
+
   (void)headless_frames;
   return 0;
 }

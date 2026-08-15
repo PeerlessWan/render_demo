@@ -1,11 +1,13 @@
 #include "engine/render/render_system.h"
 
 #include "engine/core/log.h"
+#include "engine/debug/console.h"
 #include "engine/render/local_lights.h"
 
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <vector>
 
 namespace engine::render {
 
@@ -34,7 +36,13 @@ void RenderSystem::set_quality(const QualitySettings& q) {
   effect_.enable_taa = q.enable_taa;
   effect_.enable_bloom = q.enable_bloom;
   effect_.enable_ssr = q.enable_ssr;
+  effect_.enable_dof = q.enable_dof;
+  effect_.enable_motion_blur = q.enable_motion_blur;
   effect_.shadow_cascades = q.shadow_cascades;
+  max_shadow_distance_ = q.max_shadow_distance;
+  if (q.shadow_atlas_size > 0 && q.shadow_atlas_size != atlas_.size()) {
+    atlas_.set_size(q.shadow_atlas_size);
+  }
   ApplyEffectToQuality();
 }
 
@@ -250,30 +258,83 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   lighting.local_shadow_count = 0;
   lighting.local_shadow_tile_count = 0;
   lighting.local_shadow_tiles_per_row = 4;
+  lighting.local_spot = {};
+  lighting.local_spot_inner.fill(-1.f);
+  // M26/C02: accept up to 16 CPU lights; upload closest 8 (shadow casters preferred).
+  struct RankedLight {
+    LocalLight light;
+    float dist2 = 0.f;
+  };
+  std::vector<RankedLight> ranked;
+  ranked.reserve(local_lights_.size());
   for (const auto& light : local_lights_) {
-    if (lighting.local_light_count >= 4) {
+    if (ranked.size() >= static_cast<std::size_t>(kMaxLocalLightsCpu)) {
       break;
     }
+    const Vec3 d = light.position - lighting.eye;
+    ranked.push_back({light, d.length_squared()});
+  }
+  std::sort(ranked.begin(), ranked.end(), [](const RankedLight& a, const RankedLight& b) {
+    if (a.light.cast_shadows != b.light.cast_shadows) {
+      return a.light.cast_shadows && !b.light.cast_shadows;
+    }
+    return a.dist2 < b.dist2;
+  });
+  std::vector<LocalLight> packed_lights;
+  packed_lights.reserve(static_cast<std::size_t>(kMaxLocalLightsGpu));
+  for (const auto& r : ranked) {
+    if (lighting.local_light_count >= kMaxLocalLightsGpu) {
+      break;
+    }
+    const auto& light = r.light;
     const int i = lighting.local_light_count++;
+    packed_lights.push_back(light);
     lighting.local_pos[static_cast<std::size_t>(i)] = light.position;
     lighting.local_range[static_cast<std::size_t>(i)] = light.range;
     lighting.local_color[static_cast<std::size_t>(i)] = light.color;
     lighting.local_intensity[static_cast<std::size_t>(i)] =
         light.intensity * effect_.local_intensity_scale;
+    constexpr float kDegToRad = 0.01745329252f;
+    Vec3 dir = light.direction;
+    if (dir.length_squared() < 1e-6f) {
+      dir = Vec3{0.f, -1.f, 0.f};
+    }
+    dir = Normalize(dir);
+    float cos_outer = -1.f;
+    float cos_inner = -1.f;
+    if (IsSpotLight(light)) {
+      const float outer = std::max(light.spot_angle_deg, 0.5f) * kDegToRad;
+      float inner = std::max(light.spot_inner_deg, 0.f) * kDegToRad;
+      if (inner > outer) {
+        inner = outer;
+      }
+      cos_outer = std::cos(outer);
+      cos_inner = std::cos(inner);
+    }
+    lighting.local_spot[static_cast<std::size_t>(i)] = {dir.x, dir.y, dir.z, cos_outer};
+    lighting.local_spot_inner[static_cast<std::size_t>(i)] = cos_inner;
   }
   if (effect_.enable_shadows) {
-    // Up to 2 cubemap lights (12 faces) fit in the 2048 atlas as 4×4 × 512 tiles.
+    // Up to 2 cubemap/spot lights (12 faces) fit in the 2048 atlas as 4×4 × 512 tiles.
     // Matrices are stored at light_index * 6 + face (matches lit_cube.hlsl).
-    constexpr int kMaxCubeLights = 2;
-    for (int i = 0; i < lighting.local_light_count && i < kMaxCubeLights; ++i) {
-      const auto& light = local_lights_[static_cast<std::size_t>(i)];
+    // Spot lights write the same perspective VP into all 6 face slots (shader uses face 0).
+    // Remaining uploaded lights (indices ≥ shadow count) are unshadowed in the shader.
+    for (int i = 0; i < lighting.local_light_count && i < kMaxLocalShadowLights; ++i) {
+      const auto& light = packed_lights[static_cast<std::size_t>(i)];
       if (!light.cast_shadows) {
         continue;
       }
-      const auto faces = BuildLocalShadowCubeMatrices(light);
-      for (int f = 0; f < 6; ++f) {
-        lighting.local_shadow_vps[static_cast<std::size_t>(i * 6 + f)] =
-            faces[static_cast<std::size_t>(f)];
+      if (IsSpotLight(light)) {
+        const Mat4 spot_vp = BuildLocalShadowMatrix(light);
+        for (int f = 0; f < 6; ++f) {
+          lighting.local_shadow_vps[static_cast<std::size_t>(i * 6 + f)] = spot_vp;
+        }
+      } else {
+        const auto faces = BuildLocalShadowCubeMatrices(light);
+        for (int f = 0; f < 6; ++f) {
+          lighting.local_shadow_vps[static_cast<std::size_t>(i * 6 + f)] =
+              faces[static_cast<std::size_t>(f)];
+        }
       }
       lighting.local_shadow_count = i + 1;
       lighting.enable_local_shadow = true;
@@ -317,12 +378,24 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   }
 
   graph_.Reset();
+  auto pass_begin = [&](const char* name) {
+    if (profiler_) {
+      profiler_->BeginPass(name);
+    }
+    device.GpuPassBegin(name);
+  };
+  auto pass_end = [&]() {
+    device.GpuPassEnd();
+    if (profiler_) {
+      profiler_->EndPass();
+    }
+  };
   if (effect_.enable_shadows) {
     graph_.AddPass("ShadowCSM", {}, {"ShadowMap"}, [&] {
-      device.GpuPassBegin("ShadowCSM");
+      pass_begin("ShadowCSM");
       if (auto st = device.BeginShadowPass(); !st) {
         LogError(st.message());
-        device.GpuPassEnd();
+        pass_end();
         return;
       }
       if (auto st = device.SetFrameLighting(lighting); !st) {
@@ -352,18 +425,18 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       if (auto st = device.EndShadowPass(); !st) {
         LogError(st.message());
       }
-      device.GpuPassEnd();
+      pass_end();
     });
   }
   if (lighting.enable_local_shadow) {
     graph_.AddPass("LocalShadow", {}, {"LocalShadowMap"}, [&] {
-      device.GpuPassBegin("LocalShadow");
+      pass_begin("LocalShadow");
       if (auto st = device.SetFrameLighting(lighting); !st) {
         LogError(st.message());
       }
       if (auto st = device.BeginLocalShadowPass(); !st) {
         LogError(st.message());
-        device.GpuPassEnd();
+        pass_end();
         return;
       }
       for (int i = 0; i < lighting.local_shadow_tile_count; ++i) {
@@ -379,7 +452,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       if (auto st = device.EndLocalShadowPass(); !st) {
         LogError(st.message());
       }
-      device.GpuPassEnd();
+      pass_end();
     });
   }
   graph_.AddPass(
@@ -396,10 +469,10 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       }(),
       {"Color", "Depth"},
       [&] {
-        device.GpuPassBegin("Opaque");
+        pass_begin("Opaque");
         if (auto st = device.SetFrameLighting(lighting); !st) {
           LogError(st.message());
-          device.GpuPassEnd();
+          pass_end();
           return;
         }
         if (auto st = device.DrawLitCubes(opaque); !st) {
@@ -415,25 +488,25 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
           pending_instanced_ = false;
           pending_instanced_worlds_.clear();
         }
-        device.GpuPassEnd();
+        pass_end();
       });
   if (!transparent.empty()) {
     graph_.AddPass("Transparent", {"Color", "Depth"}, {"Color"}, [&] {
-      device.GpuPassBegin("Transparent");
+      pass_begin("Transparent");
       if (auto st = device.SetFrameLighting(lighting); !st) {
         LogError(st.message());
-        device.GpuPassEnd();
+        pass_end();
         return;
       }
       if (auto st = device.DrawTransparentLitCubes(transparent); !st) {
         LogError(st.message());
       }
-      device.GpuPassEnd();
+      pass_end();
     });
   }
   if (sky_ready_ && effect_.enable_skybox) {
     graph_.AddPass("Skybox", {"Color", "Depth"}, {"Color"}, [&] {
-      device.GpuPassBegin("Skybox");
+      pass_begin("Skybox");
       Mat4 view_rot = scene.camera.view_matrix();
       view_rot.m[12] = 0.f;
       view_rot.m[13] = 0.f;
@@ -442,7 +515,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       if (auto st = device.DrawSkybox(sky_vp); !st) {
         LogError(st.message());
       }
-      device.GpuPassEnd();
+      pass_end();
     });
   }
   const bool want_tonemap = true;  // HDR scene color always tonemaps to LDR swapchain
@@ -456,7 +529,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   // HDR lit target must always be resolved (at least tonemap) into the LDR swapchain.
   if (post_ready_) {
     graph_.AddPass("PostSSAO_TAA", {"Color", "Depth"}, {"Color"}, [&] {
-      device.GpuPassBegin("Post");
+      pass_begin("Post");
       rhi::PostResolveDesc post;
       post.view_proj = lighting.view_proj;
       post.inv_view_proj = lighting.view_proj.Inverse();
@@ -486,15 +559,17 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       post.prev_view_proj = lighting.prev_view_proj;
       post.jitter_x = lighting.jitter_x;
       post.jitter_y = lighting.jitter_y;
+      post.vignette_strength = effect_.vignette_strength;
+      post.film_grain_strength = effect_.film_grain_strength;
       if (auto st = device.ResolvePostEffects(post); !st) {
         LogError(st.message());
       }
-      device.GpuPassEnd();
+      pass_end();
     });
   }
   if (debug_draw && !debug_draw->lines().empty()) {
     graph_.AddPass("DebugLines", {"Color", "Depth"}, {"Color"}, [&] {
-      device.GpuPassBegin("Debug");
+      pass_begin("Debug");
       std::vector<rhi::DebugLineVertex> verts;
       verts.reserve(debug_draw->lines().size() * 2);
       for (const auto& ln : debug_draw->lines()) {
@@ -504,16 +579,16 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       if (auto st = device.DrawDebugLines(verts); !st) {
         LogError(st.message());
       }
-      device.GpuPassEnd();
+      pass_end();
     });
   }
   if (!quads.empty()) {
     graph_.AddPass("UI2D", {"Color"}, {"Color"}, [&] {
-      device.GpuPassBegin("UI");
+      pass_begin("UI");
       if (auto st = device.DrawScreenQuads(quads); !st) {
         LogError(st.message());
       }
-      device.GpuPassEnd();
+      pass_end();
     });
   }
 

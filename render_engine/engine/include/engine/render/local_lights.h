@@ -11,15 +11,29 @@
 
 namespace engine::render {
 
+// M26 / C02: CPU list may hold more; FrameCB uploads ≤ kMaxLocalLightsGpu.
+inline constexpr int kMaxLocalLightsCpu = 16;
+inline constexpr int kMaxLocalLightsGpu = 8;
+inline constexpr int kMaxLocalShadowLights = 2;  // Shadow Atlas cubemap/spot slots
+
 struct LocalLight {
   int id = 0;
   Vec3 position{0, 0, 0};
   float range = 8.f;
   ColorRgba color{1, 0.95f, 0.85f, 1.f};
   float intensity = 1.f;
+  // Spot: direction is axis; angles are half-angles from axis (deg).
+  // spot_angle_deg >= 179 → point/omni (default).
+  Vec3 direction{0.f, -1.f, 0.f};
+  float spot_angle_deg = 180.f;
+  float spot_inner_deg = 160.f;
   bool cast_shadows = true;
   int shadow_resolution = 512;  // atlas tile extent
 };
+
+[[nodiscard]] inline bool IsSpotLight(const LocalLight& light) {
+  return light.spot_angle_deg < 179.f;
+}
 
 // Packs local-light shadow maps into ShadowAtlas (CPU schedule; GPU cube/2D writes later).
 class LocalLightShadowScheduler {

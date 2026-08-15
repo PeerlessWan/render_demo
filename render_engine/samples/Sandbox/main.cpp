@@ -8,6 +8,7 @@
 #include "engine/debug/console.h"
 #include "engine/debug/sandbox_harness.h"
 #include "engine/core/feature.h"
+#include "engine/gi/lightmap.h"
 #include "engine/gi/probe_volume.h"
 #include "engine/gi/reflection_probe.h"
 #include "engine/gi/scene_capture.h"
@@ -27,9 +28,11 @@
 #include "engine/ui/immediate_ui.h"
 #include "engine/ui/rml_ui.h"
 #include "engine/vfx/particles.h"
+#include "engine/vfx/trail_ribbon.h"
 #include "engine/rhi/backend.h"
 
 #include "sandbox_ui_strings.h"
+#include "write_bmp.h"
 
 #include <algorithm>
 #include <chrono>
@@ -37,6 +40,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -420,6 +424,13 @@ int main(int argc, char** argv) {
       engine::LogInfo("Ground plane uploaded (slot4, 128x128)");
     }
   }
+  std::vector<std::uint8_t> base_albedo_rgba;
+  int base_albedo_w = 0;
+  int base_albedo_h = 0;
+  engine::gi::LightmapImage lightmap_img;
+  bool lightmap_ready = false;
+  bool enable_lightmap = false;
+  bool lightmap_applied = false;
   {
 #ifndef ENGINE_CONTENT_DIR_A
 #error "ENGINE_CONTENT_DIR_A must be set by CMake"
@@ -431,6 +442,9 @@ int main(int argc, char** argv) {
     const auto brick_arm = content / "textures" / "ph" / "brick_arm.jpg";
     bool albedo_ok = false;
     if (auto alb = loader->LoadFile(brick_diff)) {
+      base_albedo_rgba = alb->rgba;
+      base_albedo_w = alb->width;
+      base_albedo_h = alb->height;
       if (auto st = a.device().UploadLitAlbedoRgba(alb->rgba.data(), alb->width, alb->height, 0);
           !st) {
         engine::LogError(st.message());
@@ -440,6 +454,9 @@ int main(int argc, char** argv) {
         albedo_ok = true;
       }
     } else if (auto alb_fallback = loader->LoadFile(content / "textures" / "albedo_brick.png")) {
+      base_albedo_rgba = alb_fallback->rgba;
+      base_albedo_w = alb_fallback->width;
+      base_albedo_h = alb_fallback->height;
       if (auto st = a.device().UploadLitAlbedoRgba(alb_fallback->rgba.data(), alb_fallback->width,
                                                     alb_fallback->height, 0);
           !st) {
@@ -453,6 +470,17 @@ int main(int argc, char** argv) {
     if (!albedo_ok) {
       engine::LogError("Failed to load any albedo texture");
       return 1;
+    }
+
+    {
+      const auto lm_path = content / "ibl" / "lightmap.rgba";
+      if (auto st = engine::gi::LoadLightmapRgba(lm_path, lightmap_img); st) {
+        lightmap_ready = true;
+        engine::LogInfo("Lightmap loaded " + std::to_string(lightmap_img.width) + "x" +
+                        std::to_string(lightmap_img.height) + " (F1 toggle; coexists with Probe GI)");
+      } else {
+        engine::LogInfo(std::string("Lightmap unavailable: ") + st.message());
+      }
     }
 
     bool orm_ok = false;
@@ -621,12 +649,13 @@ int main(int argc, char** argv) {
     }
   }
 
-  // M23: small heightfield patch + vegetation cubes
+  // M23: heightfield + water patch + vegetation (density follows QualityTier).
   engine::terrain::Heightmap heightmap;
   heightmap.width = 17;
   heightmap.height = 17;
   heightmap.cell = 0.75f;
   heightmap.samples.resize(static_cast<std::size_t>(17 * 17));
+  constexpr float kWaterLevel = 0.05f;
   for (int z = 0; z < 17; ++z) {
     for (int x = 0; x < 17; ++x) {
       const float nx = (x - 8) * 0.22f;
@@ -635,8 +664,8 @@ int main(int argc, char** argv) {
           0.35f * std::sin(nx * 2.1f) * std::cos(nz * 1.7f);
     }
   }
-  const auto terrain_mesh =
-      engine::terrain::BuildTerrainMesh(heightmap, {-22.f, -0.35f, -22.f});
+  const engine::Vec3 terrain_origin{-22.f, -0.35f, -22.f};
+  const auto terrain_mesh = engine::terrain::BuildTerrainMesh(heightmap, terrain_origin);
   if (!terrain_mesh.indices.empty()) {
     std::vector<engine::rhi::LitVertex> tverts(terrain_mesh.positions.size() / 3);
     for (std::size_t i = 0; i < tverts.size(); ++i) {
@@ -659,13 +688,42 @@ int main(int argc, char** argv) {
       engine::LogInfo("Terrain heightmap mesh uploaded (slot2)");
     }
   }
-  const auto veg = engine::terrain::ScatterVegetation(heightmap, 0.05f, 4);
+  {
+    const auto water_mesh = engine::terrain::BuildWaterPatchMesh(6.f);
+    if (!water_mesh.indices.empty()) {
+      std::vector<engine::rhi::LitVertex> wverts(water_mesh.positions.size() / 3);
+      for (std::size_t i = 0; i < wverts.size(); ++i) {
+        wverts[i] = {water_mesh.positions[i * 3 + 0], water_mesh.positions[i * 3 + 1],
+                     water_mesh.positions[i * 3 + 2], water_mesh.normals[i * 3 + 0],
+                     water_mesh.normals[i * 3 + 1], water_mesh.normals[i * 3 + 2],
+                     water_mesh.uvs[i * 2 + 0], water_mesh.uvs[i * 2 + 1]};
+      }
+      if (auto st = a.device().UploadLitGeometry(5, wverts, water_mesh.indices); st) {
+        auto water_node = a.world().CreateNode("water");
+        engine::scene::Transform wt;
+        // Center of heightmap patch, slightly above water_level sample band.
+        wt.position = {terrain_origin.x + 8.f * heightmap.cell,
+                       terrain_origin.y + kWaterLevel, terrain_origin.z + 8.f * heightmap.cell};
+        a.world().set_local_transform(water_node, wt);
+        engine::scene::MeshRenderer wm;
+        wm.mesh_id = "water";
+        wm.never_cull = true;
+        wm.local_bounds = {{-6.f, -0.2f, -6.f}, {6.f, 0.2f, 6.f}};
+        a.world().set_mesh(water_node, wm);
+        engine::LogInfo("Water patch mesh uploaded (slot5)");
+      }
+    }
+  }
+  // Scatter at High density; QualityTier caps how many stay visible.
+  const auto veg = engine::terrain::ScatterVegetation(heightmap, kWaterLevel, 2);
   std::vector<engine::scene::NodeId> veg_nodes;
-  for (std::size_t i = 0; i < veg.size() && i < 24; ++i) {
+  constexpr std::size_t kVegCapHigh = 48;
+  for (std::size_t i = 0; i < veg.size() && i < kVegCapHigh; ++i) {
     auto id = a.world().CreateNode("veg" + std::to_string(i));
     engine::scene::Transform t;
-    t.position = {-22.f + veg[i].position.x, -0.35f + veg[i].position.y + 0.4f,
-                  -22.f + veg[i].position.z};
+    t.position = {terrain_origin.x + veg[i].position.x,
+                  terrain_origin.y + veg[i].position.y + 0.4f,
+                  terrain_origin.z + veg[i].position.z};
     t.scale = {0.25f * veg[i].scale, 0.8f * veg[i].scale, 0.25f * veg[i].scale};
     a.world().set_local_transform(id, t);
     engine::scene::MeshRenderer mesh;
@@ -673,8 +731,24 @@ int main(int argc, char** argv) {
     a.world().set_mesh(id, mesh);
     veg_nodes.push_back(id);
   }
+  auto veg_cap_for_tier = [](engine::render::QualityTier tier) -> std::size_t {
+    switch (tier) {
+      case engine::render::QualityTier::Low:
+        return 8;
+      case engine::render::QualityTier::High:
+        return kVegCapHigh;
+      case engine::render::QualityTier::Medium:
+      default:
+        return 24;
+    }
+  };
+  std::size_t veg_density_cap = veg_cap_for_tier(engine::render::QualityTier::Medium);
+  engine::LogInfo("Vegetation instances=" + std::to_string(veg_nodes.size()) +
+                  " density_cap=" + std::to_string(veg_density_cap));
 
   // M6/M14: morph demo mesh (bind cube-ish + smile/frown deltas)
+  // M6 skin: glTF JOINTS/WEIGHTS + inverse-bind → animation::SkinVertexCpu
+  // (see LoadGltfMeshFile has_skin / unit test "glTF skin joints feed SkinVertexCpu").
   std::vector<engine::Vec3> morph_bind;
   std::vector<engine::animation::MorphTarget> morph_targets(2);
   morph_targets[0].name = "bulge";
@@ -715,6 +789,26 @@ int main(int argc, char** argv) {
   probes.Configure({-6.f, 0.25f, -6.f}, {1.5f, 1.25f, 1.5f}, 9, 4, 9);
   probes.set_budget_per_frame(48);
   bool enable_gi = false;
+
+  // M22: lightmap multiply path coexists with Probe GI (independent F1 flags; not DDGI).
+  auto sync_lightmap_albedo = [&](bool want) {
+    if (base_albedo_rgba.empty()) {
+      return;
+    }
+    if (want == lightmap_applied) {
+      return;
+    }
+    std::vector<std::uint8_t> upload = base_albedo_rgba;
+    if (want && lightmap_ready) {
+      engine::gi::MultiplyAlbedoByLightmap(upload, base_albedo_w, base_albedo_h, lightmap_img);
+    }
+    if (auto st = a.device().UploadLitAlbedoRgba(upload.data(), base_albedo_w, base_albedo_h, 0);
+        !st) {
+      engine::LogError(std::string("Lightmap albedo upload failed: ") + st.message());
+      return;
+    }
+    lightmap_applied = want && lightmap_ready;
+  };
 
   engine::gi::ReflectionProbe reflection_probe;
   reflection_probe.Configure({0.f, 1.6f, 0.f}, 32);
@@ -813,6 +907,8 @@ int main(int argc, char** argv) {
 
   engine::vfx::ParticleEmitter particles;
   particles.Configure({1.8f, 2.6f, 1.0f}, 28.f, 1.1f);
+  engine::vfx::TrailRibbon lamp_trail;
+  lamp_trail.Configure(0.75f, 0.06f, 40);
 
   engine::scene::NodeId picked_node = engine::scene::kInvalidNode;
 
@@ -830,7 +926,17 @@ int main(int argc, char** argv) {
   bool f2_was_down = false;
   bool f3_was_down = false;
   bool f4_was_down = false;
+  bool f5_was_down = false;
+  bool record_png = false;
+  int record_frame_index = 0;
+  std::filesystem::path record_dir;
+  std::chrono::steady_clock::time_point record_last_sample{};
+  std::string record_last_path;
+  std::string record_last_error;
+  std::uint64_t record_dropped = 0;
+  std::unique_ptr<sandbox::AsyncBmpWriter> record_writer;
   engine::debug::Profiler profiler;
+  render.SetProfiler(&profiler);
   ProcessPerfSampler process_perf;
   ProcessPerfSnapshot displayed_perf{};
   std::vector<std::pair<std::string, double>> displayed_cpu_scopes;
@@ -840,7 +946,7 @@ int main(int argc, char** argv) {
 
   auto audio = engine::media::CreateDefaultAudioDevice();
   engine::LogInfo(std::string("Audio backend: ") + audio->backend_name());
-  engine::LogInfo("Sandbox: LMB/RMB look | Wheel zoom | MMB pan | F1 FX | F3 grid | F4 axes");
+  engine::LogInfo("Sandbox: LMB/RMB look | Wheel zoom | MMB pan | F1 FX | F3 grid | F4 axes | F5 record BMP");
 
   bool headless_assert_failed = false;
   const auto status = a.Run([&](engine::Application& app_ref) {
@@ -877,6 +983,57 @@ int main(int argc, char** argv) {
       show_axes = !show_axes;
     }
     f4_was_down = f4_down;
+
+    auto start_or_stop_record = [&](bool enable) {
+      if (enable == record_png) {
+        return;
+      }
+      record_png = enable;
+      if (record_png) {
+        const auto now = std::chrono::system_clock::now();
+        const std::time_t tt = std::chrono::system_clock::to_time_t(now);
+        std::tm local_tm{};
+#if defined(_WIN32)
+        localtime_s(&local_tm, &tt);
+#else
+        local_tm = *std::localtime(&tt);
+#endif
+        char stamp[32];
+        std::snprintf(stamp, sizeof(stamp), "%04d%02d%02d_%02d%02d%02d", local_tm.tm_year + 1900,
+                      local_tm.tm_mon + 1, local_tm.tm_mday, local_tm.tm_hour, local_tm.tm_min,
+                      local_tm.tm_sec);
+        record_dir = std::filesystem::path("captures") / (std::string("sandbox_") + stamp);
+        std::error_code ec;
+        std::filesystem::create_directories(record_dir, ec);
+        record_frame_index = 0;
+        record_last_sample = {};
+        record_last_path.clear();
+        record_last_error.clear();
+        record_dropped = 0;
+        if (ec) {
+          record_last_error = ec.message();
+          engine::LogError("Record BMP: create_directories failed: " + record_last_error);
+          record_png = false;
+        } else {
+          record_writer = std::make_unique<sandbox::AsyncBmpWriter>();
+          engine::LogInfo("Record BMP ON → " + record_dir.string() +
+                          " (~60 Hz, async write; may drop if disk lags)");
+        }
+      } else {
+        if (record_writer) {
+          record_dropped = record_writer->dropped();
+          record_writer.reset();  // drains queue
+        }
+        engine::LogInfo("Record BMP OFF (" + std::to_string(record_frame_index) + " queued, " +
+                        std::to_string(record_dropped) + " dropped)");
+      }
+    };
+
+    const bool f5_down = snap.keys[VK_F5];
+    if (f5_down && !f5_was_down) {
+      start_or_stop_record(!record_png);
+    }
+    f5_was_down = f5_down;
 
     auto& dbg = app_ref.debug_draw();
     dbg.Clear();
@@ -985,6 +1142,11 @@ int main(int argc, char** argv) {
           imgui.Checkbox(Su.show_grid, &show_grid);
           imgui.Checkbox(Su.show_axes, &show_axes);
           imgui.Checkbox(Su.probe_gi, &enable_gi);
+          if (lightmap_ready) {
+            if (imgui.Checkbox(Su.lightmap, &enable_lightmap)) {
+              sync_lightmap_albedo(enable_lightmap);
+            }
+          }
           imgui.SliderFloat(Su.morph_bulge, &morph_w0, 0.f, 1.f);
           imgui.SliderFloat(Su.morph_squash, &morph_w1, 0.f, 1.f);
           imgui.Separator();
@@ -1003,6 +1165,29 @@ int main(int argc, char** argv) {
           imgui.Checkbox(Su.fog, &fx.enable_fog);
           if (imgui.Checkbox(Su.vsync, &enable_vsync)) {
             app_ref.device().SetVSync(enable_vsync);
+          }
+          {
+            bool rec = record_png;
+            if (imgui.Checkbox(Su.record_png, &rec)) {
+              start_or_stop_record(rec);
+            }
+            char rec_line[192];
+            if (record_png) {
+              const std::uint64_t drop =
+                  record_writer ? record_writer->dropped() : record_dropped;
+              std::snprintf(rec_line, sizeof(rec_line), "%s | #%d | drop %llu | %s", Su.record_on,
+                            record_frame_index, static_cast<unsigned long long>(drop),
+                            record_dir.string().c_str());
+            } else if (!record_last_error.empty()) {
+              std::snprintf(rec_line, sizeof(rec_line), "%s | err: %s", Su.record_off,
+                            record_last_error.c_str());
+            } else if (!record_last_path.empty()) {
+              std::snprintf(rec_line, sizeof(rec_line), "%s | last: %s", Su.record_off,
+                            record_last_path.c_str());
+            } else {
+              std::snprintf(rec_line, sizeof(rec_line), "%s", Su.record_off);
+            }
+            imgui.Text(rec_line);
           }
           imgui.Separator();
           imgui.SliderFloat(Su.sun_intensity, &fx.sun_intensity, 0.f, 10.f);
@@ -1033,6 +1218,8 @@ int main(int argc, char** argv) {
             fx.enable_bloom = false;
             render.set_quality(q);
             render.set_effect_tuning(fx);
+            veg_density_cap = veg_cap_for_tier(tier);
+            engine::LogInfo("QualityTier veg_density_cap=" + std::to_string(veg_density_cap));
           };
           if (imgui.Button(Su.quality_low, 90.f, 0.f)) {
             apply_quality_tier(engine::render::QualityTier::Low);
@@ -1050,12 +1237,17 @@ int main(int argc, char** argv) {
         }
         imgui.EndWindow();
       } else {
-        if (imgui.BeginWindow(S.hint, 16.f, 16.f, 320.f, 88.f)) {
+        if (imgui.BeginWindow(S.hint, 16.f, 16.f, 320.f, 110.f)) {
           char line[128];
           std::snprintf(line, sizeof(line), "%.0f FPS | %.1f ms | CPU %.0f%% | WS %.0f MB",
                         perf.fps, perf.frame_ms, perf.cpu_percent, perf.working_set_mb);
           imgui.Text(line);
           imgui.Text(S.hint_keys);
+          if (record_png) {
+            char rec[96];
+            std::snprintf(rec, sizeof(rec), "%s #%d", S.record_on, record_frame_index);
+            imgui.Text(rec);
+          }
         }
         imgui.EndWindow();
       }
@@ -1097,7 +1289,7 @@ int main(int argc, char** argv) {
     render.set_effect_tuning(fx);
 
     // M22 / W-gi-deepen: probe irradiance → ambient tint (additive over base;
-    // IBL still applied in lit shader when enable_ibl). Does not replace sky/IBL.
+    // IBL still applied in lit shader when enable_ibl). Does not replace sky/IBL/Lightmap.
     probes.set_enabled(enable_gi);
     if (enable_gi) {
       engine::gi::ProbeLight pl;
@@ -1111,11 +1303,19 @@ int main(int argc, char** argv) {
     } else {
       env.ambient = {0.20f, 0.21f, 0.24f, 1.f};
     }
+    // Keep lightmap multiply in sync if toggled via harness/console later.
+    sync_lightmap_albedo(enable_lightmap);
 
     // M7 particles near lamp (frozen under gpu-headless assert for Q1 determinism).
     if (!gpu_headless_assert) {
       particles.set_origin({1.8f, 2.6f, 1.0f});
       particles.Step(app_ref.delta_time());
+      // Thin TrailRibbon: orbit the lamp for DebugDraw segments Sandbox can call.
+      const float t = static_cast<float>(app_ref.frame_index()) * 0.05f;
+      lamp_trail.Push({1.8f + std::cos(t) * 0.35f, 2.6f + 0.15f * std::sin(t * 1.7f),
+                       1.0f + std::sin(t) * 0.35f});
+      lamp_trail.Step(app_ref.delta_time());
+      lamp_trail.AppendDebugLines(dbg);
     }
 
     // M14 morph upload only when weights change (avoid per-frame GPU buffer destroy).
@@ -1150,7 +1350,7 @@ int main(int argc, char** argv) {
       }
     }
 
-    // M10 LOD: hide far vegetation
+    // M10 LOD + M23 QualityTier density: hide far / over-cap vegetation
     {
       const std::vector<float> ranges{8.f, 16.f, 28.f};
       const auto cam = app_ref.camera().position;
@@ -1158,7 +1358,8 @@ int main(int argc, char** argv) {
         const auto p = app_ref.world().world_matrix(veg_nodes[i]).TransformPoint({0, 0, 0});
         const float d = (p - cam).length();
         const int level = engine::assets::LodSelect::SelectLevel(d, ranges);
-        app_ref.world().set_visible(veg_nodes[i], level < 3);
+        const bool in_density = i < veg_density_cap;
+        app_ref.world().set_visible(veg_nodes[i], in_density && level < 3);
       }
     }
 
@@ -1459,7 +1660,9 @@ int main(int argc, char** argv) {
           }
           render.set_quality(q);
           render.set_effect_tuning(fx);
-          std::cout << engine::debug::HarnessOk(std::string("\"tier\":\"") + hcmd.key + "\"")
+          veg_density_cap = veg_cap_for_tier(tier);
+          std::cout << engine::debug::HarnessOk(std::string("\"tier\":\"") + hcmd.key +
+                                               "\",\"veg_cap\":" + std::to_string(veg_density_cap))
                     << std::endl;
         } else if (hcmd.cmd == "frame") {
           // Frame already advanced by Application::Run; acknowledge step count.
@@ -1491,8 +1694,45 @@ int main(int argc, char** argv) {
       }
       profiler.End("ImGui");
     }
+
+    // ~60 Hz backbuffer → BMP (async write; GPU readback still sync).
+    if (record_png && record_writer && !gpu_headless_assert) {
+      const auto now = std::chrono::steady_clock::now();
+      constexpr auto kRecordInterval = std::chrono::duration<double>(1.0 / 60.0);
+      const bool due = record_last_sample.time_since_epoch().count() == 0 ||
+                       (now - record_last_sample) >= kRecordInterval;
+      if (due) {
+        std::vector<std::uint8_t> rgba;
+        int rw = 0;
+        int rh = 0;
+        if (auto st = app_ref.device().ReadbackTextureStub(rgba, rw, rh); !st) {
+          record_last_error = st.message();
+          engine::LogError(std::string("Record BMP readback: ") + st.message());
+        } else if (rw > 0 && rh > 0 &&
+                   rgba.size() >= static_cast<std::size_t>(rw) * static_cast<std::size_t>(rh) * 4u) {
+          char name[64];
+          std::snprintf(name, sizeof(name), "frame_%04d.bmp", record_frame_index);
+          const auto path = record_dir / name;
+          if (record_writer->Enqueue(path.string(), rw, rh, std::move(rgba))) {
+            ++record_frame_index;
+            record_last_sample = now;
+            record_last_path = path.string();
+            record_last_error.clear();
+          } else {
+            record_last_sample = now;
+            record_last_error = "queue full (dropped)";
+          }
+        } else {
+          record_last_error = "empty readback";
+        }
+      }
+    }
+
     profiler.End("Frame");
   });
+  if (record_writer) {
+    record_writer.reset();
+  }
   if (!status || headless_assert_failed) {
     return 1;
   }

@@ -22,8 +22,8 @@
 | G18 | Mesh Shader / GPU Driven | **Cull/Indirect 两端可用**；Bindless 热路径 Feature `bindless_hot_path`（默认 OFF 保黄金图）；VK bindless SKIP | M24 |
 | G19 | Linux | **文档占位 / 外置** | M18 |
 | G02–G04、G11 | 混合打磨 / 拣选 / 多 DPI | **可用加深** | M20 |
-| G05–G10、G12 | 2D 深度 | **可用加深** | M21 |
-| G14 | 动态 GI | **已加深**（ProbeVolume 密网格 + 帧预算增量 + 三线性；F1 可关；与 IBL 叠加 ambient） | M22 |
+| G05–G10、G12 | 2D 深度 | **已加深**：chunk→Sprite 展开；SkeletonClip2D；雾 tint / BMFont JSON / 震屏 | M21 |
+| G14 | 动态 GI | **已加深**：ProbeVolume + Lightmap **共存**（F1 独立开关；非 DDGI）；见 [gi/README.md](gi/README.md) | M22 |
 | G15 | 地形/水体/植被（基础） | **可用加深** | M23 |
 | G16 | 光追 API 对齐 | **完成（加深）** Feature 门控 | M25（内容管线仍非 UE 级） |
 | T01 | 最小工具链（shader/IBL/纹理/cook/黄金图） | 已排期 | M2–M9；见 [TOOLING.md](TOOLING.md) |
@@ -52,10 +52,10 @@
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C01 | 产品级 Deferred / Forward+ 路径钉死 | 现以通用 Pass/FrameGraph 为主，未强制选路径 | 高（影响扩展方式） |
-| C02 | 集群 / 分块多灯光 | 大量点/聚光的提交与剔除策略 | 高 |
+| C01 | 产品级 Deferred / Forward+ 路径钉死 | **已落地（M26）**：Forward+ 钉死 + Pass 名冻结；见 [FORWARD_PLUS.md](FORWARD_PLUS.md)、[ADR 0032](learn/adr/0032-m26-forward-plus-cluster.md) | 高（影响扩展方式） |
+| C02 | 集群 / 分块多灯光 | **部分落地（M26）**：CPU≤16 / FrameCB≤8 / Atlas 阴影≤2；真集群剔除后置 | 高 |
 | C03 | IES / Light Function | 灯光分布与投影函数 | 中 |
-| C04 | 更细电影级镜头后处理 | 色散、胶片颗粒、暗角等（基础栈已在 P1） | 低 |
+| C04 | 更细电影级镜头后处理 | **部分落地（M26）**：vignette + film grain（PostCB / EffectTuning，默认 0）；色散等后置 | 低 |
 | C05 | 大气 / 体积云 / 天气降水 | 超出「体积雾」的环境表现 | 中 |
 
 ### 4.2 几何与开放世界加深
@@ -64,14 +64,14 @@
 |---|---|---|---|
 | C06 | Virtual Texture 产品化 | 与「无 VT 全家桶」缺陷对应的加深项 | 中（成本高） |
 | C07 | HLOD / Impostor | 超大场景层级；现有仅 LOD/实例 | 中 |
-| C08 | Meshlet / 更完整 GPU 几何管线 | 在 M24 GPU Driven 之上加深 | 中 |
+| C08 | Meshlet / 更完整 GPU 几何管线 | **部分落地（M26）**：`Path::MeshShader` Feature SKIP；Indirect + `CullInstancesToIndirect` 加深注释/预留 | 中 |
 | C09 | FFT / 高级水面 | M23 水体仅为基础 | 低 |
 
 ### 4.3 动画与角色
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C10 | 动画混合树 / 状态机 | 现有片段+蒙皮+Morph，缺图逻辑 | 高（上层常自建） |
+| C10 | 动画混合树 / 状态机 | **部分落地（M26）**：最小 `AnimationStateMachine`（states/transitions/Sample）；混合树后置 | 高（上层常自建） |
 | C11 | IK | 足部/瞄准等 | 中 |
 | C12 | GPU 蒙皮产品化打磨 | 蒙皮已有；算力路径可加深 | 低 |
 
@@ -94,7 +94,7 @@
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C16 | 资源热更 / 着色器热重载 | 迭代体验 | 中 |
+| C16 | 资源热更 / 着色器热重载 | **部分落地（M26）**：`ShaderHotReload::Poll` mtime 探测；全量 PSO 重建可选 | 中 |
 | C17 | 多窗口 / 多 GPU | 特殊部署 | 低 |
 | C18 | 立体 / XR 渲染 | 输入层可预留适配器；渲染未排期 | 低（易扩范围） |
 
@@ -105,7 +105,7 @@
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
 | **C19** | `IScriptHost` 抽象（默认可空） | 见 [game_kit/docs](../../game_kit/docs/README.md)；VM 在外层 | 中 |
-| **C20** | 轻量内容工具 | Manifest 浏览、场景 JSON 校验、依赖图 CLI；属引擎 `tools/` 候选，**不是**视口编辑器 | 中 |
+| **C20** | 轻量内容工具 | **部分落地（M26）**：`tools/content_lint` 校验 manifest + 打印依赖；场景图/视口编辑器仍外置 | 中 |
 | **C21** | 独立 `editor/` 视口编辑器 | 工作区独立工程；**规格/排期不在本目录**（见 [LAYERS](../../docs/LAYERS.md)） | 低～中 |
 
 ### 4.7 立项规则

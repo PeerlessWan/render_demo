@@ -529,27 +529,28 @@ Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
 | **M2** D3D12 主路径        | **完成**（DXC `shader_compile`、深度/上传/PSO、纹理三角 `sample_02_triangle`、Resize）                   |
 | **M3** Graph + 异步       | **完成（加深）**：Pump + `DispatchCompute` + **D3D12 真 Readback**；Validation 可选 |
 | **M4** 场景·外设·调试         | **完成（加深）**：Win32 键鼠→InputSystem、Escape 关闭、RenderScene Extract                             |
-| **M5** 环境与阴影            | **产品可用（D3D12）**：CSM；albedo/ORM；**IBL pack + lit 采样**；baker `ibl_baker`                    |
-| **M6** 角色与档位            | **可用加深**：CPU 蒙皮 + Sandbox Morph；QualityTier、PostStack                                     |
-| **M7** 特效·超分·音视频        | **可用加深**：WAV；CPU 粒子；**IUpscaler fallback**；VA stub 可诊断                                    |
-| **M8** RT 与工具化          | **可用加深**：序列化/Console/Profiler；**DxrDemo Feature 门控**；lightmap_baker 工具                    |
-| **M9** 基础段验收            | **产品可用**：Sandbox；**gpu-headless 回归**；learn 阶梯 Sample（2A README）                              |
-| **M10** 可见性·LOD·实例·流式   | **100%（无 vendor）**：LodSelect；StreamingBudget；**GPU Instanced + Cull CS**                     |
-| **M11** 阴影·AA·AO·透明     | **产品可用（D3D12）**：CSM；点光 cubemap；SSAO/**TAA+MV**；透明                                         |
-| **M12** 物理              | **可用加深**：builtin + Jolt；learn `25_physics`                                                |
-| **M13** P1 后处理与反射       | **100%（产品主路径）**：后处理栈；**GPU CaptureReflectionProbeGpu**（CPU 近似 fallback）                   |
-| **M14** P1 提交与显示        | **100%（无 vendor）**：Morph；SubmitConfig；Indirect；**Bindless Feature 最小路径**（非全迁移）            |
-| **M15** UI 完整           | **可用加深**：ImGui + Retained；learn `29_ui`；真 RmlUi 外置                                        |
-| **M16** 2D·像素·混合        | **可用加深**：Sprite；**AtlasJson**；learn `30_pixel_hybrid`                                     |
-| **M17** Vulkan（Windows） | **100%（Win 矩阵）**：lit+CSM；IBL；**SPIR-V post + scene_color RT**；**真 Readback**；局部影/实例 Feature |
-| **M18** Linux + Vulkan  | **完成（文档占位）**：外置                                                                           |
-| **M19** 网络层             | **可用加深**：HTTP 明文；HTTPS/QUIC 外置                                                            |
-| **M20** 混合打磨            | **完成（加深）**：Pick + 高亮；learn 选修                                                             |
-| **M21** 2D 深度           | **完成（加深）**：TilemapStreamer、Skeleton2D                                                     |
-| **M22** 动态 GI           | **可用加深**：ProbeVolume **UpdateFromLights**                                                 |
-| **M23** 场景专题            | **可用加深**：Heightmap；**BuildWaterPatchMesh**；植被散射                                           |
-| **M24** GPU Driven      | **100%（无全 Bindless）**：HiZ + **Cull CS Dispatch** + IndirectArgs + Sandbox 热路径               |
-| **M25** 光追对齐            | **完成（加深）**：RT Resolve + **CanRunDxrDemo**                                                 |
+| **M5** 环境与阴影            | **100%（Win）**：CSM Poisson/tile clamp/法线 bias；IBL；baker                                      |
+| **M6** 角色与档位            | **100%（验收）**：glTF joints→SkinVertexCpu；QualityTier 拉开 cascade/atlas/距离/植被/DoF            |
+| **M7** 特效·超分·音视频        | **100%（本口径）**：TrailRibbon；分辨率缩放+Jitter；WAV；VA stub 可诊断；FSR/DLSS 外置                   |
+| **M8** RT 与工具化          | **100%（本口径）**：Profiler BeginPass + GPU timestamp 门控；Lightmap 运行时；DXR Feature 探测         |
+| **M9** 基础段验收            | **产品可用**：Sandbox；gpu-headless；learn 阶梯                                                      |
+| **M10** 可见性·LOD·实例·流式   | **100%（无 vendor）**：LodSelect；StreamingBudget；GPU Instanced + Cull CS                       |
+| **M11** 阴影·AA·AO·透明     | **100%（验收）**：CSM；spot+point local；SSAO/TAA；透明距离排序                                         |
+| **M12** 物理              | **100%（验收）**：Jolt 胶囊 + MoveCharacter ShapeCast；learn/25 WASD                             |
+| **M13** P1 后处理与反射       | **100%**：后处理栈 + vignette/grain；反射探针 GPU                                                   |
+| **M14** P1 提交与显示        | **100%（无 vendor）**：Morph；SubmitConfig；Indirect；Bindless Feature                           |
+| **M15** UI 完整           | **100%（本口径）**：ImGui+Retained HUD；RmlUi 外置已接受                                              |
+| **M16** 2D·像素·混合        | **100%（验收）**：多层 Tiled + collision；IntegerScale；learn/30                                 |
+| **M17** Vulkan（Windows） | **100%（Win 矩阵）**                                                                           |
+| **M18** Linux + Vulkan  | **完成（文档占位）**：外置                                                                             |
+| **M19** 网络层             | **100%（本口径）**：HTTP；HTTPS 提示；WS loopback；QUIC ADR 0031 SKIP                               |
+| **M20** 混合打磨            | **100%**：Pick + MIXED_PICK.md；IntegerScale                                                   |
+| **M21** 2D 深度           | **100%（加深）**：Tilemap→Sprite；SkeletonClip2D；雾/BMFont/震屏                                     |
+| **M22** 动态 GI           | **100%（本口径）**：ProbeVolume + Lightmap 共存（非 DDGI）                                            |
+| **M23** 场景专题            | **100%（加深）**：地形/水面/植被；QualityTier 密度                                                     |
+| **M24** GPU Driven      | **100%**：HiZ + Cull；MeshShader Feature SKIP（C08）                                           |
+| **M25** 光追对齐            | **100%（本口径）**：DXR 硬件探测 + ADR 0030；VK RT SKIP                                               |
+| **M26** Forward+ / P3    | **已开簇（ADR 0032）**：C01/C02/C10/C04/C16/C20 落地；其余 §4 后置                                    |
 
 
 > 无 vendor 100% 口径见看板；测试门禁：`ci_headless.ps1 -Golden`（Q1+Q3+C2+C3+C6）+ matrix 比图 + C4 薄对标（默认记回归）；可选 `-Validation`（C1）。**Harness 冻结；MCP 不进门禁。** §3.1：**Q1–Q3 / C1–C6 已落地（C4 记对标）**；Q4/Q5 / 严 C4 仍后置。

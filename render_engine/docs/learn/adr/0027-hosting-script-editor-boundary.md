@@ -19,7 +19,7 @@
 
 - [HOSTING.md](../../HOSTING.md)  
 - [game_kit/docs](../../../../game_kit/docs/README.md)  
-- [editor/docs](../../../../editor/docs/README.md)  
+- 视口编辑器：独立 `editor/` 工程；**规格不进本引擎文档树**（见 [LAYERS.md](../../../../docs/LAYERS.md)）  
 - 多品类分层：[LAYERS.md](../../../../docs/LAYERS.md)、[ADR 0028](0028-genre-kits-layering.md)  
 
 ## 后果

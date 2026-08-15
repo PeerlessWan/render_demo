@@ -109,5 +109,4 @@ PrefabDocument
 - [HOSTING.md](HOSTING.md)  
 - [RUNTIME_FOUNDATIONS.md](RUNTIME_FOUNDATIONS.md) §6  
 - [../../game_kit/docs/ARCHITECTURE.md](../../game_kit/docs/ARCHITECTURE.md)  
-- [../../editor/docs/ARCHITECTURE.md](../../editor/docs/ARCHITECTURE.md)  
 - [TOOLING.md](TOOLING.md) C20  

@@ -30,7 +30,7 @@ render_demo/                    # 工作区（可 mono 可多仓）
 - 脚本 / 通用玩法：[../../game_kit/docs/README.md](../../game_kit/docs/README.md)  
 - 品类 kit：[../../genre_kits/README.md](../../genre_kits/README.md)  
 - 游戏工程：[../../games/README.md](../../games/README.md)  
-- 编辑器：[../../editor/docs/README.md](../../editor/docs/README.md)  
+- 视口编辑器：**不在本目录**；工作区独立 `editor/`（经 LAYERS）  
 
 命名约定：对外可称「游戏引擎 = game_kit + render_engine」；品类能力来自可选 `genre_kits/*`；**本仓 `render_engine` 文档仍只描述渲染中台**。
 
@@ -85,7 +85,7 @@ RenderSystem.Frame
 ```
 
 > 与 [ARCHITECTURE.md](ARCHITECTURE.md) §4.1 同一权威顺序。  
-> **编辑器变体：** 在 `Module.OnUpdate` 之前或之中跑 EditorUI；非 Play 时跳过 game_kit；Play 时复用上表相位（见 editor ARCHITECTURE）。
+> **编辑器变体：** 在 `Module.OnUpdate` 之前或之中跑 EditorUI；非 Play 时跳过 game_kit；Play 时复用上表相位。循环细节在独立 `editor/` 工程，**不在本目录**。
 
 约束：
 
@@ -191,6 +191,5 @@ editor/
 - [../../game_kit/docs/README.md](../../game_kit/docs/README.md)  
 - [../../genre_kits/README.md](../../genre_kits/README.md)  
 - [../../games/README.md](../../games/README.md)  
-- [../../editor/docs/README.md](../../editor/docs/README.md)  
 - [learn/adr/0027-hosting-script-editor-boundary.md](learn/adr/0027-hosting-script-editor-boundary.md)  
 - [learn/adr/0028-genre-kits-layering.md](learn/adr/0028-genre-kits-layering.md)  

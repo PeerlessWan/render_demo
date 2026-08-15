@@ -18,7 +18,7 @@
 | `game_kit/` | 品类无关玩法壳 + 脚本 | [../game_kit/docs/README.md](../game_kit/docs/README.md) |
 | `genre_kits/` | 可选品类层 | [../genre_kits/README.md](../genre_kits/README.md) |
 | `games/` | 具体游戏工程 | [../games/README.md](../games/README.md) |
-| `editor/` | 独立视口编辑器 | [../editor/docs/README.md](../editor/docs/README.md) |
+| `editor/` | 独立视口编辑器（**文档只在本层**，不进引擎 docs） | [../editor/docs/README.md](../editor/docs/README.md) |
 | `tools/` | 离线工具占位 | [../tools/README.md](../tools/README.md) |
 
 ## 关键 ADR

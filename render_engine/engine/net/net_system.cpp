@@ -126,10 +126,12 @@ class LoopbackWebSocket final : public IWebSocket {
 class QuicStub final : public IQuicEndpoint {
  public:
   Status Connect(std::string_view, int) override {
-    return Status::Fail(ErrorCode::Unavailable, "QUIC/MsQuic not linked (stub)");
+    return Status::Fail(ErrorCode::Unavailable,
+                        "QUIC SKIP this wave: MsQuic not bundled (see ADR 0031)");
   }
   Status SendReliable(std::string_view) override {
-    return Status::Fail(ErrorCode::Unavailable, "QUIC/MsQuic not linked (stub)");
+    return Status::Fail(ErrorCode::Unavailable,
+                        "QUIC SKIP this wave: MsQuic not bundled (see ADR 0031)");
   }
   Status Close() override { return Status::Ok(); }
   bool supported() const override { return false; }

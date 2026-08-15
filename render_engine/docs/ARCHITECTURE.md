@@ -252,6 +252,7 @@ InputSystem
 - Compile：推导依赖；插入屏障点（**先 D3D12 实装，再 Vulkan 对齐**；经 RHI，业务不直调后端）。
 - Execute：按序提交。
 - 质量档可裁剪 Pass（关 Bloom、关 RT、降级阴影等）。
+- **Lit 路径（M26 / C01）**：产品不透明照明为 **Forward+**（无 deferred G-buffer）。Pass 名冻结表见 [FORWARD_PLUS.md](FORWARD_PLUS.md)（`ShadowCSM` → `OpaqueLit` → `PostSSAO_TAA` 等）。
 
 ### 4.5 场景 → RenderScene
 
@@ -288,8 +289,9 @@ Visibility.Cull(camera) → RenderScene
 
 - 方向光 **CSM** 为光栅阴影主路径。
 - **反射探针**（盒/球）提供局部反射。
-- **ProbeVolume（W-gi-deepen）**：CPU 密网格 irradiance；帧预算增量更新 + 三线性采样；Sandbox F1「Probe GI」叠加 ambient（**不替代** IBL / Lightmap / Sky）。
-- **Lightmap / 简化烘焙 GI**：tools 烘焙 + 运行时采样。
+- **ProbeVolume（W-gi-deepen / M22）**：CPU 密网格 irradiance；帧预算增量更新 + 三线性采样；Sandbox F1「Probe GI」叠加 ambient（**不替代** IBL / Lightmap / Sky；**不宣称 DDGI**）。见 [docs/gi/README.md](gi/README.md)。
+- **Lightmap / 简化烘焙 GI**：tools 烘焙 + 运行时采样；Sandbox F1「Lightmap」可与 Probe GI 并存（albedo 乘算开关）。
+- **2D 深度（M21）**：`TilemapStreamer::ExpandResidentToSprites`；`SkeletonClip2D`；雾 tint / BMFont JSON stub / CameraShake2D。
 - 光追开启时可用 RT 阴影/反射等示范路径，失败则降级。
 
 ### 4.8 VFX / Post / Upscale / RT

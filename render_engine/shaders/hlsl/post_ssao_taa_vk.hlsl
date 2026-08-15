@@ -42,8 +42,8 @@
   float4x4 g_prev_view_proj;
   float g_jitter_x;
   float g_jitter_y;
-  float g_pad0;
-  float g_pad1;
+  float g_vignette_strength;
+  float g_film_grain_strength;
 };
 
 [[vk::binding(1, 0)]] Texture2D g_scene_color;
@@ -321,6 +321,18 @@ float4 PSMain(VSOut input) : SV_Target {
     }
   } else {
     color = saturate(color);
+  }
+
+  // M26/C04: vignette + film grain (strength 0 = off).
+  if (g_vignette_strength > 1e-4) {
+    float2 d = uv * 2.0 - 1.0;
+    float r2 = dot(d, d);
+    float vig = saturate(1.0 - r2 * g_vignette_strength);
+    color *= vig;
+  }
+  if (g_film_grain_strength > 1e-4) {
+    float n = frac(sin(dot(uv * 1129.0 + g_eye.xy, float2(12.9898, 78.233))) * 43758.5453);
+    color += (n - 0.5) * g_film_grain_strength;
   }
 
   return float4(color, 1.0);

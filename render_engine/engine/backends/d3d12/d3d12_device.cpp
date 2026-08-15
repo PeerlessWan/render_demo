@@ -227,6 +227,17 @@ class D3D12Device final : public IDevice {
       engine::SetFeatureOverride("hdr_output", true);
     }
 
+    D3D12_FEATURE_DATA_D3D12_OPTIONS5 opts5{};
+    if (SUCCEEDED(device_->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &opts5,
+                                               sizeof(opts5))) &&
+        opts5.RaytracingTier != D3D12_RAYTRACING_TIER_NOT_SUPPORTED) {
+      engine::SetFeatureOverride("raytracing", true);
+      LogInfo("D3D12 raytracing Feature enabled (OPTIONS5 RaytracingTier)");
+    } else {
+      engine::SetFeatureOverride("raytracing", false);
+      LogInfo("D3D12 raytracing SKIP (OPTIONS5 tier not supported)");
+    }
+
     LogInfo(gpu_headless_ ? "D3D12 device ready (gpu_headless offscreen)" : "D3D12 device ready");
     return Status::Ok();
   }
@@ -607,18 +618,10 @@ class D3D12Device final : public IDevice {
     }
     const auto* src_bytes = static_cast<const std::uint8_t*>(mapped);
     const std::size_t pitch = footprint.Footprint.RowPitch;
+    const std::size_t row_bytes = static_cast<std::size_t>(w) * 4u;
     for (int y = 0; y < h; ++y) {
       const auto* row = src_bytes + static_cast<std::size_t>(y) * pitch;
-      for (int x = 0; x < w; ++x) {
-        const std::size_t di = (static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
-                                static_cast<std::size_t>(x)) *
-                               4;
-        // DXGI_FORMAT_R8G8B8A8_UNORM
-        out_rgba[di + 0] = row[x * 4 + 0];
-        out_rgba[di + 1] = row[x * 4 + 1];
-        out_rgba[di + 2] = row[x * 4 + 2];
-        out_rgba[di + 3] = row[x * 4 + 3];
-      }
+      std::memcpy(out_rgba.data() + static_cast<std::size_t>(y) * row_bytes, row, row_bytes);
     }
     color_readback_->Unmap(0, nullptr);
 
@@ -1146,8 +1149,8 @@ class D3D12Device final : public IDevice {
     shadow_pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
     shadow_pso.RasterizerState.FrontCounterClockwise = TRUE;
     shadow_pso.RasterizerState.DepthClipEnable = TRUE;
-    // Integer depth-bias units (D32_FLOAT). Vulkan uses depthBiasConstantFactor=1.25 which
-    // was tuned to match this slope=2.0 pair — do not assume the numerics are interchangeable.
+    // Integer depth-bias units (D32_FLOAT). Vulkan uses depthBiasConstantFactor=2.5
+    // (r-scaled units, not a literal copy of 1500) + same slope=2.0.
     shadow_pso.RasterizerState.DepthBias = 1500;
     shadow_pso.RasterizerState.SlopeScaledDepthBias = 2.0f;
     shadow_pso.RasterizerState.DepthBiasClamp = 0.f;
@@ -1239,8 +1242,10 @@ class D3D12Device final : public IDevice {
       float enable_ssao;
       float enable_taa;
       float local_count;
-      float local_pos_range[4][4];
-      float local_color_intensity[4][4];
+      float local_pos_range[8][4];
+      float local_color_intensity[8][4];
+      float local_spot[8][4];       // xyz=dir, w=cosOuter (-1 = point/omni)
+      float local_spot_inner[8];    // cosInner for lights 0..7
       float local_shadow_vp[12][16];
       float enable_local_shadow;
       float local_shadow_bias;
@@ -1286,7 +1291,7 @@ class D3D12Device final : public IDevice {
     data.enable_ssao = lighting.enable_ssao ? 1.f : 0.f;
     data.enable_taa = lighting.enable_taa ? 1.f : 0.f;
     data.local_count = static_cast<float>(lighting.local_light_count);
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 8; ++i) {
       data.local_pos_range[i][0] = lighting.local_pos[static_cast<std::size_t>(i)].x;
       data.local_pos_range[i][1] = lighting.local_pos[static_cast<std::size_t>(i)].y;
       data.local_pos_range[i][2] = lighting.local_pos[static_cast<std::size_t>(i)].z;
@@ -1295,6 +1300,11 @@ class D3D12Device final : public IDevice {
       data.local_color_intensity[i][1] = lighting.local_color[static_cast<std::size_t>(i)].g;
       data.local_color_intensity[i][2] = lighting.local_color[static_cast<std::size_t>(i)].b;
       data.local_color_intensity[i][3] = lighting.local_intensity[static_cast<std::size_t>(i)];
+      data.local_spot[i][0] = lighting.local_spot[static_cast<std::size_t>(i)].x;
+      data.local_spot[i][1] = lighting.local_spot[static_cast<std::size_t>(i)].y;
+      data.local_spot[i][2] = lighting.local_spot[static_cast<std::size_t>(i)].z;
+      data.local_spot[i][3] = lighting.local_spot[static_cast<std::size_t>(i)].w;
+      data.local_spot_inner[i] = lighting.local_spot_inner[static_cast<std::size_t>(i)];
     }
     for (int i = 0; i < 12; ++i) {
       std::memcpy(data.local_shadow_vp[i],
@@ -1631,6 +1641,10 @@ class D3D12Device final : public IDevice {
     }
     command_list_->EndQuery(timestamp_heap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, timestamp_cursor_);
     ++timestamp_cursor_;
+  }
+
+  [[nodiscard]] bool GpuTimestampAvailable() const override {
+    return timestamp_heap_ != nullptr && timestamp_freq_ > 0;
   }
 
   [[nodiscard]] std::vector<GpuPassTiming> LastGpuPassTimings() const override {
@@ -2452,8 +2466,8 @@ class D3D12Device final : public IDevice {
       float prev_view_proj[16];
       float jitter_x;
       float jitter_y;
-      float pad0;
-      float pad1;
+      float vignette_strength;
+      float film_grain_strength;
     } cb{};
     static_assert(sizeof(PostCB) <= 512, "post CB exceeds upload buffer");
     cb.inv_res[0] = 1.f / static_cast<float>((std::max)(1u, width_));
@@ -2494,6 +2508,8 @@ class D3D12Device final : public IDevice {
     std::memcpy(cb.prev_view_proj, desc.prev_view_proj.m.data(), sizeof(cb.prev_view_proj));
     cb.jitter_x = desc.jitter_x;
     cb.jitter_y = desc.jitter_y;
+    cb.vignette_strength = desc.vignette_strength;
+    cb.film_grain_strength = desc.film_grain_strength;
 
     void* mapped = nullptr;
     if (FAILED(post_cb_->Map(0, nullptr, &mapped))) {

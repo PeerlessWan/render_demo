@@ -1,5 +1,6 @@
 #include "engine/app/application.h"
 #include "engine/core/log.h"
+#include "engine/mixed/pick.h"
 #include "engine/render/environment.h"
 #include "engine/render/quality.h"
 #include "engine/render/render_system.h"
@@ -12,6 +13,9 @@
 
 #ifndef ENGINE_SHADER_DIR_A
 #error "ENGINE_SHADER_DIR_A must be set by CMake"
+#endif
+#ifndef ENGINE_SAMPLE_CONTENT_DIR
+#error "ENGINE_SAMPLE_CONTENT_DIR must be set by CMake"
 #endif
 
 namespace {
@@ -88,6 +92,37 @@ int main(int argc, char** argv) {
   }
   engine::render2d::SortSprites(sprites);
   engine::LogInfo("Sorted sprites count=" + std::to_string(sprites.size()));
+
+  // M16: load a tiny Tiled JSON (multi-layer + collision + tileset image binding).
+  {
+    const auto map_path =
+        std::filesystem::path(ENGINE_SAMPLE_CONTENT_DIR) / "tiny_map.json";
+    std::vector<engine::render2d::TilemapLayer> layers;
+    if (auto st = engine::render2d::LoadTiledJson(map_path, layers); !st) {
+      engine::LogError(st.message());
+      return 1;
+    }
+    engine::LogInfo("Tiled layers=" + std::to_string(layers.size()) +
+                    " tileset=" + (layers.empty() ? "" : layers.front().tileset_image));
+    std::vector<int> collision_gids;
+    int cw = 0;
+    int ch = 0;
+    if (engine::render2d::ExportCollisionGids(layers, collision_gids, cw, ch)) {
+      engine::LogInfo("Collision grid " + std::to_string(cw) + "x" + std::to_string(ch) +
+                      " cells=" + std::to_string(collision_gids.size()));
+    } else {
+      engine::LogError("expected collision layer in tiny_map.json");
+      return 1;
+    }
+  }
+
+  // M20: pixel multi-DPI integer scale (design 320x180).
+  constexpr int kDesignW = 320;
+  constexpr int kDesignH = 180;
+  const int iscale =
+      engine::mixed::IntegerScale(a.window().width(), a.window().height(), kDesignW, kDesignH);
+  engine::LogInfo("IntegerScale design=" + std::to_string(kDesignW) + "x" +
+                  std::to_string(kDesignH) + " → " + std::to_string(iscale) + "x");
 
   engine::render::Environment env;
   engine::render::RenderSystem render;
