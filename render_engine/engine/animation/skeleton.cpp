@@ -1,5 +1,7 @@
 #include "engine/animation/skeleton.h"
 
+#include "engine/core/feature.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -88,6 +90,29 @@ Vec3 SkinVertexCpu(const Vec3& pos, const SkinPose& pose, const int bones[4],
     out = out + pose.bone_matrices[static_cast<std::size_t>(b)].TransformPoint(pos) * weights[i];
   }
   return out;
+}
+
+bool GpuSkinningAvailable() {
+  // Default off until a CS PSO + skin buffer path ships; Feature override for host experiments.
+  return QueryFeature("gpu_skinning");
+}
+
+void SkinVerticesGpuDispatchStub(const std::vector<Vec3>& bind_positions, const SkinPose& pose,
+                                 const std::vector<int>& bones4, const std::vector<float>& weights4,
+                                 std::vector<Vec3>& out_positions) {
+  // Same contract as a future compute-skin dispatch writing out_positions.
+  out_positions.resize(bind_positions.size());
+  for (std::size_t i = 0; i < bind_positions.size(); ++i) {
+    int bones[4] = {0, 0, 0, 0};
+    float weights[4] = {1.f, 0.f, 0.f, 0.f};
+    if (bones4.size() >= (i + 1) * 4 && weights4.size() >= (i + 1) * 4) {
+      for (int k = 0; k < 4; ++k) {
+        bones[k] = bones4[i * 4 + static_cast<std::size_t>(k)];
+        weights[k] = weights4[i * 4 + static_cast<std::size_t>(k)];
+      }
+    }
+    out_positions[i] = SkinVertexCpu(bind_positions[i], pose, bones, weights);
+  }
 }
 
 void ApplyMorphTargets(const std::vector<Vec3>& bind_positions,

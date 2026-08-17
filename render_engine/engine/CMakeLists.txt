@@ -112,6 +112,7 @@ add_library(engine_rhi STATIC
   render/shadow_csm.cpp
   render/shadow_atlas.cpp
   render/local_lights.cpp
+  render/atmosphere.cpp
   render/quality.cpp
   render/ibl_pack.cpp
   render/instance_draw.cpp

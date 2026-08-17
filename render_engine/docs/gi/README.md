@@ -27,6 +27,8 @@
 
 | 符号 | 说明 |
 |---|---|
-| `gi::ProbeVolume` | `set_enabled` / `UpdateFromLights` / `Sample` |
+| `gi::ProbeVolume` | `set_enabled` / `UpdateFromLights` / `Sample` / W6 `RefineDensity` |
 | `gi::LoadLightmapRgba` / `SampleLightmap` / `MultiplyAlbedoByLightmap` | M8 运行时 bake 路径 |
 | `PbrMaterial::use_lightmap` | 材质标记（learn 15 示例） |
+
+边界见 [ADR 0033](../learn/adr/0033-m27-w6-scene-scale.md)。

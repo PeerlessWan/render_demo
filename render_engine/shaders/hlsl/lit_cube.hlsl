@@ -18,10 +18,10 @@ cbuffer FrameCB : register(b0) {
   float g_enable_ssao;
   float g_enable_taa;
   float g_local_count;
-  float4 g_local_pos_range[8];
-  float4 g_local_color_intensity[8];
-  float4 g_local_spot[8];        // xyz=dir, w=cosOuter (-1 = point/omni)
-  float4 g_local_spot_inner[2];  // cosInner for lights 0..7
+  float4 g_local_pos_range[16];
+  float4 g_local_color_intensity[16];
+  float4 g_local_spot[16];       // xyz=dir, w=cosOuter (-1 = point/omni)
+  float4 g_local_spot_inner[4];  // cosInner for lights 0..15
   float4x4 g_local_shadow_vp[12];
   float g_enable_local_shadow;
   float g_local_shadow_bias;
@@ -141,7 +141,7 @@ float SampleCascadeShadow(float3 world_pos, float3 world_n, int c) {
   float3 L = normalize(-g_sun_dir);
   float ndotl = saturate(dot(world_n, L));
   // Receiver-plane normal offset — vertical pillars otherwise acne/flicker.
-  float3 sample_pos = world_pos + world_n * (0.02 + (1.0 - ndotl) * 0.04);
+  float3 sample_pos = world_pos + world_n * (0.035 + (1.0 - ndotl) * 0.06);
 
   float4 lp = mul(g_cascade_vp[c], float4(sample_pos, 1.0f));
   float3 proj = lp.xyz / max(lp.w, 1e-5);
@@ -374,7 +374,7 @@ float4 PSMain(VSOutput input) : SV_Target {
   }
 
   int lc = (int)g_local_count;
-  [unroll] for (int i = 0; i < 8; ++i) {
+  [unroll] for (int i = 0; i < 16; ++i) {
     if (i >= lc) {
       break;
     }

@@ -13,8 +13,10 @@
 #include "engine/gi/reflection_probe.h"
 #include "engine/gi/scene_capture.h"
 #include "engine/gpu_driven/indirect_draw.h"
+#include "engine/render/atmosphere.h"
 #include "engine/render/ibl_pack.h"
 #include "engine/render/instance_draw.h"
+#include "engine/render/local_lights.h"
 #include "engine/render/occlusion.h"
 #include "engine/media/media.h"
 #include "engine/mixed/pick.h"
@@ -325,6 +327,8 @@ int main(int argc, char** argv) {
   env.fog_start = 14.f;
   env.fog_color = {0.55f, 0.62f, 0.78f, 1.f};
   env.exposure = 1.15f;
+  // C05 opt-in: tint fog/clear from EvalSkyColor(cam forward). Default off for golden parity.
+  env.enable_atmosphere = false;
 
   engine::render::RenderSystem render;
   engine::render::RenderSystemDesc rdesc;
@@ -543,6 +547,7 @@ int main(int argc, char** argv) {
       return 1;
     }
   }
+  std::vector<engine::render::LocalLight> sandbox_local_lights;
   {
     std::vector<engine::render::LocalLight> lights;
     // Keep local lights small/warm. A wide cool light washed the floor cyan wherever
@@ -556,6 +561,7 @@ int main(int argc, char** argv) {
     lamp.shadow_resolution = 512;
     lamp.cast_shadows = true;
     lights.push_back(lamp);
+    sandbox_local_lights = lights;
     render.set_local_lights(lights);
   }
 
@@ -1287,6 +1293,33 @@ int main(int argc, char** argv) {
       app_ref.set_ui_want_capture(false);
     }
     render.set_effect_tuning(fx);
+
+    // C05: optional atmosphere tint of fog / clear from analytical sky.
+    if (env.enable_atmosphere) {
+      engine::render::AtmosphereParams ap;
+      ap.sun_dir = env.sun_direction;
+      ap.turbidity = 2.5f;
+      const auto& cam = app_ref.camera();
+      const engine::Quat q = engine::Quat::FromEulerYxz(cam.yaw, cam.pitch, 0.f);
+      const engine::Vec3 fwd = q.Rotate(engine::Vec3{0.f, 0.f, -1.f});
+      const auto sky = engine::render::EvalSkyColor(ap, fwd);
+      env.fog_color = sky;
+      env.clear_color = {sky.r * 0.22f, sky.g * 0.25f, sky.b * 0.32f, 1.f};
+      fx.fog_color = {sky.r, sky.g, sky.b};
+      app_ref.set_clear_color(env.clear_color);
+      render.set_effect_tuning(fx);
+    }
+
+    // C02 optional: CPU Forward+ tile lists (8x4) for debug / future cluster path.
+    {
+      std::vector<std::vector<int>> tiles;
+      const float aspect_tile = dh > 0.f ? dw / dh : (16.f / 9.f);
+      engine::render::AssignLightsToTiles(sandbox_local_lights,
+                                          app_ref.camera().view_proj_matrix(aspect_tile),
+                                          engine::render::kLightTileGridW,
+                                          engine::render::kLightTileGridH, tiles);
+      (void)tiles;
+    }
 
     // M22 / W-gi-deepen: probe irradiance → ambient tint (additive over base;
     // IBL still applied in lit shader when enable_ibl). Does not replace sky/IBL/Lightmap.

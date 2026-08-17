@@ -1,9 +1,9 @@
 # Learn 19 — DXR 入门与降级（选修）
 
-> 在无窗口环境下探测 **ProbeDxrHardwareSupport + FeatureSet + CanRunDxrDemo + RtStatus::Resolve**，理解 M8/M25 光追能力的 **特性门控与降级策略**；本课不录制 AS/SBT 也不发射 rays（见 ADR 0030）。
+> 在无窗口环境下探测 **ProbeDxrHardwareSupport + FeatureSet + CanRunDxrDemo + RtStatus::Resolve**，并调用 W4 **stub dispatch contract**（`DxrShadowDemo` / `RunDxrFullscreenStub` / `TryEmptyTlasPrebuild`）；本课不录制完整 AS/SBT 也不真实发射 rays（见 ADR 0030）。
 
 **选修说明**：无 DXR 硬件须 **跑通降级**（日志 `SKIP` + exit 0），非报红。  
-**对齐里程碑**：M8 / M25 deepen。完整 AS/raygen **SKIP**，见 ADR 0030 / CH35。
+**对齐里程碑**：M8 / M25 / W4 deepen。完整 AS/raygen **SKIP**，见 ADR 0030 / CH35。
 
 ## 怎么跑
 
@@ -17,12 +17,15 @@ build\samples\learn\19_dxr_intro\Debug\sample_19_dxr_intro.exe
 ```text
 ProbeDxrHardwareSupport=true|false CanRunDxrDemo=true|false raytracing=... d3d12=...
 RtStatus=0|1|2|3
+DxrShadowDemo.would_run=true|false
+TryEmptyTlasPrebuild=Ok|Unavailable: ...
+RunDxrFullscreenStub=Ok|Unavailable: ...
 SKIP sample_19_dxr_intro (...)   # 无 DXR 时
 ```
 
 `RtStatus` 整数值对应 `RtStatus` 枚举序（0=Disabled …，以 `raytracing.h` 为准）。
 
-CMake target：**`sample_19_dxr_intro`**。无 shader、无 Application。
+CMake target：**`sample_19_dxr_intro`**。无 shader、无 Application；创建 CPU `CreateHeadlessDevice` 仅用于 stub API 契约。
 
 ## 知识点
 
@@ -32,10 +35,11 @@ CMake target：**`sample_19_dxr_intro`**。无 shader、无 Application。
 4. **allow_fallback=true**：无 HW RT 时走 Fallback 而非 Unavailable（本 demo 配置）。
 5. **cfg.enable = can_run**：只有门控通过才 enable RT；否则 Resolve 直接 Disabled。
 6. **EnsureSafe 产品路径**：Unavailable + 不允许 fallback → `Status::Fail`；本 sample 只 Resolve 日志。
-7. **DxrDemoConfig.max_bounces**：字段预留；当前 Resolve **不读取** bounces。
-8. **硬编码 D3D12**：`Resolve(Backend::D3D12, ...)`；Vulkan RT 在 Resolve 内也支持但未在本 main 测。
-9. **无窗口探测**：适合 CI 矩阵：有 RT 机器 vs 无 RT 机器都应 exit 0。
-10. **与 SSR 对比**：CH26 SSR 是光栅近似；DXR 是可选升级路径，需 Feature 门控。
+7. **W4 stub contract**：`DxrShadowDemo` 记录 WOULD run；`RunDxrFullscreenStub` 返回 Ok/Unavailable；`TryEmptyTlasPrebuild` 验证 empty TLAS prebuild 或清晰跳过。**≠ 已 DispatchRays**。
+8. **DxrDemoConfig.max_bounces**：字段预留；当前 Resolve **不读取** bounces。
+9. **硬编码 D3D12**：`Resolve(Backend::D3D12, ...)`；Vulkan RT 在 Resolve 内也支持但未在本 main 测。
+10. **无窗口探测**：适合 CI 矩阵：有 RT 机器 vs 无 RT 机器都应 exit 0。
+11. **与 SSR 对比**：CH26 SSR 是光栅近似；DXR 是可选升级路径，需 Feature 门控。
 
 ## 名词解释
 
@@ -50,6 +54,7 @@ CMake target：**`sample_19_dxr_intro`**。无 shader、无 Application。
 | **RtStatus** | Resolve 结果枚举。 |
 | **allow_fallback** | 无 RT 时允许光栅回退。 |
 | **raygen** | DXR 入口着色器；**本 demo SKIP**。 |
+| **stub dispatch contract** | W4：记录/返回 WOULD run，不发射 rays。 |
 | **Feature 门控** | 能力不满足时不静默启用 HW 路径。 |
 
 详见 [GLOSSARY.md](../../docs/learn/GLOSSARY.md) 中 BLAS/TLAS/SBT。
@@ -59,14 +64,15 @@ CMake target：**`sample_19_dxr_intro`**。无 shader、无 Application。
 ### main 流程
 
 ```text
-features = QueryFeatures()
-demo = { enable_reflections=true, enable_shadows=false, max_bounces=1 }
+features = QueryFeatures()  # after ProbeDxrHardwareSupport override
+demo = { enable_reflections=true, enable_shadows=true, max_bounces=1 }
 can_run = CanRunDxrDemo(features, demo)
 Log: CanRunDxrDemo, raytracing, d3d12
 
 cfg = { enable=can_run, allow_fallback=true }
 rt = Resolve(Backend::D3D12, features, cfg)
 Log: RtStatus=<int>
+DxrShadowDemo / TryEmptyTlasPrebuild / RunDxrFullscreenStub(headless device)
 return 0
 ```
 
@@ -77,7 +83,7 @@ if !features.raytracing || !features.d3d12 → false
 return demo.enable_reflections || demo.enable_shadows
 ```
 
-本 demo reflections=true → 若硬件支持则 can_run=true。
+本 demo reflections+shadows → 若硬件支持则 can_run=true。
 
 ### Resolve 决策树
 
@@ -92,9 +98,10 @@ else → Unavailable
 
 | 阶段 | 本 demo |
 |---|---|
-| BLAS/TLAS build | SKIP |
+| BLAS/TLAS build | empty-TLAS **prebuild query only**（可选） |
 | SBT 绑定 | SKIP |
 | raygen/miss/closesthit | SKIP |
+| DispatchRays | stub contract only |
 | Composite 到 swapchain | SKIP |
 
 ```mermaid
@@ -106,16 +113,17 @@ flowchart TD
   R --> S[Supported]
   R --> F[UnsupportedFallback]
   R --> U[Unavailable]
+  C --> Stub[DxrShadowDemo / RunDxrFullscreenStub]
 ```
 
 ## 代码地图
 
 | 符号 / 文件 | 说明 |
 |---|---|
-| `samples/learn/19_dxr_intro/main.cpp` | 探测与日志 |
+| `samples/learn/19_dxr_intro/main.cpp` | 探测、stub 与日志 |
 | `engine/rt/raytracing.h` | 类型与 API 声明 |
-| `engine/rt/raytracing.cpp` | `ProbeDxrHardwareSupport`、`CanRunDxrDemo`、`Resolve`、`EnsureSafe` |
-| ADR 0030 | M25 DXR demo 范围（门控优先） |
+| `engine/rt/raytracing.cpp` | Probe / CanRun / Resolve / DxrShadowDemo / stubs |
+| ADR 0030 | M25/W4 DXR demo 范围（门控 + stub contract） |
 | `engine/core/feature.h` | `FeatureSet`、`QueryFeatures()` |
 | `engine/rhi/backend.h` | `Backend::D3D12` |
 | CMake `sample_19_dxr_intro` | engine_rt + engine_core |
@@ -130,14 +138,16 @@ flowchart TD
 6. 阅读 `EnsureSafe` 与 `Resolve` 分工：何时产品应 Fail fast？
 7. 改 `Resolve(Backend::Vulkan, ...)` 做对比实验（需 Vulkan RT feature）。
 8. （口头）为何 CI 要求无 RT 机器 exit 0 而非 skip build？
+9. 对比 `RunDxrFullscreenStub=Ok` 与「画面已是光追」的差异（ADR 0030）。
 
 ## 常见坑
 
-- **以为有光追画面**：仅探测；AS/SBT/raygen 未实现于本 sample。
+- **以为有光追画面**：仅探测 + stub；AS/SBT/raygen 未实现于本 sample。
 - **无 RT 显卡 exit 非 0**：应 false + Fallback/Disabled + exit 0。
 - **误判 RtStatus 整数**：应对照枚举名，勿当 bool。
 - **max_bounces 无效**：配置预留；Resolve 不看。
 - **Vulkan 混淆**：main 硬编码 D3D12；Vulkan RT 需另写 sample 或改 backend 参数。
 - **enable=true 但 can_run=false**：cfg.enable 跟随 can_run；不会强行开 HW RT。
 - **把 Fallback 当 Supported**：UnsupportedFallback 仍是无 HW 路径，需光栅替代。
+- **把 stub Ok 当 DispatchRays**：W4 契约只记录 WOULD run。
 - **缺少 engine_rt 链接**：复制 sample 时 CMake 须链 `engine_rt`。

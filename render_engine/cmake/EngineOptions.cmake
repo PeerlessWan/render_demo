@@ -28,8 +28,9 @@ else()
 endif()
 option(ENGINE_WITH_HTTPLIB "HTTP(S) client via cpp-httplib" ${ENGINE_WITH_HTTPLIB_DEFAULT})
 
-# Optional OpenSSL for HTTPS (cpp-httplib). Off by default; enable when SDK present.
-# Hint: set OPENSSL_ROOT_DIR to the OpenSSL install prefix when CMake cannot find it.
+# Optional OpenSSL for HTTPS (cpp-httplib). Default ON when find_package succeeds.
+# Engine never installs OpenSSL — set OPENSSL_ROOT_DIR if CMake cannot find a system SDK.
+# Without OpenSSL, http_httplib returns clear HTTPS Unavailable (ENGINE_WITH_OPENSSL=0).
 find_package(OpenSSL QUIET)
 if(OpenSSL_FOUND)
   set(ENGINE_WITH_OPENSSL_DEFAULT ON)
@@ -93,6 +94,21 @@ if(ENGINE_WITH_VULKAN)
     message(FATAL_ERROR "ENGINE_WITH_VULKAN=ON but Vulkan headers not found (set VULKAN_SDK / ENGINE_VULKAN_SDK)")
   endif()
   message(STATUS "Vulkan enabled: ${ENGINE_VULKAN_SDK}")
+endif()
+
+# M18 / W5: opt-in flag documenting Linux Vulkan intent. Does not install SDKs or
+# implement X11; full Linux compile still needs platform/linux + surface work.
+option(ENGINE_LINUX_VK "Declare Linux+Vulkan (X11) build intent; see docs/LINUX.md" OFF)
+if(ENGINE_LINUX_VK)
+  message(STATUS "ENGINE_LINUX_VK=ON: Linux Vulkan path (docs/LINUX.md). "
+                 "platform/linux/ not implemented yet; Wayland later. "
+                 "Windows-only tree may not compile on Linux until D3D12/Win32 are gated.")
+  if(NOT UNIX OR APPLE)
+    message(STATUS "ENGINE_LINUX_VK: host is not Linux; flag is documentation/preview only")
+  endif()
+  if(NOT ENGINE_WITH_VULKAN)
+    message(WARNING "ENGINE_LINUX_VK=ON but ENGINE_WITH_VULKAN=OFF; enable Vulkan SDK for a real VK device")
+  endif()
 endif()
 
 if(MSVC)

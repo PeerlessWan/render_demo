@@ -141,16 +141,17 @@ struct FrameLighting {
   float reflection_intensity = 0.45f;
   bool enable_ibl = false;
   float ibl_intensity = 1.f;
-  // M26/C02: up to 8 local (point/spot) lights in FrameCB (CPU list may be larger).
+  // M26/C02: up to 16 local (point/spot) lights in FrameCB (CPU list may be larger).
   int local_light_count = 0;
-  std::array<Vec3, 8> local_pos{};
-  std::array<float, 8> local_range{};
-  std::array<ColorRgba, 8> local_color{};
-  std::array<float, 8> local_intensity{};
+  std::array<Vec3, 16> local_pos{};
+  std::array<float, 16> local_range{};
+  std::array<ColorRgba, 16> local_color{};
+  std::array<float, 16> local_intensity{};
   // Spot cone: xyz = world direction, w = cos(outer half-angle). Point/omni → w = -1.
-  std::array<Vec4, 8> local_spot{};
-  // cos(inner half-angle) for lights 0..7 (HLSL: float4[2]).
-  std::array<float, 8> local_spot_inner{-1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f};
+  std::array<Vec4, 16> local_spot{};
+  // cos(inner half-angle) for lights 0..15 (HLSL: float4[4]).
+  std::array<float, 16> local_spot_inner{-1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f,
+                                         -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f};
   // First casting local lights: cubemap face atlas (up to 2 lights × 6 faces = 12 tiles).
   // Spot lights reuse tile light_index*6 + 0 with a single perspective VP.
   Mat4 local_shadow_vp = Mat4::Identity();  // tile 0 compat (+X of light 0)

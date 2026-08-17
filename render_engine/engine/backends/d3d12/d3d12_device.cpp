@@ -1242,10 +1242,10 @@ class D3D12Device final : public IDevice {
       float enable_ssao;
       float enable_taa;
       float local_count;
-      float local_pos_range[8][4];
-      float local_color_intensity[8][4];
-      float local_spot[8][4];       // xyz=dir, w=cosOuter (-1 = point/omni)
-      float local_spot_inner[8];    // cosInner for lights 0..7
+      float local_pos_range[16][4];
+      float local_color_intensity[16][4];
+      float local_spot[16][4];       // xyz=dir, w=cosOuter (-1 = point/omni)
+      float local_spot_inner[16];    // cosInner for lights 0..15
       float local_shadow_vp[12][16];
       float enable_local_shadow;
       float local_shadow_bias;
@@ -1291,7 +1291,7 @@ class D3D12Device final : public IDevice {
     data.enable_ssao = lighting.enable_ssao ? 1.f : 0.f;
     data.enable_taa = lighting.enable_taa ? 1.f : 0.f;
     data.local_count = static_cast<float>(lighting.local_light_count);
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < 16; ++i) {
       data.local_pos_range[i][0] = lighting.local_pos[static_cast<std::size_t>(i)].x;
       data.local_pos_range[i][1] = lighting.local_pos[static_cast<std::size_t>(i)].y;
       data.local_pos_range[i][2] = lighting.local_pos[static_cast<std::size_t>(i)].z;

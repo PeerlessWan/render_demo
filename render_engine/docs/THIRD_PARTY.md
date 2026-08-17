@@ -56,7 +56,7 @@
 | **着色器编译** | **DirectXShaderCompiler (DXC)** | HLSL → DXIL；HLSL → SPIR-V（Vulkan） | Windows SDK / NuGet / 官方包；构建时调用 |
 | **Vulkan** | **Vulkan SDK**（LunarG） | Device/Swapchain/校验层 | M17+；Linux 必选 |
 | **视频硬解** | **D3D12VA**（Win+D3D12）；**Vulkan Video**（Win/Linux+Vulkan） | 与当前渲染 Device 绑定 | 跟随 RHI；**无软解、不跨 API** |
-| **HTTP(S)** | [cpp-httplib](https://github.com/yhirose/cpp-httplib) | HTTP 客户端（可兼调试服务端） | header-only；TLS 需系统 OpenSSL（`OPENSSL_ROOT_DIR` / `ENGINE_WITH_OPENSSL`）；见 ADR 0021 |
+| **HTTP(S)** | [cpp-httplib](https://github.com/yhirose/cpp-httplib) | HTTP 客户端（可兼调试服务端） | header-only；**HTTPS**：CMake `find_package(OpenSSL)` 成功且 `ENGINE_WITH_OPENSSL=ON` 时启用；未找到则 `Unavailable`（见 `http_httplib.cpp`）；**引擎不安装 OpenSSL**（可设 `OPENSSL_ROOT_DIR`）；见 ADR 0021 / 0031 |
 | **WebSocket** | [IXWebSocket](https://github.com/machinezone/IXWebSocket) | WS / WSS 客户端（可服务端） | 轻量、跨平台、少依赖 |
 | **QUIC** | [MsQuic](https://github.com/microsoft/msquic) | IETF QUIC **可靠流** | Win/Linux；可换 ngtcp2 栈须 ADR |
 
@@ -147,7 +147,7 @@
 | DXC | TBD | 随工具链 | 构建机 | 运行时不一定需要 |
 | D3D12MA | TBD | MIT | TBD | |
 | miniaudio | TBD | 可选许可 | 单文件 | |
-| cpp-httplib | header vendored (`third_party/cpp-httplib`) | MIT | 头文件 | 经 `IHttpClient`/`http_httplib`；HTTPS：系统 OpenSSL（`find_package` / `OPENSSL_ROOT_DIR`）；`ENGINE_WITH_OPENSSL`；未链则 Unavailable；Win 链 `ws2_32`/`crypt32` |
+| cpp-httplib | header vendored (`third_party/cpp-httplib`) | MIT | 头文件 | 经 `IHttpClient`/`http_httplib`；HTTPS：系统 OpenSSL 已可发现时 `ENGINE_WITH_OPENSSL` 链入并定义 `CPPHTTPLIB_OPENSSL_SUPPORT`；否则清晰 Unavailable（**不安装 OpenSSL**）；Win 链 `ws2_32`/`crypt32` |
 | dds-ktx | ~v1.1+ (`third_party/dds-ktx`) | BSD-2-Clause | 头文件 | 经 `ITextureLoader`；Sample 不直链 |
 | IXWebSocket | TBD | BSD | 静态/动态 | |
 | MsQuic | TBD | MIT | 通常动态 | **本波未捆绑**（ADR 0031 QUIC SKIP）；启用须另批 |

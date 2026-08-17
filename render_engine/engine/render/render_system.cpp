@@ -260,7 +260,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   lighting.local_shadow_tiles_per_row = 4;
   lighting.local_spot = {};
   lighting.local_spot_inner.fill(-1.f);
-  // M26/C02: accept up to 16 CPU lights; upload closest 8 (shadow casters preferred).
+  // M26/C02: accept up to 16 CPU lights; upload closest 16 (shadow casters preferred).
   struct RankedLight {
     LocalLight light;
     float dist2 = 0.f;

@@ -29,6 +29,25 @@ void ProbeVolume::Configure(const Vec3& origin, const Vec3& spacing, int nx, int
   }
 }
 
+void ProbeVolume::RefineDensity(int factor) {
+  factor = std::clamp(factor, 1, 4);
+  if (factor <= 1 || nx_ <= 0 || ny_ <= 0 || nz_ <= 0) {
+    return;
+  }
+  const Vec3 extent{spacing_.x * static_cast<float>(std::max(1, nx_ - 1)),
+                    spacing_.y * static_cast<float>(std::max(1, ny_ - 1)),
+                    spacing_.z * static_cast<float>(std::max(1, nz_ - 1))};
+  const int nnx = (nx_ - 1) * factor + 1;
+  const int nny = (ny_ - 1) * factor + 1;
+  const int nnz = (nz_ - 1) * factor + 1;
+  const Vec3 nsp{extent.x / static_cast<float>(std::max(1, nnx - 1)),
+                 extent.y / static_cast<float>(std::max(1, nny - 1)),
+                 extent.z / static_cast<float>(std::max(1, nnz - 1))};
+  Configure(origin_, nsp, nnx, nny, nnz);
+  // Denser grids need a higher refresh budget so irradiance converges in similar wall time.
+  set_budget_per_frame(budget_per_frame_ * factor * factor);
+}
+
 void ProbeVolume::set_budget_per_frame(int n) {
   budget_per_frame_ = std::max(1, n);
 }

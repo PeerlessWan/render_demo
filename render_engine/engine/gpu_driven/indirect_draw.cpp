@@ -79,6 +79,11 @@ std::uint32_t CullInstancesToIndirect(std::span<const Mat4> worlds, std::span<co
   return out_args.instance_count;
 }
 
+bool MeshletPathAvailable() {
+  // Default SKIP until meshlet/MS PSOs ship; Feature "meshlet" for host experiments.
+  return QueryFeature("meshlet");
+}
+
 std::vector<std::uint32_t> PackIndirectArgsU32(const IndirectDrawArgs& args) {
   return {args.index_count_per_instance, args.instance_count, args.start_index_location,
           static_cast<std::uint32_t>(args.base_vertex_location), args.start_instance_location};

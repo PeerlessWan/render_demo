@@ -12,6 +12,8 @@
 #include "engine/render2d/atlas.h"
 
 #include <cmath>
+#include <string>
+#include <vector>
 
 TEST_CASE("Occlusion IsVisible uses frustum placeholder", "[wave][occlusion]") {
   engine::render::OcclusionBuffer occ;
@@ -123,6 +125,10 @@ TEST_CASE("D3D12VA stub Open is Unavailable diagnostic", "[m7][media]") {
   REQUIRE(st.message().find("D3D12VA") != std::string::npos);
   REQUIRE(st.message().find("stub") != std::string::npos ||
           st.message().find("Unavailable") != std::string::npos);
+  REQUIRE(st.message().find("ID3D12VideoDevice") != std::string::npos);
+  REQUIRE(st.message().find("checklist") != std::string::npos ||
+          st.message().find("Checklist") != std::string::npos ||
+          st.message().find("Enable later") != std::string::npos);
 }
 
 TEST_CASE("Upscaler create and pass-through", "[wave][media]") {
@@ -155,6 +161,27 @@ TEST_CASE("Upscaler resolution-scale and jitter", "[wave][media][m7]") {
   p.jitter_y = -0.05f;
   REQUIRE(upscaler->Upscale(src, 4, 4, dst, 8, 8, p));
   REQUIRE(dst.size() == 8 * 8 * 4);
+}
+
+TEST_CASE("ResolutionScale 0.5 halves dims and Upscale succeeds", "[wave][media][w4]") {
+  constexpr int display_w = 1280;
+  constexpr int display_h = 720;
+  int rw = 0;
+  int rh = 0;
+  engine::media::ResolutionScale::ComputeRenderSize(display_w, display_h, 0.5f, rw, rh);
+  REQUIRE(rw == display_w / 2);
+  REQUIRE(rh == display_h / 2);
+
+  auto upscaler = engine::media::CreateUpscaler();
+  REQUIRE(upscaler);
+  REQUIRE(std::string(upscaler->name()) == "builtin_bilinear");
+  std::vector<std::uint8_t> src(static_cast<std::size_t>(rw * rh * 4), 128);
+  std::vector<std::uint8_t> dst;
+  engine::media::UpscaleParams p;
+  p.jitter_x = 0.02f;
+  p.jitter_y = -0.01f;
+  REQUIRE(upscaler->Upscale(src, rw, rh, dst, display_w, display_h, p));
+  REQUIRE(dst.size() == static_cast<std::size_t>(display_w * display_h * 4));
 }
 
 TEST_CASE("ProbeFaceViewProj produces finite matrix", "[wave][gi]") {

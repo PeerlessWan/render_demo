@@ -1,6 +1,7 @@
 #include "engine/animation/state_machine.h"
 
 #include <algorithm>
+#include <span>
 
 namespace engine::animation {
 
@@ -106,6 +107,44 @@ SkinPose AnimationStateMachine::Sample(const Skeleton& skel) const {
     return empty;
   }
   return SampleClip(skel, cur->clip, state_time_);
+}
+
+SkinPose AnimationStateMachine::SampleBlend(const Skeleton& skel,
+                                            std::span<const BlendLayer> layers) const {
+  SkinPose out;
+  out.bone_matrices.assign(skel.joints.size(), Mat4::Identity());
+  for (auto& m : out.bone_matrices) {
+    m.m.fill(0.f);
+  }
+  float wsum = 0.f;
+  for (const auto& layer : layers) {
+    if (layer.weight <= 0.f) {
+      continue;
+    }
+    const AnimState* st = FindState(layer.state);
+    if (!st) {
+      continue;
+    }
+    const SkinPose pose = SampleClip(skel, st->clip, layer.time);
+    const float w = layer.weight;
+    wsum += w;
+    for (std::size_t i = 0; i < out.bone_matrices.size() && i < pose.bone_matrices.size(); ++i) {
+      for (int k = 0; k < 16; ++k) {
+        out.bone_matrices[i].m[k] += pose.bone_matrices[i].m[k] * w;
+      }
+    }
+  }
+  if (wsum <= 1e-6f) {
+    out.bone_matrices.assign(skel.joints.size(), Mat4::Identity());
+    return out;
+  }
+  const float inv = 1.f / wsum;
+  for (auto& m : out.bone_matrices) {
+    for (int k = 0; k < 16; ++k) {
+      m.m[k] *= inv;
+    }
+  }
+  return out;
 }
 
 }  // namespace engine::animation

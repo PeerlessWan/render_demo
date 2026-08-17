@@ -127,4 +127,4 @@ sample_sandbox.exe --backend=vulkan
 | `samples/Sandbox/main.cpp` / `sandbox_ui_strings.h` | Sample + i18n |
 | `tests/scripts/run_backend_parity.py` | C4 |
 
-Linux 见 [LINUX_VULKAN.md](LINUX_VULKAN.md)。测试见 [TESTING.md](TESTING.md)。
+Linux 见 [LINUX.md](LINUX.md)。测试见 [TESTING.md](TESTING.md)。

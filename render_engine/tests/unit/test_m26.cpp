@@ -4,17 +4,68 @@
 #include "engine/assets/shader_hot_reload.h"
 #include "engine/core/feature.h"
 #include "engine/gpu_driven/path.h"
+#include "engine/render/atmosphere.h"
 #include "engine/render/local_lights.h"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 
 TEST_CASE("Local light capacity constants", "[m26][c02]") {
-  static_assert(engine::render::kMaxLocalLightsGpu == 8);
+  static_assert(engine::render::kMaxLocalLightsGpu == 16);
   static_assert(engine::render::kMaxLocalLightsCpu == 16);
   static_assert(engine::render::kMaxLocalLightsGpu > 4);
   static_assert(engine::render::kMaxLocalShadowLights == 2);
-  REQUIRE(engine::render::kMaxLocalLightsGpu == 8);
+  static_assert(engine::render::kLightTileCount == 32);
+  REQUIRE(engine::render::kMaxLocalLightsGpu == 16);
+}
+
+TEST_CASE("AssignLightsToTiles bins by projected position", "[m26][c02]") {
+  std::vector<engine::render::LocalLight> lights(2);
+  lights[0].position = {-2.f, 0.f, -5.f};
+  lights[1].position = {2.f, 0.f, -5.f};
+  const engine::Mat4 view = engine::Mat4::LookAt({0, 0, 0}, {0, 0, -1}, {0, 1, 0});
+  const engine::Mat4 proj = engine::Mat4::Perspective(1.047f, 2.f, 0.1f, 100.f);
+  const engine::Mat4 vp = proj * view;
+  std::vector<std::vector<int>> tiles;
+  engine::render::AssignLightsToTiles(lights, vp, engine::render::kLightTileGridW,
+                                      engine::render::kLightTileGridH, tiles);
+  REQUIRE(tiles.size() == static_cast<std::size_t>(engine::render::kLightTileCount));
+  int total = 0;
+  int left = -1;
+  int right = -1;
+  for (int t = 0; t < engine::render::kLightTileCount; ++t) {
+    for (int idx : tiles[static_cast<std::size_t>(t)]) {
+      ++total;
+      if (idx == 0) {
+        left = t;
+      }
+      if (idx == 1) {
+        right = t;
+      }
+    }
+  }
+  REQUIRE(total == 2);
+  REQUIRE(left >= 0);
+  REQUIRE(right >= 0);
+  REQUIRE(left != right);
+  // Left light should land in a lower X tile index within its row.
+  REQUIRE((left % engine::render::kLightTileGridW) < (right % engine::render::kLightTileGridW));
+}
+
+TEST_CASE("EvalSkyColor finite and brighter toward sun", "[m26][c05]") {
+  engine::render::AtmosphereParams p;
+  p.sun_dir = {0.f, 1.f, 0.f};
+  p.turbidity = 2.f;
+  const auto toward = engine::render::EvalSkyColor(p, {0.f, 1.f, 0.f});
+  const auto away = engine::render::EvalSkyColor(p, {0.f, 0.f, 1.f});
+  REQUIRE(std::isfinite(toward.r));
+  REQUIRE(std::isfinite(toward.g));
+  REQUIRE(std::isfinite(toward.b));
+  REQUIRE(std::isfinite(away.r));
+  const float toward_lum = toward.r + toward.g + toward.b;
+  const float away_lum = away.r + away.g + away.b;
+  REQUIRE(toward_lum > away_lum);
 }
 
 TEST_CASE("AnimationStateMachine samples clip and transitions", "[m26][c10]") {

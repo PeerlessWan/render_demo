@@ -6,6 +6,28 @@
 
 namespace engine::render {
 
+void AssignLightsToTiles(const std::vector<LocalLight>& lights, const Mat4& view_proj,
+                         int grid_w, int grid_h,
+                         std::vector<std::vector<int>>& out_tiles) {
+  const int gw = std::max(grid_w, 1);
+  const int gh = std::max(grid_h, 1);
+  const int tile_count = gw * gh;
+  out_tiles.assign(static_cast<std::size_t>(tile_count), {});
+  for (std::size_t i = 0; i < lights.size(); ++i) {
+    const Vec3 ndc = view_proj.TransformPoint(lights[i].position);
+    // Behind / degenerate: skip (not expanded by range — simple center bin).
+    if (!std::isfinite(ndc.x) || !std::isfinite(ndc.y) || !std::isfinite(ndc.z)) {
+      continue;
+    }
+    // NDC xy in [-1,1] → tile; clamp so near-edge lights still land in a cell.
+    const float u = std::clamp(ndc.x * 0.5f + 0.5f, 0.f, 0.999f);
+    const float v = std::clamp(ndc.y * 0.5f + 0.5f, 0.f, 0.999f);
+    const int tx = std::min(static_cast<int>(u * static_cast<float>(gw)), gw - 1);
+    const int ty = std::min(static_cast<int>(v * static_cast<float>(gh)), gh - 1);
+    out_tiles[static_cast<std::size_t>(ty * gw + tx)].push_back(static_cast<int>(i));
+  }
+}
+
 void LocalLightShadowScheduler::Clear() {
   lights_.clear();
   slots_.clear();

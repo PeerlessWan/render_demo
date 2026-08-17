@@ -13,8 +13,13 @@ namespace engine::render {
 
 // M26 / C02: CPU list may hold more; FrameCB uploads ≤ kMaxLocalLightsGpu.
 inline constexpr int kMaxLocalLightsCpu = 16;
-inline constexpr int kMaxLocalLightsGpu = 8;
+inline constexpr int kMaxLocalLightsGpu = 16;
 inline constexpr int kMaxLocalShadowLights = 2;  // Shadow Atlas cubemap/spot slots
+
+// Coarse screen-tile grid for AssignLightsToTiles (Forward+ style CPU lists).
+inline constexpr int kLightTileGridW = 8;
+inline constexpr int kLightTileGridH = 4;
+inline constexpr int kLightTileCount = kLightTileGridW * kLightTileGridH;
 
 struct LocalLight {
   int id = 0;
@@ -34,6 +39,13 @@ struct LocalLight {
 [[nodiscard]] inline bool IsSpotLight(const LocalLight& light) {
   return light.spot_angle_deg < 179.f;
 }
+
+// Forward+ tile list (CPU): bin light indices into a coarse screen grid by projecting
+// each light's world position with view_proj. Not a full GPU clustered-lighting path —
+// intended for unit tests and optional Sandbox / debug tooling.
+void AssignLightsToTiles(const std::vector<LocalLight>& lights, const Mat4& view_proj,
+                         int grid_w, int grid_h,
+                         std::vector<std::vector<int>>& out_tiles);
 
 // Packs local-light shadow maps into ShadowAtlas (CPU schedule; GPU cube/2D writes later).
 class LocalLightShadowScheduler {

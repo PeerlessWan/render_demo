@@ -322,6 +322,37 @@ TEST_CASE("CanRunDxrDemo requires raytracing feature", "[m25][m8]") {
   REQUIRE_FALSE(engine::rt::CanRunDxrDemo(features, demo));
 }
 
+TEST_CASE("DxrShadowDemo and RunDxrFullscreenStub contract", "[m25][w4][dxr]") {
+  engine::ClearFeatureOverrides();
+  engine::rt::DxrDemoConfig demo;
+  demo.enable_shadows = true;
+  auto features = engine::QueryFeatures();
+  features.d3d12 = true;
+  features.raytracing = false;
+  REQUIRE_FALSE(engine::rt::DxrShadowDemo(features, demo).would_run);
+
+  features.raytracing = true;
+  REQUIRE(engine::rt::DxrShadowDemo(features, demo).would_run);
+  demo.enable_shadows = false;
+  REQUIRE_FALSE(engine::rt::DxrShadowDemo(features, demo).would_run);
+
+  engine::rhi::DeviceDesc ddesc;
+  ddesc.headless = true;
+  ddesc.width = 16;
+  ddesc.height = 16;
+  auto device = engine::rhi::CreateHeadlessDevice(ddesc);
+  REQUIRE(device);
+  engine::SetFeatureOverride("raytracing", false);
+  auto stub_off = engine::rt::RunDxrFullscreenStub(*device.value());
+  REQUIRE_FALSE(stub_off);
+  REQUIRE(stub_off.code() == engine::ErrorCode::Unavailable);
+
+  engine::SetFeatureOverride("raytracing", true);
+  auto stub_on = engine::rt::RunDxrFullscreenStub(*device.value());
+  REQUIRE(stub_on);
+  engine::ClearFeatureOverrides();
+}
+
 TEST_CASE("Lightmap load and sample from content", "[m8][gi]") {
   const auto path =
       std::filesystem::path(ENGINE_CONTENT_DIR_A) / "ibl" / "lightmap.rgba";

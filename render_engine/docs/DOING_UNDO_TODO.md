@@ -2,33 +2,30 @@
 
 > 与 [PLAN.md](PLAN.md) 里程碑进度表互补：本文件跟踪**当前迭代**的进行中项、待办队列与回退方式。
 
-## 封板（Engine freeze）
+## 解封（Engine reopen · M27+）
 
 | 项 | 值 |
 |---|---|
-| **状态** | **暂时封板** — 主线不再开新功能波 |
-| **基线 tip** | `1700a71`（Deepen engine to Win 100% polish…） |
-| **口径** | Win D3D12+Vulkan 100% + W0–W3 加深；见 [VULKAN_PARITY.md](VULKAN_PARITY.md) |
-| **例外** | 仅修阻断性回归 / 安全；画质债与口径外项进下方 Todo，**不主动开工** |
-| **产品轨** | `game_kit` / `editor` 与引擎解耦，可在封板期间并行 |
+| **状态** | **W4→W5→W6 已收口**（画质 → 平台/媒体 → 场景规模） |
+| **封板基线** | `1700a71`（可回退） |
+| **边界** | **不动** `editor/` / `game_kit/` / `games/` |
+| **口径** | Win D3D12+Vulkan 为主；见 [ADR 0033](learn/adr/0033-m27-w6-scene-scale.md) |
 
 ---
 
-## 主线水位（封板快照）
+## 主线水位
 
 | 层 | 状态 |
 |---|---|
-| **W-win-dual-100** | **已收口（本口径）** |
-| **W0 Win polish** | **已收口**：CSM Poisson/tile clamp/法线 bias；QualityTier 拉开 atlas/距离/植被/DoF |
-| **W1 里程碑加深** | **已收口**：spot、Character 胶囊、glTF skin、Profiler/Lightmap、DXR 门控、Tiled、地形水草 |
-| **W1b** | **已收口**：Trail、分辨率超分、HTTPS 提示、QUIC ADR SKIP、Retained HUD；RmlUi 外置口径 |
-| **W2** | **已收口**：Tilemap→Sprite、SkeletonClip2D、Probe+Lightmap 共存 |
-| **W3 / M26** | **已收口**：ADR 0032；C01 Forward+、C02 8 灯、C10 状态机、C08 MeshShader SKIP、C04 vignette/grain、C16 热重载 Poll、C20 content_lint |
+| **W0–W3** | **已收口**（封板快照） |
+| **W4 画质债** | **已收口**：CSM 柱影、内置超分、DXR stub、C02 集群灯、C05 大气起步 |
+| **W5 平台/媒体** | **已收口**：LINUX.md / HTTPS 说明 / VA stub；QUIC 维持 ADR 0031 SKIP |
+| **W6 场景规模** | **已收口**：GI 加密、水面、混合树、GPU 蒙皮 stub、Meshlet 门控、热重载 PSO 请求 |
 
 ```text
-封板基线：1700a71
-口径说明：docs/VULKAN_PARITY.md（不含 Linux/大气/editor/game_kit）
-解封条件：明确下令开新波（如 Linux / 大气 / 柱影再修 / DXR 真示范）
+当前波：W4–W6 收口（M27+）
+禁止：editor / game_kit / games
+验收：engine_unit_tests（含 test_m27）+ ci_headless.ps1 -Golden
 ```
 
 ---
@@ -38,8 +35,7 @@
 - **不扩** Harness 命令、不扩 MCP、CI 不依赖 MCP
 - **不静默安装** 系统 OpenSSL / MsQuic
 - C4：默认 ROI；超阈 `[REGRESSION-NOTED]`；`-StrictParity` / `--strict` 才 FAIL
-- 大气 / Linux：**本口径外**，仍排队
-- **封板期间不要动 `render_engine/` 主线**（除非阻断回归）；`editor/` / `game_kit` 可并行
+- **不要动 `editor/` / `game_kit/`**
 
 验收总闸：`ci_headless.ps1 -Golden`（可选 `-StrictParity`）
 
@@ -47,33 +43,29 @@
 
 ## Doing
 
-（空 — **引擎暂时封板**）
+| ID | 项 |
+|---|---|
+| — | （无进行中加深波；下一批另开） |
 
 ---
 
-## Todo（解封后再排）
+## Todo
 
 | 优先级 | ID | 项 | 备注 |
 |---|---|---|---|
-| 闸门 | T-https-openssl-on | 授权装 SDK 后 HTTPS loopback | 现 SKIP；不静默装 OpenSSL |
-| P2 | T-csm-pillar-shimmer | CSM 柱面主观残留（可选再录盘） | W0 已落地 Poisson 等；见笔记 |
-| P3 | T-q4-warp / Linux | WARP / M18 | 口径外 |
-| P3 | T-c05-atmosphere | 大气 / 体积云 | C05；口径外 |
-| P3 | T-quic-msquic | MsQuic 捆绑（需另批） | ADR 0031 SKIP |
-| 后置 | C03/C06/C07/C09/C11/G13… | §4 未开项 | 见 KNOWN_GAPS |
+| 闸门 | T-https-openssl-on | 有 OpenSSL 才启用 HTTPS | 不静默安装 |
+| 后置 | C06/C07/C17/C18 | VT / HLOD / 多窗 / XR | 本轮不排 |
+| 后置 | C03/C14/G13 | IES / 世界字 / 矢量 | 中低优先 |
 
 ### Deferred 笔记 · `T-csm-pillar-shimmer`
 
-- **现象**：绿柱垂面互投阴影；`captures/sandbox_20260815_170746` 曾见成对 ΔL ≈ ±5～8。
-- **W0 已落地**：origin texel-snap、半径 0.5 量子、cascade overlap、log 偏置 0.75、Poisson PCF、tile clamp、法线/斜率 bias、宽 cascade blend。
-- **验证**：`captures/_analyze_dump.py` + 可选绿 mask 脚本；只开 Shadows 再 F5。
+- W0 snap/Poisson + W4 近 cascade / 接收平面 bias；绿 mask 验收可按需复录。
 
-### 产品轨（不进引擎封板范围）
+### 产品轨（本波不做）
 
-| 优先级 | ID | 项 | 备注 |
-|---|---|---|---|
-| 产品 P0 | W-game-kit | GK0–GK3 | **仅文档**；下令后再开工 |
-| 产品 P1 | W-prefab | GK4 Prefab + Manifest | |
+| ID | 项 |
+|---|---|
+| W-game-kit / editor | 放一边 |
 
 ---
 
@@ -81,7 +73,7 @@
 
 | 标签 | 值 |
 |---|---|
-| 封板基线 | `1700a71`；验证 `ci_headless.ps1 -Golden` |
+| 解封前基线 | `1700a71` / 封板 `284a336` |
 
 ---
 
@@ -89,8 +81,9 @@
 
 | 项 | 说明 |
 |---|---|
-| **Engine 封板** | 主线冻结于加深波收口 tip |
-| **Engine 100% 加深 W0–W3** | 见上方主线水位 |
-| **W-win-dual-100** | 既有双后端口径 |
-| **ADR 0030–0032** | DXR 范围 / QUIC SKIP / M26 Forward+ |
-| **content_lint** | C20 Manifest CLI |
+| **W4** | CSM / 超分 / DXR stub / C02≤16 / C05 EvalSkyColor |
+| **W5** | LINUX.md · HTTPS 文档 · VA stub · QUIC SKIP |
+| **W6** | RefineDensity · AnimateWater · SampleBlend · GpuSkin stub · Meshlet 门控 · PSO rebuild 请求；ADR 0033 |
+| **Engine 封板→解封** | M27+ 加深完成一轮 |
+| **W0–W3** | 100% 加深收口 |
+| **ADR 0030–0033** | DXR / QUIC / M26 / W6 |

@@ -56,6 +56,9 @@ bool ShaderHotReload::Poll() {
     primed_ = true;
     return false;
   }
+  if (changed) {
+    needs_pso_rebuild_ = true;
+  }
   return changed;
 }
 

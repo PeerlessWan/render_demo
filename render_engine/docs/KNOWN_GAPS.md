@@ -20,10 +20,10 @@
 |---|---|---|---|
 | G01 | 跨后端（VK） | **Win 双后端 100% 收口**（见 [VULKAN_PARITY.md](VULKAN_PARITY.md)）：全栈 post、GPU 实例/Cull/Indirect、探针/IBL 分槽；Linux 仍外置 | M17 |
 | G18 | Mesh Shader / GPU Driven | **Cull/Indirect 两端可用**；Bindless 热路径 Feature `bindless_hot_path`（默认 OFF 保黄金图）；VK bindless SKIP | M24 |
-| G19 | Linux | **文档占位 / 外置** | M18 |
+| G19 | Linux | **文档+构建说明加深**（[LINUX.md](LINUX.md)、`ENGINE_LINUX_VK`）；X11 窗口/运行时冒烟视 CI | M18 |
 | G02–G04、G11 | 混合打磨 / 拣选 / 多 DPI | **可用加深** | M20 |
 | G05–G10、G12 | 2D 深度 | **已加深**：chunk→Sprite 展开；SkeletonClip2D；雾 tint / BMFont JSON / 震屏 | M21 |
-| G14 | 动态 GI | **已加深**：ProbeVolume + Lightmap **共存**（F1 独立开关；非 DDGI）；见 [gi/README.md](gi/README.md) | M22 |
+| G14 | 动态 GI | **已加深**：ProbeVolume + Lightmap 共存；W6 `RefineDensity` 加密网格（非 DDGI）；见 [gi/README.md](gi/README.md)、[ADR 0033](learn/adr/0033-m27-w6-scene-scale.md) | M22 / W6 |
 | G15 | 地形/水体/植被（基础） | **可用加深** | M23 |
 | G16 | 光追 API 对齐 | **完成（加深）** Feature 门控 | M25（内容管线仍非 UE 级） |
 | T01 | 最小工具链（shader/IBL/纹理/cook/黄金图） | 已排期 | M2–M9；见 [TOOLING.md](TOOLING.md) |
@@ -53,10 +53,10 @@
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
 | C01 | 产品级 Deferred / Forward+ 路径钉死 | **已落地（M26）**：Forward+ 钉死 + Pass 名冻结；见 [FORWARD_PLUS.md](FORWARD_PLUS.md)、[ADR 0032](learn/adr/0032-m26-forward-plus-cluster.md) | 高（影响扩展方式） |
-| C02 | 集群 / 分块多灯光 | **部分落地（M26）**：CPU≤16 / FrameCB≤8 / Atlas 阴影≤2；真集群剔除后置 | 高 |
+| C02 | 集群 / 分块多灯光 | **部分落地（M26/W4）**：CPU≤16 / FrameCB≤16 / Atlas 阴影≤2；CPU `AssignLightsToTiles`（8×4 Forward+ 列表，非完整 GPU 集群） | 高 |
 | C03 | IES / Light Function | 灯光分布与投影函数 | 中 |
 | C04 | 更细电影级镜头后处理 | **部分落地（M26）**：vignette + film grain（PostCB / EffectTuning，默认 0）；色散等后置 | 低 |
-| C05 | 大气 / 体积云 / 天气降水 | 超出「体积雾」的环境表现 | 中 |
+| C05 | 大气 / 体积云 / 天气降水 | **部分落地（W4）**：CPU `EvalSkyColor` 解析单次散射 + 可选 `enable_atmosphere` 染雾/清屏；体积云/降水后置 | 中 |
 
 ### 4.2 几何与开放世界加深
 
@@ -64,16 +64,16 @@
 |---|---|---|---|
 | C06 | Virtual Texture 产品化 | 与「无 VT 全家桶」缺陷对应的加深项 | 中（成本高） |
 | C07 | HLOD / Impostor | 超大场景层级；现有仅 LOD/实例 | 中 |
-| C08 | Meshlet / 更完整 GPU 几何管线 | **部分落地（M26）**：`Path::MeshShader` Feature SKIP；Indirect + `CullInstancesToIndirect` 加深注释/预留 | 中 |
-| C09 | FFT / 高级水面 | M23 水体仅为基础 | 低 |
+| C08 | Meshlet / 更完整 GPU 几何管线 | **部分落地（M26/W6）**：`Path::MeshShader` + `MeshletPathAvailable`（Feature `meshlet`）门控 SKIP；Indirect Cull 保留 | 中 |
+| C09 | FFT / 高级水面 | **部分落地（W6）**：`AnimateWaterPatch` Gerstner 式高度/法线；完整 FFT 海洋后置 | 低 |
 
 ### 4.3 动画与角色
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C10 | 动画混合树 / 状态机 | **部分落地（M26）**：最小 `AnimationStateMachine`（states/transitions/Sample）；混合树后置 | 高（上层常自建） |
+| C10 | 动画混合树 / 状态机 | **部分落地（M26/W6）**：`AnimationStateMachine` + `SampleBlend` 多 clip 权重；完整混合树图后置 | 高（上层常自建） |
 | C11 | IK | 足部/瞄准等 | 中 |
-| C12 | GPU 蒙皮产品化打磨 | 蒙皮已有；算力路径可加深 | 低 |
+| C12 | GPU 蒙皮产品化打磨 | **部分落地（W6）**：`GpuSkinningAvailable` + `SkinVerticesGpuDispatchStub`（Feature `gpu_skinning`）；真 CS PSO 后置 | 低 |
 
 ### 4.3b 物理加深
 
@@ -94,7 +94,7 @@
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C16 | 资源热更 / 着色器热重载 | **部分落地（M26）**：`ShaderHotReload::Poll` mtime 探测；全量 PSO 重建可选 | 中 |
+| C16 | 资源热更 / 着色器热重载 | **部分落地（M26/W6）**：`ShaderHotReload::Poll` + `NeedsPsoRebuild` / `ConsumePsoRebuildRequest`；宿主负责重建 PSO | 中 |
 | C17 | 多窗口 / 多 GPU | 特殊部署 | 低 |
 | C18 | 立体 / XR 渲染 | 输入层可预留适配器；渲染未排期 | 低（易扩范围） |
 

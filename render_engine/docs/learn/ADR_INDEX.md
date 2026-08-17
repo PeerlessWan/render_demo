@@ -45,6 +45,7 @@ ADR 记录 **为什么这样设计**，是学习封装的核心（比 API 列表
 | 0030 | M25 DXR demo 范围：Feature 门控优先，非完整光追帧 | [0030-…](adr/0030-m25-dxr-demo-scope.md) | CH19 | Accepted |
 | 0031 | M19 QUIC SKIP：本波不捆绑 MsQuic | [0031-…](adr/0031-m19-quic-skip-msquic.md) | CH31 | Accepted |
 | 0032 | M26/P3：Forward+ 钉死与 C01/C02/C10/C08/C04/C16/C20 加深簇 | [0032-…](adr/0032-m26-forward-plus-cluster.md) | — | Accepted |
+| 0033 | M27/W6 场景规模加深边界（GI/水面/混合/GPU 蒙皮 stub/Meshlet/PSO 热更） | [0033-…](adr/0033-m27-w6-scene-scale.md) | — | Accepted |
 
 ## 模板
 

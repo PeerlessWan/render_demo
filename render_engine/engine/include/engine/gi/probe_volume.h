@@ -26,6 +26,10 @@ class ProbeVolume {
   void set_enabled(bool on) { enabled_ = on; }
   [[nodiscard]] bool enabled() const { return enabled_; }
 
+  // W6: denser grid by subdividing each cell (keeps volume extents; rebuilds probes).
+  // factor=2 → ~8× probes (2³). Clamped to [1,4].
+  void RefineDensity(int factor);
+
   // Max probes refreshed per UpdateFromLights call (frame budget).
   void set_budget_per_frame(int n);
   [[nodiscard]] int budget_per_frame() const { return budget_per_frame_; }

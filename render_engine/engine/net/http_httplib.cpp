@@ -71,8 +71,8 @@ Status DoRequest(std::string_view url, bool is_post, std::string_view body, Http
 #ifndef CPPHTTPLIB_OPENSSL_SUPPORT
   if (parsed.is_https) {
     out.error =
-        "HTTPS Unavailable: OpenSSL not linked. Configure with ENGINE_WITH_OPENSSL=ON and "
-        "OPENSSL_ROOT_DIR pointing at a system OpenSSL SDK (engine does not install OpenSSL).";
+        "HTTPS Unavailable: OpenSSL not linked. Set ENGINE_WITH_OPENSSL=ON when CMake finds "
+        "system OpenSSL (optional OPENSSL_ROOT_DIR). Engine does not install OpenSSL.";
     return Status::Fail(ErrorCode::Unavailable, out.error);
   }
 #endif
@@ -107,8 +107,8 @@ Status DoRequest(std::string_view url, bool is_post, std::string_view body, Http
     // HTTPS without OpenSSL throws invalid_argument from Client ctor.
     if (parsed.is_https) {
       out.error =
-          "HTTPS Unavailable: OpenSSL not linked. Set OPENSSL_ROOT_DIR + ENGINE_WITH_OPENSSL=ON "
-          "(engine does not install OpenSSL). Detail: " +
+          "HTTPS Unavailable: OpenSSL not linked. Set ENGINE_WITH_OPENSSL=ON when OpenSSL is "
+          "findable (optional OPENSSL_ROOT_DIR); engine does not install OpenSSL. Detail: " +
           std::string(ex.what());
       return Status::Fail(ErrorCode::Unavailable, out.error);
     }

@@ -2,7 +2,9 @@
 
 #include "engine/animation/skeleton.h"
 
+#include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -24,7 +26,13 @@ struct AnimTransition {
   std::string trigger;
 };
 
-// Minimal state machine wrapping SampleClip (M26 / C10). No blend tree.
+struct BlendLayer {
+  std::string state;
+  float weight = 1.f;
+  float time = 0.f;
+};
+
+// Minimal state machine wrapping SampleClip (M26 / C10). W6 adds multi-clip blend.
 class AnimationStateMachine {
  public:
   void AddState(AnimState state);
@@ -35,6 +43,9 @@ class AnimationStateMachine {
 
   void Update(float dt);
   [[nodiscard]] SkinPose Sample(const Skeleton& skel) const;
+
+  // W6/C10: weighted blend of multiple named states (weights renormalized; missing → skip).
+  [[nodiscard]] SkinPose SampleBlend(const Skeleton& skel, std::span<const BlendLayer> layers) const;
 
   [[nodiscard]] const std::string& current_state() const { return current_; }
   [[nodiscard]] float state_time() const { return state_time_; }

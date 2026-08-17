@@ -9,13 +9,15 @@
 
 namespace engine::media {
 
-// Optional sample-UV offset (NDC-style). Sandbox/TAA write these via EffectTuning.
+// Optional sample-UV offset (NDC-style, typically small). Sandbox/TAA write these via
+// EffectTuning; BuiltinBilinearUpscaler applies them as a subpixel UV shift (TAA-like path).
 struct UpscaleParams {
   float jitter_x = 0.f;
   float jitter_y = 0.f;
 };
 
 // Map display size → internal render size for resolution-scale path (ADR 0008).
+// Part of the FSR-absent fallback together with BuiltinBilinearUpscaler.
 struct ResolutionScale {
   // Clamp to a practical internal range (0.5 .. 1.0). Values >= 1 keep native size.
   static float ClampScale(float scale);
@@ -32,7 +34,8 @@ class IUpscaler {
                          UpscaleParams params = {}) = 0;
 };
 
-// CPU bilinear placeholder; DLSS absent → this fallback. FSR is future (ADR 0008).
+// CPU bilinear placeholder — FSR-absent fallback (ADR 0008). Not FSR; name stays
+// "builtin_bilinear". Jitter offsets sample UVs for TAA-like documentation path.
 class BuiltinBilinearUpscaler final : public IUpscaler {
  public:
   [[nodiscard]] const char* name() const override { return "builtin_bilinear"; }
@@ -41,6 +44,7 @@ class BuiltinBilinearUpscaler final : public IUpscaler {
                  UpscaleParams params = {}) override;
 };
 
+// Preference: ENGINE_UPSCALER=fsr requests FSR; without SDK still returns builtin and logs once.
 std::unique_ptr<IUpscaler> CreateUpscaler();
 
 }  // namespace engine::media

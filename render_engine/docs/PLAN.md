@@ -5,7 +5,8 @@
 > 定位：**Windows（D3D12 + Vulkan）/ Linux（Vulkan）通用 2D·3D 渲染引擎**  
 > 范围分段：M1–M16（既有能力）+ M17–M19（后端/Linux/网络）+ **M20–M25 引擎缺口补齐（P2）**。  
 > **当前迭代看板**（Doing / Undo / Todo）：[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)  
-> **引擎状态：暂时封板**（基线 `1700a71`；仅阻断回归可动；解封须明确下令）。  
+> **引擎状态：已解封 · M27+ W4–W6 已收口**（画质 → 平台/媒体 → 场景规模；不动 editor/game_kit；封板基线 `1700a71`）。  
+> 详见 [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)、[ADR 0033](learn/adr/0033-m27-w6-scene-scale.md)。  
 > **游戏可用 ≠ 渲染可用**：工作区可玩产品水位见 **§1.9**（主缺口 `game_kit` GK0–GK3）。
 
 ## 1. 总验收目标
@@ -511,7 +512,7 @@ Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
 | M15     | UI API、输入路由约定、主题/字体规范                                                                                                              |
 | M16     | 图集约定与 Tiled 导入；2D/像素/混合渲染 API 与排序约定                                                                                                |
 | M17     | Vulkan Windows（含 Vulkan Video）与能力差（DXR 等）                                                                                          |
-| M18     | Linux 构建与窗口后端说明                                                                                                                    |
+| M18     | Linux 构建与窗口后端说明 → **[LINUX.md](LINUX.md)**（`ENGINE_LINUX_VK`；运行时冒烟视 CI）                                                                                                                    |
 | M19     | 网络 API（HTTP/WS/QUIC）与 TLS/线程约定                                                                                                     |
 | M20–M21 | 混合/2D 深度 API 与拣选约定                                                                                                                 |
 | M22–M23 | 动态 GI 与地形/水体/植被模块说明                                                                                                                |
@@ -532,7 +533,7 @@ Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
 | **M4** 场景·外设·调试         | **完成（加深）**：Win32 键鼠→InputSystem、Escape 关闭、RenderScene Extract                             |
 | **M5** 环境与阴影            | **100%（Win）**：CSM Poisson/tile clamp/法线 bias；IBL；baker                                      |
 | **M6** 角色与档位            | **100%（验收）**：glTF joints→SkinVertexCpu；QualityTier 拉开 cascade/atlas/距离/植被/DoF            |
-| **M7** 特效·超分·音视频        | **100%（本口径）**：TrailRibbon；分辨率缩放+Jitter；WAV；VA stub 可诊断；FSR/DLSS 外置                   |
+| **M7** 特效·超分·音视频        | **100%（本口径）**：TrailRibbon；分辨率缩放+Jitter；WAV；**VA stub 可诊断；真解另波**；FSR/DLSS 外置                   |
 | **M8** RT 与工具化          | **100%（本口径）**：Profiler BeginPass + GPU timestamp 门控；Lightmap 运行时；DXR Feature 探测         |
 | **M9** 基础段验收            | **产品可用**：Sandbox；gpu-headless；learn 阶梯                                                      |
 | **M10** 可见性·LOD·实例·流式   | **100%（无 vendor）**：LodSelect；StreamingBudget；GPU Instanced + Cull CS                       |
@@ -543,15 +544,16 @@ Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
 | **M15** UI 完整           | **100%（本口径）**：ImGui+Retained HUD；RmlUi 外置已接受                                              |
 | **M16** 2D·像素·混合        | **100%（验收）**：多层 Tiled + collision；IntegerScale；learn/30                                 |
 | **M17** Vulkan（Windows） | **100%（Win 矩阵）**                                                                           |
-| **M18** Linux + Vulkan  | **完成（文档占位）**：外置                                                                             |
+| **M18** Linux + Vulkan  | **文档+构建说明加深（运行时冒烟视 CI 机）**：见 [LINUX.md](LINUX.md)；`ENGINE_LINUX_VK`；X11 窗口/Wayland 后置                                                                             |
 | **M19** 网络层             | **100%（本口径）**：HTTP；HTTPS 提示；WS loopback；QUIC ADR 0031 SKIP                               |
 | **M20** 混合打磨            | **100%**：Pick + MIXED_PICK.md；IntegerScale                                                   |
 | **M21** 2D 深度           | **100%（加深）**：Tilemap→Sprite；SkeletonClip2D；雾/BMFont/震屏                                     |
 | **M22** 动态 GI           | **100%（本口径）**：ProbeVolume + Lightmap 共存（非 DDGI）                                            |
 | **M23** 场景专题            | **100%（加深）**：地形/水面/植被；QualityTier 密度                                                     |
 | **M24** GPU Driven      | **100%**：HiZ + Cull；MeshShader Feature SKIP（C08）                                           |
-| **M25** 光追对齐            | **100%（本口径）**：DXR 硬件探测 + ADR 0030；VK RT SKIP                                               |
+| **M25** 光追对齐            | **100%（本口径）**：DXR 硬件探测 + ADR 0030；VK RT SKIP；W4 stub dispatch contract |
 | **M26** Forward+ / P3    | **已开簇（ADR 0032）**：C01/C02/C10/C04/C16/C20 落地；其余 §4 后置                                    |
+| **M27+** W4–W6 加深       | **已收口（ADR 0033）**：画质债 / Linux·HTTPS·VA 文档 / GI·水面·混合·GPU 蒙皮 stub·Meshlet 门控·PSO 热更请求 |
 
 
 > 无 vendor 100% 口径见看板；测试门禁：`ci_headless.ps1 -Golden`（Q1+Q3+C2+C3+C6）+ matrix 比图 + C4 薄对标（默认记回归）；可选 `-Validation`（C1）。**Harness 冻结；MCP 不进门禁。** §3.1：**Q1–Q3 / C1–C6 已落地（C4 记对标）**；Q4/Q5 / 严 C4 仍后置。

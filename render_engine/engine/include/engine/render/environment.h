@@ -29,6 +29,8 @@ struct Environment {
   ColorRgba fog_color{0.62f, 0.70f, 0.78f, 1.f};
 
   bool skybox_enabled = true;
+  // C05: when true, Sandbox/host may tint fog_color / clear from EvalSkyColor(cam forward).
+  bool enable_atmosphere = false;
 
   [[nodiscard]] bool has_ibl() const { return !ibl_irradiance.empty(); }
   [[nodiscard]] bool has_skybox() const { return !skybox_cubemap.empty(); }

@@ -1,5 +1,6 @@
 #include "engine/core/feature.h"
 #include "engine/core/log.h"
+#include "engine/rhi/backend.h"
 #include "engine/rt/raytracing.h"
 
 #include <cstdlib>
@@ -39,7 +40,7 @@ int main(int argc, char** argv) {
   const engine::FeatureSet features = engine::QueryFeatures();
   engine::rt::DxrDemoConfig demo;
   demo.enable_reflections = true;
-  demo.enable_shadows = false;
+  demo.enable_shadows = true;
   demo.max_bounces = 1;
 
   const bool can_run = engine::rt::CanRunDxrDemo(features, demo);
@@ -54,15 +55,37 @@ int main(int argc, char** argv) {
   const auto rt = engine::rt::Resolve(engine::rhi::Backend::D3D12, features, cfg);
   engine::LogInfo("RtStatus=" + std::to_string(static_cast<int>(rt)));
 
+  const auto shadow = engine::rt::DxrShadowDemo(features, demo);
+  engine::LogInfo(std::string("DxrShadowDemo.would_run=") + (shadow.would_run ? "true" : "false"));
+
+  const auto tlas = engine::rt::TryEmptyTlasPrebuild();
+  engine::LogInfo(std::string("TryEmptyTlasPrebuild=") +
+                  (tlas ? "Ok" : ("Unavailable: " + tlas.message())));
+
+  engine::rhi::DeviceDesc ddesc;
+  ddesc.headless = true;
+  ddesc.width = 64;
+  ddesc.height = 64;
+  auto device = engine::rhi::CreateHeadlessDevice(ddesc);
+  if (!device) {
+    engine::LogError("CreateHeadlessDevice failed: " + device.status().message());
+    return 1;
+  }
+  const auto stub = engine::rt::RunDxrFullscreenStub(*device.value());
+  engine::LogInfo(std::string("RunDxrFullscreenStub=") +
+                  (stub ? "Ok" : (stub.code() == engine::ErrorCode::Unavailable
+                                      ? ("Unavailable: " + stub.message())
+                                      : stub.message())));
+
   if (!can_run) {
     engine::LogInfo("SKIP sample_19_dxr_intro (DXR unavailable or demo gates closed; "
-                    "no AS/SBT/DispatchRays in this sample — see ADR 0030)");
+                    "W4 stub dispatch contract exercised — see ADR 0030)");
     (void)headless_frames;
     return 0;
   }
 
-  engine::LogInfo("DXR capable: demo would DispatchRays here; full AS/SBT frame deferred "
-                  "(ADR 0030 M25 scope = Feature gate + Resolve, not production RT)");
+  engine::LogInfo("DXR capable: stub contract recorded would-run; full AS/SBT/DispatchRays "
+                  "deferred (ADR 0030 W4 = Feature gate + stub dispatch, not production RT)");
   (void)headless_frames;
   return 0;
 }

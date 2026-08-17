@@ -10,6 +10,7 @@ add_executable(engine_unit_tests
   unit/test_m4_m19.cpp
   unit/test_m20_m25_headless.cpp
   unit/test_m26.cpp
+  unit/test_m27.cpp
   unit/test_product_wave_stubs.cpp
   unit/test_headless_integration.cpp
   unit/test_usable.cpp

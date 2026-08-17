@@ -45,4 +45,13 @@ TerrainMesh BuildTerrainMesh(const Heightmap& map, const Vec3& world_origin);
 // Flat water patch centered at origin, extent [-half_extent, half_extent] on XZ.
 TerrainMesh BuildWaterPatchMesh(float half_extent);
 
+// W6/C09: Gerstner-like height displace on an existing water grid (mutates Y + normals).
+// segments: grid resolution along one edge (>=1). time / amplitude / wavelength drive waves.
+void AnimateWaterPatch(TerrainMesh& mesh, float time, float amplitude = 0.15f,
+                       float wavelength = 4.f, float speed = 1.2f);
+
+// Build a subdivided water grid then optionally animate (convenience for Sandbox/tests).
+TerrainMesh BuildAnimatedWaterPatchMesh(float half_extent, int segments, float time,
+                                        float amplitude = 0.15f);
+
 }  // namespace engine::terrain

@@ -42,6 +42,7 @@
 | [THIRD_PARTY.md](THIRD_PARTY.md) | 可引入三方与抽象边界 |
 | [TESTING.md](TESTING.md) | unit / integration / golden / CI；**§8 分工·水位·测法** |
 | [VULKAN_PARITY.md](VULKAN_PARITY.md) | **D3D12 ↔ Vulkan 差异矩阵、缺口、Sandbox parity 剖面** |
+| [LINUX.md](LINUX.md) | **M18** Linux Vulkan（X11）构建说明、`ENGINE_LINUX_VK`、Wayland 后置 |
 | [MIXED_PICK.md](MIXED_PICK.md) | **M20** 2D/3D 拣选、高亮、IntegerScale |
 | [SANDBOX_MCP.md](SANDBOX_MCP.md) | Harness 矩阵抽样（**保留冻结**）；MCP Cursor 适配（**不扩**） |
 | [DEBUG_TUNE_TROUBLESHOOT.md](DEBUG_TUNE_TROUBLESHOOT.md) | 调试·调优·排错 |

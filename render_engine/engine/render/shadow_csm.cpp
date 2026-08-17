@@ -103,7 +103,15 @@ void CascadedShadowMap::Build(const Camera& camera, float aspect, const Vec3& li
   tiles_per_row_ = count_ <= 1 ? 1 : 2;
   const int tile = atlas_size / tiles_per_row_;
   // Stronger log bias → denser near cascade (pillar contact shadows).
-  const auto splits = ComputeSplits(z_near, z_far, count_, 0.75f);
+  // W4: push first split closer so cascade-0 texels cover the pillar field.
+  auto splits = ComputeSplits(z_near, z_far, count_, 0.85f);
+  if (count_ >= 2 && !splits.empty()) {
+    const float near_cap = z_near + (z_far - z_near) * 0.12f;
+    splits[0] = std::min(splits[0], near_cap);
+    for (std::size_t i = 1; i < splits.size(); ++i) {
+      splits[i] = std::max(splits[i], splits[i - 1] + 0.5f);
+    }
+  }
 
   float prev = z_near;
   for (int i = 0; i < count_; ++i) {

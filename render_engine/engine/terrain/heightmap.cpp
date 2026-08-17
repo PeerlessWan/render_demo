@@ -108,15 +108,78 @@ TerrainMesh BuildTerrainMesh(const Heightmap& map, const Vec3& world_origin) {
 }
 
 TerrainMesh BuildWaterPatchMesh(float half_extent) {
+  return BuildAnimatedWaterPatchMesh(half_extent, 1, 0.f, 0.f);
+}
+
+void AnimateWaterPatch(TerrainMesh& mesh, float time, float amplitude, float wavelength,
+                       float speed) {
+  if (mesh.positions.size() < 3 || wavelength <= 1e-4f) {
+    return;
+  }
+  const float k = 6.2831853f / wavelength;
+  const std::size_t n = mesh.positions.size() / 3;
+  mesh.normals.assign(n * 3, 0.f);
+  for (std::size_t i = 0; i < n; ++i) {
+    float& x = mesh.positions[i * 3 + 0];
+    float& y = mesh.positions[i * 3 + 1];
+    float& z = mesh.positions[i * 3 + 2];
+    const float phase = k * (x + 0.65f * z) - speed * time;
+    y = amplitude * std::sin(phase);
+    // Analytic Gerstner-ish normal (small amplitude).
+    const float ddy_dx = amplitude * k * std::cos(phase);
+    const float ddy_dz = amplitude * k * 0.65f * std::cos(phase);
+    Vec3 nrm{-ddy_dx, 1.f, -ddy_dz};
+    const float len = std::sqrt(nrm.x * nrm.x + nrm.y * nrm.y + nrm.z * nrm.z);
+    if (len > 1e-6f) {
+      nrm.x /= len;
+      nrm.y /= len;
+      nrm.z /= len;
+    }
+    mesh.normals[i * 3 + 0] = nrm.x;
+    mesh.normals[i * 3 + 1] = nrm.y;
+    mesh.normals[i * 3 + 2] = nrm.z;
+  }
+}
+
+TerrainMesh BuildAnimatedWaterPatchMesh(float half_extent, int segments, float time,
+                                        float amplitude) {
   TerrainMesh mesh;
   if (half_extent <= 0.f) {
     return mesh;
   }
-  const float h = half_extent;
-  mesh.positions = {-h, 0.f, -h, h, 0.f, -h, h, 0.f, h, -h, 0.f, h};
-  mesh.normals = {0.f, 1.f, 0.f, 0.f, 1.f, 0.f, 0.f, 1.f, 0.f, 0.f, 1.f, 0.f};
-  mesh.uvs = {0.f, 0.f, 1.f, 0.f, 1.f, 1.f, 0.f, 1.f};
-  mesh.indices = {0, 1, 2, 0, 2, 3};
+  const int seg = std::max(1, segments);
+  const int verts = seg + 1;
+  mesh.positions.reserve(static_cast<std::size_t>(verts * verts * 3));
+  mesh.uvs.reserve(static_cast<std::size_t>(verts * verts * 2));
+  for (int z = 0; z < verts; ++z) {
+    const float tz = static_cast<float>(z) / static_cast<float>(seg);
+    const float wz = -half_extent + 2.f * half_extent * tz;
+    for (int x = 0; x < verts; ++x) {
+      const float tx = static_cast<float>(x) / static_cast<float>(seg);
+      const float wx = -half_extent + 2.f * half_extent * tx;
+      mesh.positions.push_back(wx);
+      mesh.positions.push_back(0.f);
+      mesh.positions.push_back(wz);
+      mesh.uvs.push_back(tx);
+      mesh.uvs.push_back(tz);
+    }
+  }
+  mesh.indices.reserve(static_cast<std::size_t>(seg * seg * 6));
+  for (int z = 0; z < seg; ++z) {
+    for (int x = 0; x < seg; ++x) {
+      const std::uint32_t i0 = static_cast<std::uint32_t>(z * verts + x);
+      const std::uint32_t i1 = i0 + 1;
+      const std::uint32_t i2 = i0 + static_cast<std::uint32_t>(verts);
+      const std::uint32_t i3 = i2 + 1;
+      mesh.indices.push_back(i0);
+      mesh.indices.push_back(i1);
+      mesh.indices.push_back(i3);
+      mesh.indices.push_back(i0);
+      mesh.indices.push_back(i3);
+      mesh.indices.push_back(i2);
+    }
+  }
+  AnimateWaterPatch(mesh, time, amplitude);
   return mesh;
 }
 
