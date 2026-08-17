@@ -95,12 +95,14 @@ struct PostResolveDesc {
   // M26/C04: cinematic knobs (0 = off).
   float vignette_strength = 0.f;
   float film_grain_strength = 0.f;
+  // W7/C04
+  float chromatic_aberration = 0.f;
 
   [[nodiscard]] bool NeedsResolve() const {
     return enable_ssao || enable_taa || enable_tonemap || enable_auto_exposure || enable_bloom ||
            enable_fog || enable_ssr || enable_dof || enable_motion_blur ||
            (exposure > 1.0001f || exposure < 0.9999f) || vignette_strength > 1e-4f ||
-           film_grain_strength > 1e-4f;
+           film_grain_strength > 1e-4f || chromatic_aberration > 1e-4f;
   }
 };
 
@@ -152,6 +154,8 @@ struct FrameLighting {
   // cos(inner half-angle) for lights 0..15 (HLSL: float4[4]).
   std::array<float, 16> local_spot_inner{-1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f,
                                          -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f};
+  // C03/W7: IES profile id per light (0=off). Packed as float4[4] in HLSL.
+  std::array<float, 16> local_ies{};
   // First casting local lights: cubemap face atlas (up to 2 lights × 6 faces = 12 tiles).
   // Spot lights reuse tile light_index*6 + 0 with a single perspective VP.
   Mat4 local_shadow_vp = Mat4::Identity();  // tile 0 compat (+X of light 0)

@@ -260,6 +260,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   lighting.local_shadow_tiles_per_row = 4;
   lighting.local_spot = {};
   lighting.local_spot_inner.fill(-1.f);
+  lighting.local_ies.fill(0.f);
   // M26/C02: accept up to 16 CPU lights; upload closest 16 (shadow casters preferred).
   struct RankedLight {
     LocalLight light;
@@ -313,6 +314,8 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
     }
     lighting.local_spot[static_cast<std::size_t>(i)] = {dir.x, dir.y, dir.z, cos_outer};
     lighting.local_spot_inner[static_cast<std::size_t>(i)] = cos_inner;
+    lighting.local_ies[static_cast<std::size_t>(i)] =
+        static_cast<float>(std::max(0, light.ies_profile));
   }
   if (effect_.enable_shadows) {
     // Up to 2 cubemap/spot lights (12 faces) fit in the 2048 atlas as 4×4 × 512 tiles.
@@ -561,6 +564,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       post.jitter_y = lighting.jitter_y;
       post.vignette_strength = effect_.vignette_strength;
       post.film_grain_strength = effect_.film_grain_strength;
+      post.chromatic_aberration = effect_.chromatic_aberration;
       if (auto st = device.ResolvePostEffects(post); !st) {
         LogError(st.message());
       }

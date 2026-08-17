@@ -92,9 +92,17 @@ target_link_libraries(engine_debug PUBLIC engine_core)
 add_library(engine_animation STATIC
   animation/skeleton.cpp
   animation/state_machine.cpp
+  animation/gpu_skin_d3d12.cpp
 )
 target_include_directories(engine_animation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_animation PUBLIC engine_core)
+if(WIN32)
+  target_link_libraries(engine_animation PRIVATE d3d12 dxgi)
+endif()
+# Resolve skin_cs.cso next to Sandbox shader outputs (compiled by sample_sandbox_shaders).
+file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/samples/Sandbox/shaders" _anim_shader_dir)
+string(REPLACE "\\" "/" _anim_shader_dir "${_anim_shader_dir}")
+target_compile_definitions(engine_animation PRIVATE ENGINE_SHADER_DIR_A="${_anim_shader_dir}")
 
 add_library(engine_post STATIC
   post/post_stack.cpp
@@ -113,6 +121,7 @@ add_library(engine_rhi STATIC
   render/shadow_atlas.cpp
   render/local_lights.cpp
   render/atmosphere.cpp
+  render/ies_profile.cpp
   render/quality.cpp
   render/ibl_pack.cpp
   render/instance_draw.cpp
@@ -228,6 +237,7 @@ add_library(engine_render2d STATIC
   render2d/atlas.cpp
   render2d/fx2d.cpp
   render2d/bmfont.cpp
+  render2d/world_text.cpp
 )
 target_include_directories(engine_render2d PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_render2d PUBLIC engine_core)
@@ -275,6 +285,9 @@ target_link_libraries(engine_rt PUBLIC engine_core engine_rhi)
 if(WIN32)
   target_link_libraries(engine_rt PRIVATE d3d12 dxgi)
 endif()
+file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/samples/Sandbox/shaders" _rt_shader_dir)
+string(REPLACE "\\" "/" _rt_shader_dir "${_rt_shader_dir}")
+target_compile_definitions(engine_rt PRIVATE ENGINE_SHADER_DIR_A="${_rt_shader_dir}")
 
 add_library(engine_net STATIC
   net/net_system.cpp

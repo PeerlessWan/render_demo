@@ -25,7 +25,7 @@
 | G05–G10、G12 | 2D 深度 | **已加深**：chunk→Sprite 展开；SkeletonClip2D；雾 tint / BMFont JSON / 震屏 | M21 |
 | G14 | 动态 GI | **已加深**：ProbeVolume + Lightmap 共存；W6 `RefineDensity` 加密网格（非 DDGI）；见 [gi/README.md](gi/README.md)、[ADR 0033](learn/adr/0033-m27-w6-scene-scale.md) | M22 / W6 |
 | G15 | 地形/水体/植被（基础） | **可用加深** | M23 |
-| G16 | 光追 API 对齐 | **完成（加深）** Feature 门控 | M25（内容管线仍非 UE 级） |
+| G16 | 光追 API 对齐 | **完成（加深）** Feature 门控；W7 `TryBuildCubeBlasTlasAndDispatchRays` 真 BLAS/TLAS+DispatchRays | M25 / W7 |
 | T01 | 最小工具链（shader/IBL/纹理/cook/黄金图） | 已排期 | M2–M9；见 [TOOLING.md](TOOLING.md) |
 | T03 | 自动化测试加深（准/广） | **Q1–Q3 + C1–C3 + C5–C7 + Q5 ROI 已落地**；C4 双后端比图（默认 ROI + 松闸≈90 PASS，现 RMSE≈74；`--strict` / `-StrictParity` 紧闸 48 可选严） | [PLAN.md](PLAN.md) **§3.1**；不扩 MCP/Harness 命令 |
 | T02 | 图集约定 + Tiled 导入 | 已排期 | M16 |
@@ -54,9 +54,9 @@
 |---|---|---|---|
 | C01 | 产品级 Deferred / Forward+ 路径钉死 | **已落地（M26）**：Forward+ 钉死 + Pass 名冻结；见 [FORWARD_PLUS.md](FORWARD_PLUS.md)、[ADR 0032](learn/adr/0032-m26-forward-plus-cluster.md) | 高（影响扩展方式） |
 | C02 | 集群 / 分块多灯光 | **部分落地（M26/W4）**：CPU≤16 / FrameCB≤16 / Atlas 阴影≤2；CPU `AssignLightsToTiles`（8×4 Forward+ 列表，非完整 GPU 集群） | 高 |
-| C03 | IES / Light Function | 灯光分布与投影函数 | 中 |
-| C04 | 更细电影级镜头后处理 | **部分落地（M26）**：vignette + film grain（PostCB / EffectTuning，默认 0）；色散等后置 | 低 |
-| C05 | 大气 / 体积云 / 天气降水 | **部分落地（W4）**：CPU `EvalSkyColor` 解析单次散射 + 可选 `enable_atmosphere` 染雾/清屏；体积云/降水后置 | 中 |
+| C03 | IES / Light Function | **部分落地（W7）**：`EvalIesFactor` / `SampleIesLut` + lit `g_local_ies`；非完整 IES 文件生态 | 中 |
+| C04 | 更细电影级镜头后处理 | **部分落地（M26/W7）**：vignette + film grain + `chromatic_aberration`（默认 0） | 低 |
+| C05 | 大气 / 体积云 / 天气降水 | **部分落地（W4/W7）**：`EvalSkyColor` + `EvalCloudBand` / `CoupleFogWithAtmosphere`；F1 大气/云带；完整天气后置 | 中 |
 
 ### 4.2 几何与开放世界加深
 
@@ -73,7 +73,7 @@
 |---|---|---|---|
 | C10 | 动画混合树 / 状态机 | **部分落地（M26/W6）**：`AnimationStateMachine` + `SampleBlend` 多 clip 权重；完整混合树图后置 | 高（上层常自建） |
 | C11 | IK | 足部/瞄准等 | 中 |
-| C12 | GPU 蒙皮产品化打磨 | **部分落地（W6）**：`GpuSkinningAvailable` + `SkinVerticesGpuDispatchStub`（Feature `gpu_skinning`）；真 CS PSO 后置 | 低 |
+| C12 | GPU 蒙皮产品化打磨 | **部分落地（W7）**：`GpuSkinningAvailable` + `SkinVerticesGpuDispatch`（Feature `gpu_skinning`）→ D3D12 `skin_cs.hlsl` / `TryDispatchGpuSkinD3d12`；失败回退 CPU stub；VK SKIP | 低 |
 
 ### 4.3b 物理加深
 
@@ -87,7 +87,7 @@
 |---|---|---|---|
 | **G13** | **矢量 / 路径绘制** | SVG 级；原「可选后置」 | 按产品需要 |
 | C13 | 九宫格 / 更完整 2D UI 精灵约定 | 偏运行时 UI 与 2D 共用 | 低 |
-| C14 | 3D 世界文字 | P2 主要是 2D BMFont | 中 |
+| C14 | 3D 世界文字 | **部分落地（W7）**：`BuildWorldTextBillboards`（BMFont 广告牌）；Sandbox DebugDraw 线框 | 中 |
 | C15 | 2D 富文本 / 复杂排版 | 超出 BMFont 基础 | 低 |
 
 ### 4.5 运行时工程

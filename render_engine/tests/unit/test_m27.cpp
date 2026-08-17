@@ -78,6 +78,17 @@ TEST_CASE("GpuSkinningAvailable Feature gated + stub skins", "[m27][w6][c12]") {
   engine::animation::SkinVerticesGpuDispatchStub(bind, pose, bones, weights, out);
   REQUIRE(out.size() == 1);
   REQUIRE(std::fabs(out[0].x - 1.f) < 1e-4f);
+
+  std::vector<engine::Vec3> out_ref;
+  REQUIRE(engine::animation::SkinVerticesComputeCpuReference(bind, pose, bones, weights, out_ref));
+  REQUIRE(out_ref.size() == 1);
+  REQUIRE(std::fabs(out_ref[0].x - 1.f) < 1e-4f);
+
+  // Dispatch may use D3D12 CS when skin_cs.cso exists; otherwise CPU fallback — still Ok.
+  std::vector<engine::Vec3> out_dispatch;
+  engine::animation::SkinVerticesGpuDispatch(bind, pose, bones, weights, out_dispatch);
+  REQUIRE(out_dispatch.size() == 1);
+  REQUIRE(std::fabs(out_dispatch[0].x - 1.f) < 1e-4f);
   engine::ClearFeatureOverrides();
 }
 

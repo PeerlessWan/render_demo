@@ -93,6 +93,7 @@ struct FrameGpu {
   float jitter_x;
   float jitter_y;
   float _pad_jitter[2];
+  float local_ies[16];  // C03/W7
 };
 
 struct ShadowFrameGpu {
@@ -166,6 +167,8 @@ struct PostCB {
   float jitter_y;
   float vignette_strength;
   float film_grain_strength;
+  float chromatic_aberration;
+  float pad_chroma;
 };
 static_assert(sizeof(PostCB) <= 512, "post CB exceeds upload buffer");
 constexpr VkDeviceSize kPostUbSize =
@@ -634,6 +637,7 @@ class VulkanDevice final : public IDevice {
       data.local_spot[i][2] = lighting_.local_spot[static_cast<std::size_t>(i)].z;
       data.local_spot[i][3] = lighting_.local_spot[static_cast<std::size_t>(i)].w;
       data.local_spot_inner[i] = lighting_.local_spot_inner[static_cast<std::size_t>(i)];
+      data.local_ies[i] = lighting_.local_ies[static_cast<std::size_t>(i)];
     }
     for (int i = 0; i < 12; ++i) {
       std::memcpy(data.local_shadow_vp[i],
@@ -4908,6 +4912,7 @@ class VulkanDevice final : public IDevice {
     cb.jitter_y = desc.jitter_y;
     cb.vignette_strength = desc.vignette_strength;
     cb.film_grain_strength = desc.film_grain_strength;
+    cb.chromatic_aberration = desc.chromatic_aberration;
 
     const VkDeviceSize off = static_cast<VkDeviceSize>(frame_index_) * kPostUbSize;
     void* mapped = nullptr;

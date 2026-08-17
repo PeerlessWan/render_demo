@@ -34,6 +34,7 @@ cbuffer FrameCB : register(b0) {
   float g_reflection_intensity;
   float g_enable_ibl;
   float g_ibl_intensity;
+  float4 g_local_ies[4];  // C03/W7 profile ids 0..15
 };
 
 cbuffer ObjectCB : register(b1) {
@@ -275,6 +276,24 @@ float LocalShadowFactor(float3 world_pos, int light_index) {
   return shadow / 9.0;
 }
 
+float IesProfileAtten(int light_index, float cos_theta) {
+  int profile = (int)g_local_ies[light_index >> 2][light_index & 3];
+  if (profile <= 0) {
+    return 1.0f;
+  }
+  float c = saturate(cos_theta);
+  float u = 1.0f - c;
+  if (profile == 1) {
+    return pow(1.0f - u, 4.5f);
+  }
+  if (profile == 2) {
+    return pow(1.0f - u, 1.6f);
+  }
+  // batwing
+  float mid = 1.0f - abs(u - 0.45f) * 2.2f;
+  return saturate(mid) * (0.35f + 0.65f * (1.0f - u));
+}
+
 float SpotConeAtten(int light_index, float3 light_to_frag) {
   float cos_outer = g_local_spot[light_index].w;
   if (cos_outer <= -0.999f) {
@@ -283,7 +302,8 @@ float SpotConeAtten(int light_index, float3 light_to_frag) {
   float3 spot_dir = normalize(g_local_spot[light_index].xyz);
   float cos_theta = dot(normalize(light_to_frag), spot_dir);
   float cos_inner = g_local_spot_inner[light_index >> 2][light_index & 3];
-  return smoothstep(cos_outer, cos_inner, cos_theta);
+  float cone = smoothstep(cos_outer, cos_inner, cos_theta);
+  return cone * IesProfileAtten(light_index, cos_theta);
 }
 
 float4 PSMain(VSOutput input) : SV_Target {

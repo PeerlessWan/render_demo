@@ -1258,6 +1258,7 @@ class D3D12Device final : public IDevice {
       float reflection_intensity;
       float enable_ibl;
       float ibl_intensity;
+      float local_ies[16];  // C03/W7 profile id as float (0=off)
     } data{};
     std::memcpy(data.view_proj, lighting.view_proj.m.data(), sizeof(data.view_proj));
     for (int i = 0; i < 4; ++i) {
@@ -1325,6 +1326,9 @@ class D3D12Device final : public IDevice {
     data.reflection_intensity = lighting.reflection_intensity;
     data.enable_ibl = lighting.enable_ibl ? 1.f : 0.f;
     data.ibl_intensity = lighting.ibl_intensity;
+    for (int i = 0; i < 16; ++i) {
+      data.local_ies[i] = lighting.local_ies[static_cast<std::size_t>(i)];
+    }
 
     void* ptr = nullptr;
     if (FAILED(frame_cb_->Map(0, nullptr, &ptr))) {
@@ -2468,6 +2472,8 @@ class D3D12Device final : public IDevice {
       float jitter_y;
       float vignette_strength;
       float film_grain_strength;
+      float chromatic_aberration;
+      float pad_chroma;
     } cb{};
     static_assert(sizeof(PostCB) <= 512, "post CB exceeds upload buffer");
     cb.inv_res[0] = 1.f / static_cast<float>((std::max)(1u, width_));
@@ -2510,6 +2516,7 @@ class D3D12Device final : public IDevice {
     cb.jitter_y = desc.jitter_y;
     cb.vignette_strength = desc.vignette_strength;
     cb.film_grain_strength = desc.film_grain_strength;
+    cb.chromatic_aberration = desc.chromatic_aberration;
 
     void* mapped = nullptr;
     if (FAILED(post_cb_->Map(0, nullptr, &mapped))) {

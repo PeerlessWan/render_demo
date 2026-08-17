@@ -31,6 +31,8 @@ struct Environment {
   bool skybox_enabled = true;
   // C05: when true, Sandbox/host may tint fog_color / clear from EvalSkyColor(cam forward).
   bool enable_atmosphere = false;
+  // W7: soft cloud band on top of atmosphere tint (requires enable_atmosphere for CoupleFog path).
+  bool enable_volume_clouds = false;
 
   [[nodiscard]] bool has_ibl() const { return !ibl_irradiance.empty(); }
   [[nodiscard]] bool has_skybox() const { return !skybox_cubemap.empty(); }

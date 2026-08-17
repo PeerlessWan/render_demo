@@ -62,6 +62,13 @@ int main(int argc, char** argv) {
   engine::LogInfo(std::string("TryEmptyTlasPrebuild=") +
                   (tlas ? "Ok" : ("Unavailable: " + tlas.message())));
 
+  const auto as_rays = engine::rt::TryBuildCubeBlasTlasAndDispatchRays();
+  engine::LogInfo(std::string("TryBuildCubeBlasTlasAndDispatchRays=") +
+                  (as_rays ? "Ok"
+                           : ((as_rays.code() == engine::ErrorCode::Unavailable ? "Unavailable: "
+                                                                               : "Failed: ") +
+                              as_rays.message())));
+
   engine::rhi::DeviceDesc ddesc;
   ddesc.headless = true;
   ddesc.width = 64;
@@ -79,13 +86,13 @@ int main(int argc, char** argv) {
 
   if (!can_run) {
     engine::LogInfo("SKIP sample_19_dxr_intro (DXR unavailable or demo gates closed; "
-                    "W4 stub dispatch contract exercised — see ADR 0030)");
+                    "W7 AS/DispatchRays path exercised when HW present — see ADR 0030)");
     (void)headless_frames;
     return 0;
   }
 
-  engine::LogInfo("DXR capable: stub contract recorded would-run; full AS/SBT/DispatchRays "
-                  "deferred (ADR 0030 W4 = Feature gate + stub dispatch, not production RT)");
+  engine::LogInfo("DXR capable: Prefer TryBuildCubeBlasTlasAndDispatchRays (BLAS+TLAS+DispatchRays); "
+                  "fallback empty-TLAS stub when PSO/lib missing (ADR 0030 W7)");
   (void)headless_frames;
   return 0;
 }

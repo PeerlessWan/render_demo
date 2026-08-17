@@ -350,6 +350,10 @@ TEST_CASE("DxrShadowDemo and RunDxrFullscreenStub contract", "[m25][w4][dxr]") {
   engine::SetFeatureOverride("raytracing", true);
   auto stub_on = engine::rt::RunDxrFullscreenStub(*device.value());
   REQUIRE(stub_on);
+
+  // W7: real AS path is Unavailable without DXR HW (or Ok with HW); must not crash.
+  const auto as_path = engine::rt::TryBuildCubeBlasTlasAndDispatchRays();
+  REQUIRE((as_path.ok() || as_path.code() == engine::ErrorCode::Unavailable));
   engine::ClearFeatureOverrides();
 }
 

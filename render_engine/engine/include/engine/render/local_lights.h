@@ -32,6 +32,8 @@ struct LocalLight {
   Vec3 direction{0.f, -1.f, 0.f};
   float spot_angle_deg = 180.f;
   float spot_inner_deg = 160.f;
+  // C03/W7: 0=off, 1=narrow, 2=wide, 3=batwing (analytic IES factor in lit shader).
+  int ies_profile = 0;
   bool cast_shadows = true;
   int shadow_resolution = 512;  // atlas tile extent
 };

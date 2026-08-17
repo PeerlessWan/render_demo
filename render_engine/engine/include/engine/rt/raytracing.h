@@ -5,6 +5,8 @@
 #include "engine/rhi/backend.h"
 #include "engine/rhi/i_device.h"
 
+#include <filesystem>
+
 namespace engine::rt {
 
 struct RaytracingConfig {
@@ -36,8 +38,8 @@ Status EnsureSafe(rhi::Backend backend, const FeatureSet& features, const Raytra
 // when no live device has published the flag yet (see learn/19_dxr_intro).
 bool CanRunDxrDemo(const FeatureSet& features, const DxrDemoConfig& demo);
 
-// W4: when raytracing is true and shadows are gated on, records that a DXR shadow demo
-// pass WOULD run. Does not emit DispatchRays (ADR 0030 stub dispatch contract).
+// W4/W7: when raytracing + shadows gated, records WOULD run and prefers real AS/DispatchRays
+// via TryBuildCubeBlasTlasAndDispatchRays when hardware is present (ADR 0030 W7 deepen).
 struct DxrShadowDemoResult {
   bool would_run = false;
 };
@@ -45,12 +47,18 @@ struct DxrShadowDemoResult {
 [[nodiscard]] DxrShadowDemoResult DxrShadowDemo(const FeatureSet& features,
                                                 const DxrDemoConfig& demo);
 
-// Stub fullscreen DXR dispatch contract bound to an IDevice. Returns Ok if a demo pass
-// would run; Unavailable when raytracing is off. No DispatchRays / SBT.
+// Prefers TryBuildCubeBlasTlasAndDispatchRays; falls back to empty-TLAS prebuild + Ok stub.
+// Unavailable when raytracing feature is off. VK path remains Feature/SKIP.
 Status RunDxrFullscreenStub(rhi::IDevice& device);
 
 // Tiny DXR-header helper: query empty-TLAS prebuild sizes on a transient device, or
 // Unavailable when DXR tier / Device5 is missing (skips with clear Status).
 Status TryEmptyTlasPrebuild();
+
+// W7: on DXR hardware, build BLAS (one triangle) + TLAS, create minimal RTPSO from
+// dxr_shadow_lib.cso when present, DispatchRays (8x8). If StateObject/lib missing, returns Ok
+// after AS build with LogInfo that DispatchRays PSO is missing. VK: Unavailable.
+Status TryBuildCubeBlasTlasAndDispatchRays(
+    const std::filesystem::path& dxr_lib_dxil = {});
 
 }  // namespace engine::rt

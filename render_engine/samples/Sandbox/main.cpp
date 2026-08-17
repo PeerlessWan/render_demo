@@ -14,6 +14,9 @@
 #include "engine/gi/scene_capture.h"
 #include "engine/gpu_driven/indirect_draw.h"
 #include "engine/render/atmosphere.h"
+#include "engine/render/ies_profile.h"
+#include "engine/render2d/bmfont.h"
+#include "engine/render2d/world_text.h"
 #include "engine/render/ibl_pack.h"
 #include "engine/render/instance_draw.h"
 #include "engine/render/local_lights.h"
@@ -561,6 +564,19 @@ int main(int argc, char** argv) {
     lamp.shadow_resolution = 512;
     lamp.cast_shadows = true;
     lights.push_back(lamp);
+    engine::render::LocalLight spot;
+    spot.id = 2;
+    spot.position = {-2.2f, 3.2f, 0.5f};
+    spot.range = 9.f;
+    spot.color = {1.f, 0.92f, 0.85f, 1.f};
+    spot.intensity = 2.2f;
+    spot.direction = {0.35f, -1.f, 0.15f};
+    spot.spot_angle_deg = 28.f;
+    spot.spot_inner_deg = 12.f;
+    spot.ies_profile = 1;  // C03 narrow IES
+    spot.cast_shadows = true;
+    spot.shadow_resolution = 512;
+    lights.push_back(spot);
     sandbox_local_lights = lights;
     render.set_local_lights(lights);
   }
@@ -1050,6 +1066,30 @@ int main(int argc, char** argv) {
     if (show_axes) {
       dbg.AddAxes(2.5f, 0.05f);
     }
+    // C14/W7: world BMFont billboard wireframe (atlas glyph boxes facing camera).
+    {
+      engine::render2d::BmFontAtlas atlas;
+      atlas.line_height = 16;
+      atlas.glyphs['W'] = {0, 0, 10, 14, 11};
+      atlas.glyphs['7'] = {10, 0, 8, 14, 9};
+      const auto& cam = app_ref.camera();
+      const engine::Quat q = engine::Quat::FromEulerYxz(cam.yaw, cam.pitch, 0.f);
+      const engine::Vec3 right = q.Rotate(engine::Vec3{1.f, 0.f, 0.f});
+      const engine::Vec3 up = q.Rotate(engine::Vec3{0.f, 1.f, 0.f});
+      const auto wt = engine::render2d::BuildWorldTextBillboards(
+          atlas, "W7", {0.f, 2.4f, -1.5f}, right, up, 0.04f);
+      const engine::ColorRgba tc{0.95f, 0.85f, 0.35f, 1.f};
+      for (std::size_t qi = 0; qi + 5 < wt.indices.size(); qi += 6) {
+        const auto& v0 = wt.vertices[wt.indices[qi + 0]].position;
+        const auto& v1 = wt.vertices[wt.indices[qi + 1]].position;
+        const auto& v2 = wt.vertices[wt.indices[qi + 2]].position;
+        const auto& v3 = wt.vertices[wt.indices[qi + 5]].position;
+        dbg.AddLine(v0, v1, tc);
+        dbg.AddLine(v1, v2, tc);
+        dbg.AddLine(v2, v3, tc);
+        dbg.AddLine(v3, v0, tc);
+      }
+    }
     for (int bi = 0; bi < physics->body_count(); ++bi) {
       const auto p = physics->body_position(bi);
       const auto he = physics->body_half_extents(bi);
@@ -1169,6 +1209,9 @@ int main(int argc, char** argv) {
           imgui.Checkbox(Su.auto_exposure, &fx.enable_auto_exposure);
           imgui.Checkbox(Su.bloom, &fx.enable_bloom);
           imgui.Checkbox(Su.fog, &fx.enable_fog);
+          imgui.Checkbox(Su.atmosphere, &env.enable_atmosphere);
+          imgui.Checkbox(Su.volume_clouds, &env.enable_volume_clouds);
+          imgui.SliderFloat(Su.chromatic, &fx.chromatic_aberration, 0.f, 1.f);
           if (imgui.Checkbox(Su.vsync, &enable_vsync)) {
             app_ref.device().SetVSync(enable_vsync);
           }
@@ -1294,7 +1337,7 @@ int main(int argc, char** argv) {
     }
     render.set_effect_tuning(fx);
 
-    // C05: optional atmosphere tint of fog / clear from analytical sky.
+    // C05/W7: optional atmosphere (+ cloud band) coupled into fog / clear.
     if (env.enable_atmosphere) {
       engine::render::AtmosphereParams ap;
       ap.sun_dir = env.sun_direction;
@@ -1302,10 +1345,14 @@ int main(int argc, char** argv) {
       const auto& cam = app_ref.camera();
       const engine::Quat q = engine::Quat::FromEulerYxz(cam.yaw, cam.pitch, 0.f);
       const engine::Vec3 fwd = q.Rotate(engine::Vec3{0.f, 0.f, -1.f});
-      const auto sky = engine::render::EvalSkyColor(ap, fwd);
-      env.fog_color = sky;
-      env.clear_color = {sky.r * 0.22f, sky.g * 0.25f, sky.b * 0.32f, 1.f};
-      fx.fog_color = {sky.r, sky.g, sky.b};
+      const auto coupled = engine::render::CoupleFogWithAtmosphere(
+          ap, fwd, fx.fog_density > 1e-6f ? fx.fog_density : 0.02f, env.enable_volume_clouds);
+      env.fog_color = coupled.fog_color;
+      env.clear_color = coupled.clear_color;
+      fx.fog_color = {coupled.fog_color.r, coupled.fog_color.g, coupled.fog_color.b};
+      if (fx.enable_fog) {
+        fx.fog_density = coupled.fog_density;
+      }
       app_ref.set_clear_color(env.clear_color);
       render.set_effect_tuning(fx);
     }

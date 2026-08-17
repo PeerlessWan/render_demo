@@ -1,24 +1,25 @@
-# ADR 0030: M25/W4 DXR demo scope（Feature 门控 + stub dispatch contract）
+# ADR 0030: M25/W4/W7 DXR demo scope（Feature 门控 + 最小真 DispatchRays）
 
 - 状态: Accepted
 - 日期: 2026-08-15
-- 更新: 2026-08-17（W4：stub dispatch contract）
-- 关联: CH19、ADR 0007、PLAN M8/M25/W4、`engine/rt`、`samples/learn/19_dxr_intro`
+- 更新: 2026-08-17（W7：BLAS/TLAS + 可选 DispatchRays）
+- 关联: CH19、ADR 0007、PLAN M8/M25/W4/W7、`engine/rt`、`samples/learn/19_dxr_intro`
 
 ## 背景
 
-M8/M25 要求「DXR 示范 + 可关降级」。完整 BLAS/TLAS、SBT、raygen/miss/closesthit 与 DispatchRays 合成链路过重，且与当前学习 Sample 的 headless 探测目标不符。
+M8/M25 要求「DXR 示范 + 可关降级」。W4 先落地探测与 stub contract；W7 在 D3D12 上补最小真 AS 构建与 `DispatchRays` 尝试（仍非生产级 fullscreen 合成）。
 
 ## 决策
 
 1. **M25 验收面**：真实设备能力探测（`ProbeDxrHardwareSupport` / D3D12 `OPTIONS5`）+ `CanRunDxrDemo` + `Resolve`/`EnsureSafe` 降级契约；无能力时 **SKIP exit 0**，禁止硬崩。  
-2. **W4 加深**：增加 **stub dispatch contract**：
-   - `DxrShadowDemo`：在 `raytracing` + shadows 门控为真时，**记录**「阴影示范 pass WOULD run」；
-   - `RunDxrFullscreenStub(IDevice&)`：返回 `Ok` / `Unavailable`，表示 fullscreen demo **本会** DispatchRays；
-   - `TryEmptyTlasPrebuild`：在已有 DXR 头/设备时查询 **empty TLAS** prebuild 尺寸，否则以清晰 `Unavailable` Status 跳过。  
-   **完整 `DispatchRays` + SBT + 画面合成仍属下一里程碑**（过重则不在本波硬塞）。  
-3. **不在本 ADR 范围**：生产级 AS 构建、多 bounce 路径追踪、Vulkan Ray Tracing 帧（VK RT 继续 Feature=false / SKIP，见 VULKAN_PARITY）。  
-4. 若后续要「一帧 fullscreen DXR 效果」，须另开里程碑；届时仍须保留关闭 RT → 光栅阴影回退。  
+2. **W4 stub contract**（保留）：
+   - `DxrShadowDemo`：门控为真时记录 WOULD run；
+   - `RunDxrFullscreenStub`：Feature 关闭 → Unavailable；
+   - `TryEmptyTlasPrebuild`：empty TLAS prebuild 或清晰 Unavailable。  
+3. **W7 加深**：
+   - `TryBuildCubeBlasTlasAndDispatchRays`：DXR 硬件上建三角 BLAS + TLAS；若 `dxr_shadow_lib.cso` 可用则建 RTPSO 并 `DispatchRays`（8×8）；StateObject/lib 缺失时 **AS 已建仍返回 Ok** 并 LogInfo。  
+   - `DxrShadowDemo` / `RunDxrFullscreenStub` 优先走真实路径，失败再回退 empty-TLAS stub。  
+4. **不在本 ADR 范围**：生产级多 bounce、画面合成、Vulkan Ray Tracing（VK RT 继续 Feature=false / SKIP）。  
 5. `DxrDemoConfig.max_bounces` 仍为预留字段；`Resolve` 不读取。
 
 ## 备选方案
@@ -28,12 +29,12 @@ M8/M25 要求「DXR 示范 + 可关降级」。完整 BLAS/TLAS、SBT、raygen/m
 
 ## 后果
 
-- 优点：门控诚实、可测；W4 有可调用的 stub 契约而不假称已出光追画面。  
-- 代价：Sample 仍不发射 rays；「会跑 DXR」表示能力/配置/`would_run`/`Ok` stub，不表示画面已是光追。
+- 优点：门控诚实；有硬件时可验证 AS + DispatchRays；无 lib/PSO 时不假装已出光追画面。  
+- 代价：仍非 sandbox 合成路径；「会跑 DXR」在无 HW 时仍可能是 stub Ok。
 
 ## 学习提示
 
 1. 先问「能不能跑」，再问「怎么画」。  
 2. `features.raytracing` 可由设备 init 或 `ProbeDxrHardwareSupport` 写入 override。  
-3. Vulkan RT 对齐仍是有意差，不要在本 Sample 里假装已对等。  
-4. `RunDxrFullscreenStub` 的 Ok ≠ DispatchRays 已执行。
+3. Vulkan RT 对齐仍是有意差。  
+4. W7：`RunDxrFullscreenStub` Ok 可能表示真实 `DispatchRays`，也可能是 AS-only / empty-TLAS 回退——看日志。

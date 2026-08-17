@@ -83,6 +83,8 @@ struct EffectTuning {
   // M26/C04 cinematic (0 = off).
   float vignette_strength = 0.f;
   float film_grain_strength = 0.f;
+  // W7/C04: RGB channel split (0 = off).
+  float chromatic_aberration = 0.f;
 };
 
 class RenderSystem {

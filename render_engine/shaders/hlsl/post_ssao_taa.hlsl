@@ -42,6 +42,8 @@ cbuffer PostCB : register(b0) {
   float g_jitter_y;
   float g_vignette_strength;
   float g_film_grain_strength;
+  float g_chromatic_aberration;
+  float g_pad_chroma;
 };
 
 Texture2D g_scene_color : register(t0);
@@ -342,6 +344,18 @@ float4 PSMain(VSOut input) : SV_Target {
   if (g_film_grain_strength > 1e-4) {
     float n = frac(sin(dot(uv * 1129.0 + g_eye.xy, float2(12.9898, 78.233))) * 43758.5453);
     color += (n - 0.5) * g_film_grain_strength;
+  }
+
+  // W7/C04: simple chromatic aberration (RGB sample offset from center).
+  if (g_chromatic_aberration > 1e-4) {
+    float2 from_c = uv - 0.5;
+    float2 dir = from_c * g_chromatic_aberration * 0.02;
+    float3 split;
+    split.r = g_scene_color.Sample(g_linear, saturate(uv + dir)).r;
+    split.g = color.g;
+    split.b = g_scene_color.Sample(g_linear, saturate(uv - dir)).b;
+    // Re-apply only chroma; keep tonemap/fog already baked into green path approx.
+    color = lerp(color, split, saturate(g_chromatic_aberration));
   }
 
   return float4(color, 1.0);

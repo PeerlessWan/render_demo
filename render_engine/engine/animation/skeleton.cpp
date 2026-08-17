@@ -1,9 +1,12 @@
 #include "engine/animation/skeleton.h"
 
+#include "engine/animation/gpu_skin_d3d12.h"
 #include "engine/core/feature.h"
+#include "engine/core/log.h"
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 namespace engine::animation {
 namespace {
@@ -93,14 +96,14 @@ Vec3 SkinVertexCpu(const Vec3& pos, const SkinPose& pose, const int bones[4],
 }
 
 bool GpuSkinningAvailable() {
-  // Default off until a CS PSO + skin buffer path ships; Feature override for host experiments.
+  // Feature override gates the hot path; D3D12 CS runs when skin_cs.cso + probe device succeed.
   return QueryFeature("gpu_skinning");
 }
 
 void SkinVerticesGpuDispatchStub(const std::vector<Vec3>& bind_positions, const SkinPose& pose,
                                  const std::vector<int>& bones4, const std::vector<float>& weights4,
                                  std::vector<Vec3>& out_positions) {
-  // Same contract as a future compute-skin dispatch writing out_positions.
+  // Same contract as skin_cs.hlsl / SkinVerticesGpuDispatch writing out_positions.
   out_positions.resize(bind_positions.size());
   for (std::size_t i = 0; i < bind_positions.size(); ++i) {
     int bones[4] = {0, 0, 0, 0};
@@ -113,6 +116,29 @@ void SkinVerticesGpuDispatchStub(const std::vector<Vec3>& bind_positions, const 
     }
     out_positions[i] = SkinVertexCpu(bind_positions[i], pose, bones, weights);
   }
+}
+
+Status SkinVerticesComputeCpuReference(const std::vector<Vec3>& bind_positions,
+                                       const SkinPose& pose, const std::vector<int>& bones4,
+                                       const std::vector<float>& weights4,
+                                       std::vector<Vec3>& out_positions) {
+  SkinVerticesGpuDispatchStub(bind_positions, pose, bones4, weights4, out_positions);
+  return Status::Ok();
+}
+
+void SkinVerticesGpuDispatch(const std::vector<Vec3>& bind_positions, const SkinPose& pose,
+                             const std::vector<int>& bones4, const std::vector<float>& weights4,
+                             std::vector<Vec3>& out_positions) {
+  if (GpuSkinningAvailable()) {
+    const Status st =
+        DispatchGpuSkinD3d12Status(bind_positions, pose, bones4, weights4, out_positions, {});
+    if (st) {
+      return;
+    }
+    LogInfo(std::string("SkinVerticesGpuDispatch: D3D12 CS unavailable (") + st.message() +
+            "); using CPU stub");
+  }
+  SkinVerticesGpuDispatchStub(bind_positions, pose, bones4, weights4, out_positions);
 }
 
 void ApplyMorphTargets(const std::vector<Vec3>& bind_positions,
