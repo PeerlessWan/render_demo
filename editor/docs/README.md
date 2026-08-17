@@ -1,6 +1,6 @@
 # editor 文档索引
 
-> 独立视口编辑器。不是 `render_engine` 的一部分；不做材质节点图全家桶（除非改定位）。
+> 独立视口编辑器。不是 `render_engine` 的一部分；**规格与排期只在本目录**，不进 `render_engine/docs`。不做材质节点图全家桶（除非改定位）。
 
 | 你想… | 先看 |
 |---|---|
@@ -10,6 +10,8 @@
 | 硬约束 | [CONSTRAINTS.md](CONSTRAINTS.md) |
 | 排期 | [PLAN.md](PLAN.md) |
 | 缺口 | [GAPS.md](GAPS.md) |
+| ADR | [ADR_INDEX.md](ADR_INDEX.md) |
+| 对标主流还缺什么 | [GAPS.md](GAPS.md)（§0 口径；§2 一期；§3 后置；§4 刻意不做） |
 
 ## 与其它文档
 

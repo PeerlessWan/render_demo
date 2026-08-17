@@ -368,6 +368,16 @@ class JoltWorld final : public IPhysicsWorld {
 
   const char* backend_name() const override { return "jolt"; }
 
+  bool ApplyImpulse(int body_id, const Vec3& impulse) override {
+    if (body_id < 0 || body_id >= static_cast<int>(body_ids_.size())) {
+      return false;
+    }
+    const JPH::BodyID id = body_ids_[static_cast<std::size_t>(body_id)];
+    physics_.GetBodyInterface().AddImpulse(
+        id, JPH::Vec3(impulse.x, impulse.y, impulse.z));
+    return true;
+  }
+
   int CreateSoftBody(const SoftBodyDesc& desc) override {
     const int grid = std::clamp(desc.grid, 2, 16);
     const float cell = desc.cell > 1e-4f ? desc.cell : 0.2f;

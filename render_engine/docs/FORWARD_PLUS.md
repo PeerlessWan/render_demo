@@ -7,7 +7,7 @@
 产品 **不透明 lit** 路径为 **Forward+**：
 
 - 单次（或少量）HDR color + depth 写入；**无** deferred G-buffer（无 Albedo/Normal/ORM MRT 布局）。  
-- 方向光 + CSM；局部点/聚光在 lit 像素着色器中累加（C02：最多 16 上传，≤2 Atlas 阴影；CPU `AssignLightsToTiles` 为 Forward+ 粗网格列表，非完整 GPU 集群）。  
+- 方向光 + CSM；局部点/聚光在 lit 像素着色器中累加（C02：最多 16 上传，≤2 Atlas 阴影；Mega-W8：CPU `AssignLightsToTiles` 打包进 FrameCB，lit PS 按 8×4 tile 累加，非完整 GPU 集群）。  
 - SSAO / TAA / SSR / Bloom / Fog / Tonemap 等在 **后处理** 消费 color/depth，不改变 Forward+ 主路径定义。
 
 ## FrameGraph Pass 名（冻结）

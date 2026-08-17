@@ -3,6 +3,8 @@
 #include "engine/animation/skeleton.h"
 #include "engine/assets/gltf_loader.h"
 #include "engine/assets/image_loader.h"
+#include "engine/assets/asset_hot_reload.h"
+#include "engine/assets/shader_hot_reload.h"
 #include "engine/assets/streaming_budget.h"
 #include "engine/core/log.h"
 #include "engine/debug/console.h"
@@ -970,9 +972,23 @@ int main(int argc, char** argv) {
   engine::LogInfo(std::string("Audio backend: ") + audio->backend_name());
   engine::LogInfo("Sandbox: LMB/RMB look | Wheel zoom | MMB pan | F1 FX | F3 grid | F4 axes | F5 record BMP");
 
+  // C16 / Mega-W8: optional hot-reload poll (host Consume logs; full PSO rebuild left to host).
+  engine::assets::ShaderHotReload shader_hot;
+  shader_hot.SetShaderDir(shader_dir);
+  engine::assets::AssetHotReload asset_hot;
+  asset_hot.SetRoot(std::filesystem::path(ENGINE_CONTENT_DIR_A));
+  (void)shader_hot.Poll();
+  (void)asset_hot.Poll();
+
   bool headless_assert_failed = false;
   const auto status = a.Run([&](engine::Application& app_ref) {
     profiler.Begin("Frame");
+    if (shader_hot.Poll() && shader_hot.ConsumePsoRebuildRequest()) {
+      engine::LogInfo("ShaderHotReload: PSO rebuild requested (host may reload shaders)");
+    }
+    if (asset_hot.Poll() && asset_hot.ConsumeInvalidateRequest()) {
+      engine::LogInfo("AssetHotReload: texture/mesh change detected (host may invalidate)");
+    }
     // Q1 golden/deterministic: freeze physics + particles under gpu-headless assert.
     if (!gpu_headless_assert) {
       physics->Step(app_ref.delta_time());

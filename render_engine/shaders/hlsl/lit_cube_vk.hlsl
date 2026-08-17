@@ -38,6 +38,13 @@ cbuffer FrameCB : register(b0) {
   float g_pad_j0;
   float g_pad_j1;
   float4 g_local_ies[4];  // C03/W7
+  // Mega-W8 C02: packed Forward+ tile light lists (8×4, ≤8 / tile).
+  float g_enable_tiled_lights;
+  float g_tile_grid_w;
+  float g_tile_grid_h;
+  float g_max_lights_per_tile;
+  float4 g_tile_light_count[8];
+  float4 g_tile_light_index[64];
 };
 
 cbuffer ObjectCB : register(b1) {
@@ -300,6 +307,37 @@ float SpotConeAtten(int light_index, float3 light_to_frag) {
   return cone * IesProfileAtten(light_index, cos_theta);
 }
 
+float2 ScreenUvFromWorld(float3 world_pos) {
+  float4 clip = mul(g_view_proj, float4(world_pos, 1.0f));
+  float2 ndc = clip.xy / max(abs(clip.w), 1e-5);
+  return saturate(ndc * 0.5f + 0.5f);
+}
+
+int TileIndexFromScreenUv(float2 uv) {
+  int gw = max((int)g_tile_grid_w, 1);
+  int gh = max((int)g_tile_grid_h, 1);
+  float u = min(uv.x, 0.999f);
+  float v = min(uv.y, 0.999f);
+  int tx = min((int)(u * (float)gw), gw - 1);
+  int ty = min((int)(v * (float)gh), gh - 1);
+  return ty * gw + tx;
+}
+
+float3 AccumulateLocalLight(int i, float3 world_pos, float3 n, float3 diffuse, float ao) {
+  float3 lpos = g_local_pos_range[i].xyz;
+  float range = max(g_local_pos_range[i].w, 1e-3);
+  float3 to_l = lpos - world_pos;
+  float dist = length(to_l);
+  float3 ld = to_l / max(dist, 1e-5);
+  float atten = saturate(1.0 - dist / range);
+  atten *= atten;
+  atten *= SpotConeAtten(i, world_pos - lpos);
+  float nd = saturate(dot(n, ld));
+  float3 lcol = g_local_color_intensity[i].rgb * g_local_color_intensity[i].a;
+  float lsh = LocalShadowFactor(world_pos, i);
+  return diffuse * nd * lcol * atten * ao * lsh;
+}
+
 float4 PSMain(VSOutput input) : SV_Target {
   float3 n = normalize(input.world_normal);
   // Match D3D lit_cube.hlsl: drop near-camera floor fragments that become a floating slab.
@@ -370,22 +408,29 @@ float4 PSMain(VSOutput input) : SV_Target {
   }
 
   int lc = (int)g_local_count;
-  [unroll] for (int i = 0; i < 16; ++i) {
-    if (i >= lc) {
-      break;
+  if (g_enable_tiled_lights > 0.5f && lc > 0) {
+    int tile = TileIndexFromScreenUv(ScreenUvFromWorld(input.world_pos));
+    int count = (int)g_tile_light_count[tile >> 2][tile & 3];
+    count = min(count, max((int)g_max_lights_per_tile, 0));
+    count = min(count, 8);
+    [unroll] for (int s = 0; s < 8; ++s) {
+      if (s >= count) {
+        break;
+      }
+      int flat = tile * 8 + s;
+      int i = (int)g_tile_light_index[flat >> 2][flat & 3];
+      if (i < 0 || i >= lc) {
+        continue;
+      }
+      lit += AccumulateLocalLight(i, input.world_pos, n, diffuse, tex_ao);
     }
-    float3 lpos = g_local_pos_range[i].xyz;
-    float range = max(g_local_pos_range[i].w, 1e-3);
-    float3 to_l = lpos - input.world_pos;
-    float dist = length(to_l);
-    float3 ld = to_l / max(dist, 1e-5);
-    float atten = saturate(1.0 - dist / range);
-    atten *= atten;
-    atten *= SpotConeAtten(i, input.world_pos - lpos);
-    float nd = saturate(dot(n, ld));
-    float3 lcol = g_local_color_intensity[i].rgb * g_local_color_intensity[i].a;
-    float lsh = LocalShadowFactor(input.world_pos, i);
-    lit += diffuse * nd * lcol * atten * tex_ao * lsh;
+  } else {
+    [unroll] for (int i = 0; i < 16; ++i) {
+      if (i >= lc) {
+        break;
+      }
+      lit += AccumulateLocalLight(i, input.world_pos, n, diffuse, tex_ao);
+    }
   }
 
   const float alpha = saturate(g_base_color.a);

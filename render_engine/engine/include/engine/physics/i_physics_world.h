@@ -60,6 +60,9 @@ class IPhysicsWorld {
   virtual bool SoftBodyGetVertices(int /*id*/, std::vector<Vec3>& /*out_world*/) { return false; }
   [[nodiscard]] virtual int SoftBodyGetIndexCount(int /*id*/) const { return 0; }
   virtual bool SoftBodyGetIndices(int /*id*/, std::vector<std::uint32_t>& /*out*/) { return false; }
+
+  // Mega-W8 buoyancy: apply linear impulse (Δv = impulse / mass). Default false.
+  virtual bool ApplyImpulse(int /*body_id*/, const Vec3& /*impulse*/) { return false; }
 };
 
 std::unique_ptr<IPhysicsWorld> CreateBuiltinPhysicsWorld();

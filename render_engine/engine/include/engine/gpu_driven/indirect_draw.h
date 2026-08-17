@@ -23,13 +23,14 @@ void FillIndirectArgs(IndirectDrawArgs& out, std::uint32_t index_count, std::uin
 // CPU cull (frustum + optional HiZ) → compact visible worlds + single IndirectDrawArgs batch.
 // Acts as the "CS write IndirectArgs" stand-in until a GPU cull CS ships; same contract.
 // M26/C08: reserves capacity and front-to-back sorts survivors for early-Z.
-// W6: meshlet path remains Feature-gated (see MeshletPathAvailable); cull stays Indirect.
+// W6/W8: meshlet path Feature-gated (see MeshletPathAvailable / meshlet.h); cull stays Indirect.
 std::uint32_t CullInstancesToIndirect(std::span<const Mat4> worlds, std::span<const Aabb> local_bounds,
                                       const Mat4& view_proj, const render::OcclusionBuffer* occ,
                                       std::vector<Mat4>& out_visible, IndirectDrawArgs& out_args,
                                       std::uint32_t index_count_per_instance);
 
-// W6/C08: Meshlet / Mesh Shader path. Default false; override Feature "meshlet" for experiments.
+// C08: Meshlet / Mesh Shader path. Default false; Feature "meshlet" for experiments.
+// Cull/cook live in meshlet.h (CullMeshletsToIndirect / MeshletizeAabbGrid).
 [[nodiscard]] bool MeshletPathAvailable();
 
 // Pack IndirectDrawArgs as 5×u32 for UploadIndirectIndexedArgs.

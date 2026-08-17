@@ -171,8 +171,20 @@ if(ENGINE_WITH_VULKAN)
     VERBATIM
   )
   add_custom_target(sample_sandbox_vk_cull DEPENDS "${_vk_cull_cs}")
+  # Mega-W8 C12: GPU skin CS → SPIR-V
+  set(_vk_skin_cs "${_shader_out}/skin_cs_vk.cs.spv")
+  add_custom_command(
+    OUTPUT "${_vk_skin_cs}"
+    COMMAND "${DXC_EXECUTABLE}" -T cs_6_0 -E CSMain -spirv -fspv-target-env=vulkan1.1
+            -fvk-use-dx-layout -Fo "${_vk_skin_cs}"
+            "${CMAKE_SOURCE_DIR}/shaders/hlsl/skin_cs_vk.hlsl"
+    DEPENDS "${CMAKE_SOURCE_DIR}/shaders/hlsl/skin_cs_vk.hlsl"
+    COMMENT "DXC SPIR-V compile skin_cs_vk CS"
+    VERBATIM
+  )
+  add_custom_target(sample_sandbox_vk_skin DEPENDS "${_vk_skin_cs}")
   add_dependencies(sample_sandbox
     sample_sandbox_vk_lit sample_sandbox_vk_post sample_sandbox_vk_shadow
     sample_sandbox_vk_sky sample_sandbox_vk_ui sample_sandbox_vk_debug sample_sandbox_vk_quad
-    sample_sandbox_vk_cull)
+    sample_sandbox_vk_cull sample_sandbox_vk_skin)
 endif()

@@ -2,7 +2,9 @@
 
 #include "http_httplib.h"
 
+#include "engine/core/feature.h"
 #include "engine/core/log.h"
+#include "engine/net/quic.h"
 
 #include <mutex>
 #include <queue>
@@ -123,18 +125,32 @@ class LoopbackWebSocket final : public IWebSocket {
   std::queue<std::string> inbox_;
 };
 
-class QuicStub final : public IQuicEndpoint {
+// ADR 0031: MsQuic optional when present (probe DLL/lib); else Unavailable SKIP.
+class QuicEndpointHook final : public IQuicEndpoint {
  public:
-  Status Connect(std::string_view, int) override {
-    return Status::Fail(ErrorCode::Unavailable,
-                        "QUIC SKIP this wave: MsQuic not bundled (see ADR 0031)");
+  QuicEndpointHook() { present_ = ProbeMsQuicPresent(); }
+
+  Status Connect(std::string_view host, int port) override {
+    const Status st = TryQuicConnectStub(host, port);
+    // supported() tracks probe / Feature; Connect still honest Unavailable until wired.
+    present_ = ProbeMsQuicPresent() || QueryFeature("quic");
+    return st;
   }
   Status SendReliable(std::string_view) override {
+    if (!supported()) {
+      return Status::Fail(ErrorCode::Unavailable,
+                          "QUIC Unavailable SKIP: MsQuic not present (ADR 0031 optional enable)");
+    }
     return Status::Fail(ErrorCode::Unavailable,
-                        "QUIC SKIP this wave: MsQuic not bundled (see ADR 0031)");
+                        "QUIC link stub: SendReliable not wired (ADR 0031 optional)");
   }
   Status Close() override { return Status::Ok(); }
-  bool supported() const override { return false; }
+  bool supported() const override {
+    return present_ || QueryFeature("quic");
+  }
+
+ private:
+  bool present_ = false;
 };
 
 }  // namespace
@@ -142,7 +158,7 @@ class QuicStub final : public IQuicEndpoint {
 NetSystem::NetSystem()
     : http_(std::make_unique<RoutingHttp>(CreateHttplibHttpClient())),
       ws_(std::make_unique<LoopbackWebSocket>()),
-      quic_(std::make_unique<QuicStub>()) {}
+      quic_(std::make_unique<QuicEndpointHook>()) {}
 
 NetSystem::~NetSystem() = default;
 

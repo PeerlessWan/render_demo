@@ -231,6 +231,18 @@ class BuiltinWorld final : public IPhysicsWorld {
 
   bool SoftBodyGetIndices(int /*id*/, std::vector<std::uint32_t>& /*out*/) override { return false; }
 
+  bool ApplyImpulse(int body_id, const Vec3& impulse) override {
+    if (body_id < 0 || body_id >= static_cast<int>(bodies_.size())) {
+      return false;
+    }
+    auto& b = bodies_[static_cast<std::size_t>(body_id)];
+    if (b.mass <= 0.f || b.is_character) {
+      return false;
+    }
+    b.velocity = b.velocity + impulse * (1.f / b.mass);
+    return true;
+  }
+
  private:
   std::vector<Body> bodies_;
 };

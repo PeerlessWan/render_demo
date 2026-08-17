@@ -53,27 +53,27 @@
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
 | C01 | 产品级 Deferred / Forward+ 路径钉死 | **已落地（M26）**：Forward+ 钉死 + Pass 名冻结；见 [FORWARD_PLUS.md](FORWARD_PLUS.md)、[ADR 0032](learn/adr/0032-m26-forward-plus-cluster.md) | 高（影响扩展方式） |
-| C02 | 集群 / 分块多灯光 | **部分落地（M26/W4）**：CPU≤16 / FrameCB≤16 / Atlas 阴影≤2；CPU `AssignLightsToTiles`（8×4 Forward+ 列表，非完整 GPU 集群） | 高 |
-| C03 | IES / Light Function | **部分落地（W7）**：`EvalIesFactor` / `SampleIesLut` + lit `g_local_ies`；非完整 IES 文件生态 | 中 |
-| C04 | 更细电影级镜头后处理 | **部分落地（M26/W7）**：vignette + film grain + `chromatic_aberration`（默认 0） | 低 |
-| C05 | 大气 / 体积云 / 天气降水 | **部分落地（W4/W7）**：`EvalSkyColor` + `EvalCloudBand` / `CoupleFogWithAtmosphere`；F1 大气/云带；完整天气后置 | 中 |
+| C02 | 集群 / 分块多灯光 | **Mega-W8 热路径**：CPU `AssignLightsToTiles` → `FrameCB` 打包（8×4、≤8/tile）；lit PS 按屏幕 UV 累加；`EffectTuning::enable_tiled_lights` 默认开 | 高 |
+| C03 | IES / Light Function | **Mega-W8**：IES 文本→LUT + lit 采样；Light Function 示意级 | 中 |
+| C04 | 更细电影级镜头后处理 | **Mega-W8**：vignette/grain/色差 + 畸变/脏点/眩光（默认 0） | 低 |
+| C05 | 大气 / 体积云 / 天气降水 | **Mega-W8**：`WeatherSystem` + 降水/积雪/雷闪；大气见 W4/W7 | 中 |
 
 ### 4.2 几何与开放世界加深
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C06 | Virtual Texture 产品化 | 与「无 VT 全家桶」缺陷对应的加深项 | 中（成本高） |
-| C07 | HLOD / Impostor | 超大场景层级；现有仅 LOD/实例 | 中 |
-| C08 | Meshlet / 更完整 GPU 几何管线 | **部分落地（M26/W6）**：`Path::MeshShader` + `MeshletPathAvailable`（Feature `meshlet`）门控 SKIP；Indirect Cull 保留 | 中 |
-| C09 | FFT / 高级水面 | **部分落地（W6）**：`AnimateWaterPatch` Gerstner 式高度/法线；完整 FFT 海洋后置 | 低 |
+| C06 | Virtual Texture 产品化 | **最小落地（W8）**：`engine/vt` 页表/缓存/请求/Sample；非 Nanite | 中 |
+| C07 | HLOD / Impostor | 超大场景层级；本波外置 | 中 |
+| C08 | Meshlet / 更完整 GPU 几何管线 | **加深（W8）**：cook + Cull；MS PSO stub | 中 |
+| C09 | FFT / 高级水面 | **Mega-W8**：无限平铺 FFT 海 + 浮力 | 低 |
 
 ### 4.3 动画与角色
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C10 | 动画混合树 / 状态机 | **部分落地（M26/W6）**：`AnimationStateMachine` + `SampleBlend` 多 clip 权重；完整混合树图后置 | 高（上层常自建） |
-| C11 | IK | 足部/瞄准等 | 中 |
-| C12 | GPU 蒙皮产品化打磨 | **部分落地（W7）**：`GpuSkinningAvailable` + `SkinVerticesGpuDispatch`（Feature `gpu_skinning`）→ D3D12 `skin_cs.hlsl` / `TryDispatchGpuSkinD3d12`；失败回退 CPU stub；VK SKIP | 低 |
+| C10 | 动画混合树 / 状态机 | **Mega-W8**：Blend1D/2D + mask + AnimNotify + SampleTree | 高 |
+| C11 | IK | **Mega-W8**：`SolveTwoBoneIK` | 中 |
+| C12 | GPU 蒙皮产品化打磨 | **Mega-W8**：D3D12 + Vulkan CS 蒙皮 | 低 |
 
 ### 4.3b 物理加深
 
@@ -104,7 +104,7 @@
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| **C19** | `IScriptHost` 抽象（默认可空） | 见 [game_kit/docs](../../game_kit/docs/README.md)；VM 在外层 | 中 |
+| **C19** | `IScriptHost` 抽象（默认可空） | **stub 已落地**：`engine/script/i_script_host.h`（`NullScriptHost`）；VM 在外层 | 中 |
 | **C20** | 轻量内容工具 | **部分落地（M26）**：`tools/content_lint` 校验 manifest + 打印依赖；场景图/视口编辑器仍外置 | 中 |
 | **C21** | 独立 `editor/` 视口编辑器 | 工作区独立工程；**规格/排期不在本目录**（见 [LAYERS](../../docs/LAYERS.md)） | 低～中 |
 

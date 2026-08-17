@@ -43,7 +43,11 @@ cbuffer PostCB : register(b0) {
   float g_vignette_strength;
   float g_film_grain_strength;
   float g_chromatic_aberration;
-  float g_pad_chroma;
+  float g_lens_distortion;
+  float g_light_dirt_strength;
+  float g_flare_strength;
+  float g_pad_c04_a;
+  float g_pad_c04_b;
 };
 
 Texture2D g_scene_color : register(t0);
@@ -356,6 +360,26 @@ float4 PSMain(VSOut input) : SV_Target {
     split.b = g_scene_color.Sample(g_linear, saturate(uv - dir)).b;
     // Re-apply only chroma; keep tonemap/fog already baked into green path approx.
     color = lerp(color, split, saturate(g_chromatic_aberration));
+  }
+
+  // Mega-W8 C04: mild barrel/pincushion resample (strength 0 = off).
+  if (g_lens_distortion > 1e-4) {
+    float2 from_c = uv - 0.5;
+    float r2 = dot(from_c, from_c);
+    float2 duv = from_c * (1.0 + g_lens_distortion * r2);
+    float3 distorted = g_scene_color.Sample(g_linear, saturate(duv + 0.5)).rgb;
+    color = lerp(color, distorted, saturate(g_lens_distortion));
+  }
+
+  // Mega-W8 C04: cheap dirt / anamorphic flare stubs (screen-space, strength 0 = off).
+  if (g_light_dirt_strength > 1e-4 || g_flare_strength > 1e-4) {
+    float2 from_c = uv - 0.5;
+    float dirt = saturate(1.0 - length(from_c) * 1.4);
+    dirt *= dirt;
+    float grain = frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);
+    color += dirt * g_light_dirt_strength * (0.55 + 0.45 * grain) * float3(1.0, 0.92, 0.85);
+    float streak = saturate(1.0 - abs(from_c.y) * 8.0) * saturate(1.0 - abs(from_c.x) * 1.2);
+    color += streak * g_flare_strength * float3(1.0, 0.85, 0.55);
   }
 
   return float4(color, 1.0);

@@ -17,4 +17,4 @@
 
 引擎侧接入契约：[../render_engine/docs/HOSTING.md](../render_engine/docs/HOSTING.md)。
 
-**现状：** 仅文档；代码未开始。建议在 `render_engine` M4–M9 公开 API 可用后再实现。
+**现状：** GK0–GK3 代码已落地（`hello_playable` / `third_person`）；**测试等引擎加深会话 98eb28cc 收口后再跑。**

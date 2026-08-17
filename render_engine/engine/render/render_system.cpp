@@ -5,6 +5,7 @@
 #include "engine/render/local_lights.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -357,6 +358,25 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   lighting.enable_ibl = effect_.enable_ibl && env.has_ibl();
   lighting.ibl_intensity = effect_.ibl_intensity;
 
+  // Mega-W8 C02: CPU-pack AssignLightsToTiles → FrameCB for lit PS hot path.
+  lighting.enable_tiled_lights = effect_.enable_tiled_lights;
+  lighting.tile_light_count.fill(0);
+  lighting.tile_light_index.fill(-1);
+  if (lighting.enable_tiled_lights && lighting.local_light_count > 0) {
+    std::vector<std::vector<int>> tiles;
+    AssignLightsToTiles(packed_lights, lighting.view_proj, kLightTileGridW, kLightTileGridH,
+                        tiles);
+    std::array<int, kLightTileCount> counts{};
+    std::array<int, kTileLightIndexCount> indices{};
+    PackTileLightLists(tiles, counts, indices);
+    for (int t = 0; t < kLightTileCount; ++t) {
+      lighting.tile_light_count[static_cast<std::size_t>(t)] = counts[static_cast<std::size_t>(t)];
+    }
+    for (int i = 0; i < kTileLightIndexCount; ++i) {
+      lighting.tile_light_index[static_cast<std::size_t>(i)] = indices[static_cast<std::size_t>(i)];
+    }
+  }
+
   if (quality_.multithread_submit) {
     rhi::SubmitConfig cfg;
     cfg.multithread = true;
@@ -565,6 +585,9 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       post.vignette_strength = effect_.vignette_strength;
       post.film_grain_strength = effect_.film_grain_strength;
       post.chromatic_aberration = effect_.chromatic_aberration;
+      post.lens_distortion = effect_.lens_distortion;
+      post.light_dirt_strength = effect_.light_dirt_strength;
+      post.flare_strength = effect_.flare_strength;
       if (auto st = device.ResolvePostEffects(post); !st) {
         LogError(st.message());
       }

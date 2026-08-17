@@ -17,4 +17,4 @@
 引擎侧：[../render_engine/docs/HOSTING.md](../render_engine/docs/HOSTING.md)（C21）、[TOOLING.md](../render_engine/docs/TOOLING.md)。  
 品类 / 游戏：[../genre_kits/README.md](../genre_kits/README.md) · [../games/README.md](../games/README.md)。
 
-**现状：** 仅文档；**不**阻塞 `render_engine` M1–M25。默认内容路径仍是外部 DCC + CLI。
+**现状：** ED0–ED3 已落地；另有 Voxel 模式（与 `games/minecraft` 同一世界目录，纯色方块）。**测试等引擎会话收口后再跑。**

@@ -54,4 +54,11 @@ void AnimateWaterPatch(TerrainMesh& mesh, float time, float amplitude = 0.15f,
 TerrainMesh BuildAnimatedWaterPatchMesh(float half_extent, int segments, float time,
                                         float amplitude = 0.15f);
 
+// Mega-W8: sample a periodic heightfield with world origin (infinite tiling helper).
+float SampleHeightTiled(const Heightmap& map, float x, float z, float origin_x, float origin_z);
+
+// Displace water mesh Y/normals from a heightmap (world XZ), foam packed into UV.x from slope.
+void AnimateWaterPatchFromHeightfield(TerrainMesh& mesh, const Heightmap& field, float origin_x,
+                                      float origin_z, float foam_scale = 2.5f);
+
 }  // namespace engine::terrain

@@ -85,6 +85,12 @@ struct EffectTuning {
   float film_grain_strength = 0.f;
   // W7/C04: RGB channel split (0 = off).
   float chromatic_aberration = 0.f;
+  // Mega-W8 C04: lens barrel/pincushion + dirt/flare strengths (0 = off).
+  float lens_distortion = 0.f;
+  float light_dirt_strength = 0.f;
+  float flare_strength = 0.f;
+  // Mega-W8 C02: lit PS consumes packed tile light lists instead of scanning 0..15.
+  bool enable_tiled_lights = true;
 };
 
 class RenderSystem {

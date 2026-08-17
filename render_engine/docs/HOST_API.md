@@ -56,6 +56,16 @@ include/engine/
 - 直接创建 Device / Swapchain（由 Application 拥有）  
 - 修改后端 PSO 字节码路径  
 
+## 4.1 脚本绑定白名单（v0 冻结摘要）
+
+> 与 [HOSTING.md](HOSTING.md) §5.4、[game_kit SCRIPTING](../../game_kit/docs/SCRIPTING.md) 对齐。破坏性变更走 ADR。
+
+**允许（经 Facade / 外层 VM）：** Node 变换与层级、Prefab 生成/销毁、Timer/Event、LevelFlow、Action 只读、Raycast、Audio 播放、UI 显隐/文本、Asset RequestLoad。  
+
+**禁止：** 创建/枚举 Device、改 PSO/描述符、持有 GPU 裸指针、在非主线程未入队写 Scene。  
+
+**引擎侧可选抽象：** `engine::script::IScriptHost`（KNOWN_GAPS **C19**），默认 `NullScriptHost`；VM 仍在 `game_kit` / 插件。
+
 ## 5. 回调与线程
 
 1. 资产/网络完成回调：仅主线程、对应 `Pump` 之后。  

@@ -20,6 +20,9 @@ inline constexpr int kMaxLocalShadowLights = 2;  // Shadow Atlas cubemap/spot sl
 inline constexpr int kLightTileGridW = 8;
 inline constexpr int kLightTileGridH = 4;
 inline constexpr int kLightTileCount = kLightTileGridW * kLightTileGridH;
+// Mega-W8 C02: packed into FrameCB / lit PS (max lights accumulated per tile).
+inline constexpr int kMaxLightsPerTile = 8;
+inline constexpr int kTileLightIndexCount = kLightTileCount * kMaxLightsPerTile;
 
 struct LocalLight {
   int id = 0;
@@ -48,6 +51,16 @@ struct LocalLight {
 void AssignLightsToTiles(const std::vector<LocalLight>& lights, const Mat4& view_proj,
                          int grid_w, int grid_h,
                          std::vector<std::vector<int>>& out_tiles);
+
+// Flatten AssignLightsToTiles output into fixed FrameCB arrays (≤kMaxLightsPerTile each).
+void PackTileLightLists(const std::vector<std::vector<int>>& tiles,
+                        std::array<int, kLightTileCount>& out_counts,
+                        std::array<int, kTileLightIndexCount>& out_indices);
+
+// CPU eval path matching lit PS tile pick from screen UV in [0,1] (NDC mapped).
+void EvalTiledLightList(const std::array<int, kLightTileCount>& counts,
+                        const std::array<int, kTileLightIndexCount>& indices, float u, float v,
+                        std::vector<int>& out_lights);
 
 // Packs local-light shadow maps into ShadowAtlas (CPU schedule; GPU cube/2D writes later).
 class LocalLightShadowScheduler {

@@ -183,4 +183,51 @@ TerrainMesh BuildAnimatedWaterPatchMesh(float half_extent, int segments, float t
   return mesh;
 }
 
+float SampleHeightTiled(const Heightmap& map, float x, float z, float origin_x, float origin_z) {
+  if (map.width < 2 || map.height < 2 || map.samples.empty() || map.cell <= 1e-8f) {
+    return 0.f;
+  }
+  const float extent_x = static_cast<float>(map.width - 1) * map.cell;
+  const float extent_z = static_cast<float>(map.height - 1) * map.cell;
+  auto wrap = [](float v, float extent) {
+    float t = std::fmod(v, extent);
+    if (t < 0.f) {
+      t += extent;
+    }
+    return t;
+  };
+  return SampleHeight(map, wrap(x - origin_x, extent_x), wrap(z - origin_z, extent_z));
+}
+
+void AnimateWaterPatchFromHeightfield(TerrainMesh& mesh, const Heightmap& field, float origin_x,
+                                      float origin_z, float foam_scale) {
+  if (mesh.positions.size() < 3 || field.width < 2 || field.height < 2) {
+    return;
+  }
+  const std::size_t n = mesh.positions.size() / 3;
+  mesh.normals.assign(n * 3, 0.f);
+  if (mesh.uvs.size() < n * 2) {
+    mesh.uvs.assign(n * 2, 0.f);
+  }
+  const float eps = std::max(field.cell, 1e-3f);
+  for (std::size_t i = 0; i < n; ++i) {
+    float& x = mesh.positions[i * 3 + 0];
+    float& y = mesh.positions[i * 3 + 1];
+    float& z = mesh.positions[i * 3 + 2];
+    y = SampleHeightTiled(field, x, z, origin_x, origin_z);
+    const float hL = SampleHeightTiled(field, x - eps, z, origin_x, origin_z);
+    const float hR = SampleHeightTiled(field, x + eps, z, origin_x, origin_z);
+    const float hD = SampleHeightTiled(field, x, z - eps, origin_x, origin_z);
+    const float hU = SampleHeightTiled(field, x, z + eps, origin_x, origin_z);
+    Vec3 nrm = Normalize(Vec3{hL - hR, 2.f * eps, hD - hU});
+    mesh.normals[i * 3 + 0] = nrm.x;
+    mesh.normals[i * 3 + 1] = nrm.y;
+    mesh.normals[i * 3 + 2] = nrm.z;
+    const float dx = (hR - hL) / (2.f * eps);
+    const float dz = (hU - hD) / (2.f * eps);
+    const float slope = std::sqrt(dx * dx + dz * dz);
+    mesh.uvs[i * 2 + 0] = std::clamp(slope * foam_scale - 0.15f, 0.f, 1.f);
+  }
+}
+
 }  // namespace engine::terrain

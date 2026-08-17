@@ -14,7 +14,7 @@
 | GKRT06 | 玩法存档 | 读写槽位；不含完整 RPG 内容格式强制 | 规划 |
 | GKRT07 | 触发器约定 | 物理 Trigger 进入/离开 → 脚本回调 | 规划 |
 | GKRT08 | 玩家控制器骨架 | 读 Action → 移动/相机；具体手感由游戏调 | 规划 |
-| GKRT09 | Prefab 实例化 | 解析共享 Prefab：生成 Node + 挂脚本 | 规划 |
+| GKRT09 | Prefab 实例化 | 解析共享 Prefab：生成 Node + 挂脚本 | 已写 |
 
 ## 2. 脚本系统
 

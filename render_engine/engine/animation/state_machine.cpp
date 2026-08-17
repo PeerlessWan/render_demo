@@ -1,6 +1,7 @@
 #include "engine/animation/state_machine.h"
 
 #include <algorithm>
+#include <cmath>
 #include <span>
 
 namespace engine::animation {
@@ -42,6 +43,23 @@ void AnimationStateMachine::SetTrigger(std::string_view name) {
 
 void AnimationStateMachine::ClearTriggers() { triggers_.clear(); }
 
+void AnimationStateMachine::AddNotify(std::string_view state, AnimNotify notify) {
+  if (state.empty() || notify.name.empty()) {
+    return;
+  }
+  notifies_[std::string(state)].push_back(std::move(notify));
+}
+
+std::span<const AnimNotify> AnimationStateMachine::NotifiesFor(std::string_view state) const {
+  const auto it = notifies_.find(std::string(state));
+  if (it == notifies_.end()) {
+    return {};
+  }
+  return it->second;
+}
+
+std::span<const AnimNotifyEvent> AnimationStateMachine::DrainNotifies() { return fired_; }
+
 const AnimState* AnimationStateMachine::FindState(std::string_view name) const {
   for (const auto& s : states_) {
     if (s.name == name) {
@@ -49,6 +67,18 @@ const AnimState* AnimationStateMachine::FindState(std::string_view name) const {
     }
   }
   return nullptr;
+}
+
+void AnimationStateMachine::CollectNotifiesCrossing(float prev_time, float curr_time) {
+  const auto it = notifies_.find(current_);
+  if (it == notifies_.end()) {
+    return;
+  }
+  for (const auto& n : it->second) {
+    if (n.time > prev_time && n.time <= curr_time) {
+      fired_.push_back(AnimNotifyEvent{current_, n.name, n.time});
+    }
+  }
 }
 
 bool AnimationStateMachine::TryTransition() {
@@ -83,6 +113,7 @@ bool AnimationStateMachine::TryTransition() {
 }
 
 void AnimationStateMachine::Update(float dt) {
+  fired_.clear();
   if (dt < 0.f) {
     dt = 0.f;
   }
@@ -90,7 +121,19 @@ void AnimationStateMachine::Update(float dt) {
   if (!cur) {
     return;
   }
+  const float prev = state_time_;
   state_time_ += dt;
+
+  if (cur->loop && cur->clip.duration > 0.f && state_time_ > cur->clip.duration) {
+    CollectNotifiesCrossing(prev, cur->clip.duration);
+    state_time_ = std::fmod(state_time_, cur->clip.duration);
+    if (state_time_ > 0.f) {
+      CollectNotifiesCrossing(0.f, state_time_);
+    }
+  } else {
+    CollectNotifiesCrossing(prev, state_time_);
+  }
+
   if (TryTransition()) {
     return;
   }

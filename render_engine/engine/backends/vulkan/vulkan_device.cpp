@@ -94,6 +94,13 @@ struct FrameGpu {
   float jitter_y;
   float _pad_jitter[2];
   float local_ies[16];  // C03/W7
+  // Mega-W8 C02: packed Forward+ tile lists (must match lit_cube_vk.hlsl).
+  float enable_tiled_lights;
+  float tile_grid_w;
+  float tile_grid_h;
+  float max_lights_per_tile;
+  float tile_light_count[32];
+  float tile_light_index[256];
 };
 
 struct ShadowFrameGpu {
@@ -168,7 +175,11 @@ struct PostCB {
   float vignette_strength;
   float film_grain_strength;
   float chromatic_aberration;
-  float pad_chroma;
+  float lens_distortion;
+  float light_dirt_strength;
+  float flare_strength;
+  float pad_c04_a;
+  float pad_c04_b;
 };
 static_assert(sizeof(PostCB) <= 512, "post CB exceeds upload buffer");
 constexpr VkDeviceSize kPostUbSize =
@@ -656,6 +667,18 @@ class VulkanDevice final : public IDevice {
                 sizeof(data.prev_view_proj));
     data.jitter_x = lighting_.jitter_x;
     data.jitter_y = lighting_.jitter_y;
+    data.enable_tiled_lights = lighting_.enable_tiled_lights ? 1.f : 0.f;
+    data.tile_grid_w = 8.f;
+    data.tile_grid_h = 4.f;
+    data.max_lights_per_tile = 8.f;
+    for (int i = 0; i < 32; ++i) {
+      data.tile_light_count[i] =
+          static_cast<float>(lighting_.tile_light_count[static_cast<std::size_t>(i)]);
+    }
+    for (int i = 0; i < 256; ++i) {
+      data.tile_light_index[i] =
+          static_cast<float>(lighting_.tile_light_index[static_cast<std::size_t>(i)]);
+    }
 
     const VkDeviceSize frame_off = static_cast<VkDeviceSize>(frame_index_) * kFrameUbSize;
     void* mapped = nullptr;
@@ -4913,6 +4936,9 @@ class VulkanDevice final : public IDevice {
     cb.vignette_strength = desc.vignette_strength;
     cb.film_grain_strength = desc.film_grain_strength;
     cb.chromatic_aberration = desc.chromatic_aberration;
+    cb.lens_distortion = desc.lens_distortion;
+    cb.light_dirt_strength = desc.light_dirt_strength;
+    cb.flare_strength = desc.flare_strength;
 
     const VkDeviceSize off = static_cast<VkDeviceSize>(frame_index_) * kPostUbSize;
     void* mapped = nullptr;

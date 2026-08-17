@@ -1,8 +1,20 @@
 # game_kit 规划
 
 > **前置：** `render_engine` 至少 M4（Scene + Module + 输入）可用；脚本绑定建议等 M8–M9（序列化/UI/资产约定）后做可玩切片。  
-> 本层里程碑前缀 **GK**；不阻塞引擎 M1–M25。  
+> 本层里程碑前缀 **GK**；**不阻塞**引擎 M1–M25，但是工作区 **「游戏可用」的主缺口**（相对 Sandbox 已能出的「渲染可用」）。  
+> 口径与落地顺序：[render_engine PLAN §1.9](../../render_engine/docs/PLAN.md)。  
 > **品类玩法不进本层排期**；见 [LAYERS](../../docs/LAYERS.md) / `genre_kits`（ADR 0028）。首个游戏可先写在 `games/<title>`。
+
+## 0. 在工作区里排第几
+
+| 口径 | 本层角色 |
+|---|---|
+| **渲染可用** | 不负责；Sandbox / 引擎看板（如 **W-vk-parity**） |
+| **游戏可用** | **GK0–GK3 就是主缺口**：切关、暂停、存档槽、脚本不毁 Device、一条小关走完 |
+| **对标主流** | GK4 Prefab + `editor` ED；动画树走引擎 C10 或上层自建——不宣称对齐 UE5 |
+
+**优先于**大气/云/Bindless 全量（那些是引擎加深，不替代本层）。  
+**不插队**当前引擎 Doing（现为 Win Vulkan 对标）：下令开 GK 实现波后再写代码。
 
 ## 1. 里程碑
 
@@ -29,11 +41,14 @@
 
 | 里程碑 | 状态 |
 |---|---|
-| GK0–GK5 | 未开始（文档先行） |
+| GK0–GK3 | 已写；`game_kit_tests` / samples 可 headless |
+| GK4 Prefab | `PrefabDocument` + `Instantiate` + `samples/prefab_place` |
+| GK5 | 未开始 |
 
 ## 4. 相关
 
 - [FEATURES.md](FEATURES.md)  
 - [GAPS.md](GAPS.md)  
 - [../../docs/LAYERS.md](../../docs/LAYERS.md)  
-- [../../render_engine/docs/PLAN.md](../../render_engine/docs/PLAN.md)  
+- [../../render_engine/docs/PLAN.md](../../render_engine/docs/PLAN.md) **§1.9**  
+- [../../editor/docs/PLAN.md](../../editor/docs/PLAN.md)（P1，可后于 GK3）  

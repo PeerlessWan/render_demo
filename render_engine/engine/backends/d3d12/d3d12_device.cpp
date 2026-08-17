@@ -1258,7 +1258,15 @@ class D3D12Device final : public IDevice {
       float reflection_intensity;
       float enable_ibl;
       float ibl_intensity;
+      float _pad_before_ies[2];  // HLSL: float4 g_local_ies starts 16-byte aligned
       float local_ies[16];  // C03/W7 profile id as float (0=off)
+      // Mega-W8 C02: packed Forward+ tile lists (must match lit_cube.hlsl).
+      float enable_tiled_lights;
+      float tile_grid_w;
+      float tile_grid_h;
+      float max_lights_per_tile;
+      float tile_light_count[32];
+      float tile_light_index[256];
     } data{};
     std::memcpy(data.view_proj, lighting.view_proj.m.data(), sizeof(data.view_proj));
     for (int i = 0; i < 4; ++i) {
@@ -1328,6 +1336,16 @@ class D3D12Device final : public IDevice {
     data.ibl_intensity = lighting.ibl_intensity;
     for (int i = 0; i < 16; ++i) {
       data.local_ies[i] = lighting.local_ies[static_cast<std::size_t>(i)];
+    }
+    data.enable_tiled_lights = lighting.enable_tiled_lights ? 1.f : 0.f;
+    data.tile_grid_w = 8.f;
+    data.tile_grid_h = 4.f;
+    data.max_lights_per_tile = 8.f;
+    for (int i = 0; i < 32; ++i) {
+      data.tile_light_count[i] = static_cast<float>(lighting.tile_light_count[static_cast<std::size_t>(i)]);
+    }
+    for (int i = 0; i < 256; ++i) {
+      data.tile_light_index[i] = static_cast<float>(lighting.tile_light_index[static_cast<std::size_t>(i)]);
     }
 
     void* ptr = nullptr;
@@ -2473,7 +2491,11 @@ class D3D12Device final : public IDevice {
       float vignette_strength;
       float film_grain_strength;
       float chromatic_aberration;
-      float pad_chroma;
+      float lens_distortion;
+      float light_dirt_strength;
+      float flare_strength;
+      float pad_c04_a;
+      float pad_c04_b;
     } cb{};
     static_assert(sizeof(PostCB) <= 512, "post CB exceeds upload buffer");
     cb.inv_res[0] = 1.f / static_cast<float>((std::max)(1u, width_));
@@ -2517,6 +2539,9 @@ class D3D12Device final : public IDevice {
     cb.vignette_strength = desc.vignette_strength;
     cb.film_grain_strength = desc.film_grain_strength;
     cb.chromatic_aberration = desc.chromatic_aberration;
+    cb.lens_distortion = desc.lens_distortion;
+    cb.light_dirt_strength = desc.light_dirt_strength;
+    cb.flare_strength = desc.flare_strength;
 
     void* mapped = nullptr;
     if (FAILED(post_cb_->Map(0, nullptr, &mapped))) {
@@ -3084,7 +3109,7 @@ class D3D12Device final : public IDevice {
  private:
   static constexpr UINT kMaxLitDraws = 64;
   static constexpr UINT kShadowVpSlots = 16;  // 4 cascades + local tiles
-  static constexpr UINT64 kFrameCbBytes = 4096;  // ≥ FrameData, 256-aligned
+  static constexpr UINT64 kFrameCbBytes = 8192;  // ≥ FrameData (+ tile lists), 256-aligned
   static constexpr UINT64 kPostCbBytes = 512;
 
   UINT64 FrameCbOffset() const { return static_cast<UINT64>(frame_index_) * kFrameCbBytes; }

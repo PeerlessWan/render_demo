@@ -28,6 +28,46 @@ void AssignLightsToTiles(const std::vector<LocalLight>& lights, const Mat4& view
   }
 }
 
+void PackTileLightLists(const std::vector<std::vector<int>>& tiles,
+                        std::array<int, kLightTileCount>& out_counts,
+                        std::array<int, kTileLightIndexCount>& out_indices) {
+  out_counts.fill(0);
+  out_indices.fill(-1);
+  const std::size_t n = (std::min)(tiles.size(), static_cast<std::size_t>(kLightTileCount));
+  for (std::size_t t = 0; t < n; ++t) {
+    const auto& list = tiles[t];
+    const int count =
+        static_cast<int>((std::min)(list.size(), static_cast<std::size_t>(kMaxLightsPerTile)));
+    out_counts[t] = count;
+    for (int s = 0; s < count; ++s) {
+      out_indices[t * static_cast<std::size_t>(kMaxLightsPerTile) + static_cast<std::size_t>(s)] =
+          list[static_cast<std::size_t>(s)];
+    }
+  }
+}
+
+void EvalTiledLightList(const std::array<int, kLightTileCount>& counts,
+                        const std::array<int, kTileLightIndexCount>& indices, float u, float v,
+                        std::vector<int>& out_lights) {
+  out_lights.clear();
+  const float cu = std::clamp(u, 0.f, 0.999f);
+  const float cv = std::clamp(v, 0.f, 0.999f);
+  const int tx =
+      std::min(static_cast<int>(cu * static_cast<float>(kLightTileGridW)), kLightTileGridW - 1);
+  const int ty =
+      std::min(static_cast<int>(cv * static_cast<float>(kLightTileGridH)), kLightTileGridH - 1);
+  const int tile = ty * kLightTileGridW + tx;
+  const int count = std::clamp(counts[static_cast<std::size_t>(tile)], 0, kMaxLightsPerTile);
+  out_lights.reserve(static_cast<std::size_t>(count));
+  for (int s = 0; s < count; ++s) {
+    const int idx =
+        indices[static_cast<std::size_t>(tile * kMaxLightsPerTile + s)];
+    if (idx >= 0) {
+      out_lights.push_back(idx);
+    }
+  }
+}
+
 void LocalLightShadowScheduler::Clear() {
   lights_.clear();
   slots_.clear();

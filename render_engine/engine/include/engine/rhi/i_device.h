@@ -97,12 +97,17 @@ struct PostResolveDesc {
   float film_grain_strength = 0.f;
   // W7/C04
   float chromatic_aberration = 0.f;
+  // Mega-W8 C04
+  float lens_distortion = 0.f;
+  float light_dirt_strength = 0.f;
+  float flare_strength = 0.f;
 
   [[nodiscard]] bool NeedsResolve() const {
     return enable_ssao || enable_taa || enable_tonemap || enable_auto_exposure || enable_bloom ||
            enable_fog || enable_ssr || enable_dof || enable_motion_blur ||
            (exposure > 1.0001f || exposure < 0.9999f) || vignette_strength > 1e-4f ||
-           film_grain_strength > 1e-4f || chromatic_aberration > 1e-4f;
+           film_grain_strength > 1e-4f || chromatic_aberration > 1e-4f ||
+           lens_distortion > 1e-4f || light_dirt_strength > 1e-4f || flare_strength > 1e-4f;
   }
 };
 
@@ -165,6 +170,12 @@ struct FrameLighting {
   int local_shadow_tiles_per_row = 4;
   bool enable_local_shadow = false;
   float local_shadow_bias = 0.002f;
+  // Mega-W8 C02: Forward+ packed tile lists (8×4, ≤8 lights/tile) for lit PS hot path.
+  // Default off so direct SetFrameLighting callers keep full 0..15 scan; RenderSystem
+  // enables when EffectTuning::enable_tiled_lights and packs lists each frame.
+  bool enable_tiled_lights = false;
+  std::array<int, 32> tile_light_count{};
+  std::array<int, 256> tile_light_index{};  // 32 tiles × 8 slots (-1 = unused)
 };
 
 struct LitDrawItem {

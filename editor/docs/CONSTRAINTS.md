@@ -18,7 +18,8 @@
 
 1. 一期不做材质节点图、UMG 编辑器、完整动画工具。  
 2. 不替代 DCC；高模/动画/贴图仍走外部 + cook。  
-3. 不把 NavMesh/同步编辑默认塞进一期范围。
+3. 不把 NavMesh/同步编辑默认塞进一期范围。  
+4. 对标主流的「不做 / 后置」以 [GAPS.md](GAPS.md) §3–§4 为准，不把刻意不对齐当漏排。
 
 ## 4. 性能与质量
 
@@ -27,6 +28,7 @@
 
 ## 5. 相关
 
+- [GAPS.md](GAPS.md)  
 - [ARCHITECTURE.md](ARCHITECTURE.md)  
 - [../../render_engine/docs/HOSTING.md](../../render_engine/docs/HOSTING.md)  
 - [../../render_engine/docs/HOST_API.md](../../render_engine/docs/HOST_API.md)  

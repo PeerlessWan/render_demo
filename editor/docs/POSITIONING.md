@@ -24,6 +24,16 @@ DCC ──► tools/cook（必有路径）
 
 无编辑器时，仅 DCC+CLI 仍可完成引擎验收。
 
+## 对标口径
+
+| 口径 | 宣称 | 不宣称 |
+|---|---|---|
+| 一期 | 视口摆关、检视、同一套场景格式存盘 | Godot/Unity 开箱编辑器 |
+| 做完 ED5 | 小关卡编辑器 + 可选 Play / Prefab 放置 | 材质节点图、UMG、动画工具、一站式导入 |
+| 长期 | 仍是摆放器加深（ED6+ 另立项） | UE5 级编辑器全家桶 |
+
+缺口清单：[GAPS.md](GAPS.md)。
+
 ## 一句话
 
 > **editor = 视口 + 检视/存盘；render_engine = 画得出来；game_kit = 通用玩法壳；genre_kits / games = 品类与内容。**
@@ -31,6 +41,7 @@ DCC ──► tools/cook（必有路径）
 ## 相关
 
 - [CONSTRAINTS.md](CONSTRAINTS.md)  
+- [GAPS.md](GAPS.md) — **对标缺口**  
 - [../../docs/LAYERS.md](../../docs/LAYERS.md)  
 - [../../render_engine/docs/learn/adr/0025-toolchain-minimum-viable.md](../../render_engine/docs/learn/adr/0025-toolchain-minimum-viable.md)  
 - [../../render_engine/docs/learn/adr/0027-hosting-script-editor-boundary.md](../../render_engine/docs/learn/adr/0027-hosting-script-editor-boundary.md)  

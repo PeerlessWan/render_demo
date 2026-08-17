@@ -24,6 +24,7 @@ add_library(engine_assets STATIC
   assets/texture_loader_dds.cpp
   assets/gltf_loader.cpp
   assets/shader_hot_reload.cpp
+  assets/asset_hot_reload.cpp
 )
 target_include_directories(engine_assets PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_assets PUBLIC engine_core)
@@ -92,14 +93,21 @@ target_link_libraries(engine_debug PUBLIC engine_core)
 add_library(engine_animation STATIC
   animation/skeleton.cpp
   animation/state_machine.cpp
+  animation/blend_tree.cpp
+  animation/two_bone_ik.cpp
   animation/gpu_skin_d3d12.cpp
+  animation/gpu_skin_vk.cpp
 )
 target_include_directories(engine_animation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_animation PUBLIC engine_core)
 if(WIN32)
   target_link_libraries(engine_animation PRIVATE d3d12 dxgi)
 endif()
-# Resolve skin_cs.cso next to Sandbox shader outputs (compiled by sample_sandbox_shaders).
+if(ENGINE_WITH_VULKAN)
+  target_include_directories(engine_animation PRIVATE "${ENGINE_VULKAN_SDK}/Include")
+  target_link_libraries(engine_animation PRIVATE "${ENGINE_VULKAN_SDK}/Lib/vulkan-1.lib")
+endif()
+# Resolve skin_cs.cso / skin_cs_vk.cs.spv next to Sandbox shader outputs.
 file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/samples/Sandbox/shaders" _anim_shader_dir)
 string(REPLACE "\\" "/" _anim_shader_dir "${_anim_shader_dir}")
 target_compile_definitions(engine_animation PRIVATE ENGINE_SHADER_DIR_A="${_anim_shader_dir}")
@@ -121,6 +129,7 @@ add_library(engine_rhi STATIC
   render/shadow_atlas.cpp
   render/local_lights.cpp
   render/atmosphere.cpp
+  render/weather.cpp
   render/ies_profile.cpp
   render/quality.cpp
   render/ibl_pack.cpp
@@ -153,6 +162,7 @@ endif()
 add_library(engine_physics STATIC
   physics/builtin_world.cpp
   physics/physics_factory.cpp
+  physics/buoyancy.cpp
 )
 target_include_directories(engine_physics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_physics PUBLIC engine_core)
@@ -238,6 +248,9 @@ add_library(engine_render2d STATIC
   render2d/fx2d.cpp
   render2d/bmfont.cpp
   render2d/world_text.cpp
+  render2d/path2d.cpp
+  render2d/nineslice.cpp
+  render2d/rich_text.cpp
 )
 target_include_directories(engine_render2d PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_render2d PUBLIC engine_core)
@@ -263,19 +276,35 @@ add_library(engine_terrain STATIC
 target_include_directories(engine_terrain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_terrain PUBLIC engine_core)
 
+add_library(engine_ocean STATIC
+  ocean/fft_ocean.cpp
+)
+target_include_directories(engine_ocean PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(engine_ocean PUBLIC engine_core engine_terrain)
+target_link_libraries(engine_physics PUBLIC engine_ocean)
+
 add_library(engine_vfx STATIC
   vfx/particles.cpp
   vfx/trail_ribbon.cpp
 )
 target_include_directories(engine_vfx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_vfx PUBLIC engine_core engine_debug)
+# WeatherSystem (engine_rhi) drives ParticleEmitter for rain/snow curtains.
+target_link_libraries(engine_rhi PUBLIC engine_vfx)
 
 add_library(engine_gpu_driven STATIC
   gpu_driven/path.cpp
   gpu_driven/indirect_draw.cpp
+  gpu_driven/meshlet.cpp
 )
 target_include_directories(engine_gpu_driven PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_gpu_driven PUBLIC engine_core engine_rhi)
+
+add_library(engine_vt STATIC
+  vt/virtual_texture.cpp
+)
+target_include_directories(engine_vt PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(engine_vt PUBLIC engine_core)
 
 add_library(engine_rt STATIC
   rt/raytracing.cpp
@@ -292,6 +321,7 @@ target_compile_definitions(engine_rt PRIVATE ENGINE_SHADER_DIR_A="${_rt_shader_d
 add_library(engine_net STATIC
   net/net_system.cpp
   net/http_httplib.cpp
+  net/quic.cpp
 )
 target_include_directories(engine_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_net PUBLIC engine_core)
@@ -315,6 +345,25 @@ if(ENGINE_WITH_HTTPLIB)
 else()
   target_include_directories(engine_net PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net")
   target_compile_definitions(engine_net PUBLIC ENGINE_WITH_HTTPLIB=0)
+endif()
+
+# MsQuic: optional probe/link. Never silent-install. Default OFF unless headers+lib found.
+if(ENGINE_WITH_MSQUIC)
+  target_compile_definitions(engine_net PUBLIC ENGINE_WITH_MSQUIC=1)
+  if(ENGINE_MSQUIC_INCLUDE_DIR)
+    target_include_directories(engine_net PRIVATE "${ENGINE_MSQUIC_INCLUDE_DIR}")
+  endif()
+  if(ENGINE_MSQUIC_LIB)
+    target_link_libraries(engine_net PRIVATE "${ENGINE_MSQUIC_LIB}")
+  endif()
+  if(ENGINE_MSQUIC_DLL)
+    file(TO_CMAKE_PATH "${ENGINE_MSQUIC_DLL}" _msquic_dll)
+    string(REPLACE "\\" "/" _msquic_dll "${_msquic_dll}")
+    target_compile_definitions(engine_net PRIVATE "ENGINE_MSQUIC_DLL_PATH=\"${_msquic_dll}\"")
+  endif()
+  message(STATUS "MsQuic optional enable: ENGINE_WITH_MSQUIC=ON")
+else()
+  target_compile_definitions(engine_net PUBLIC ENGINE_WITH_MSQUIC=0)
 endif()
 
 add_library(engine_d3d12 STATIC

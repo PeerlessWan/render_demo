@@ -5,8 +5,8 @@
 > 定位：**Windows（D3D12 + Vulkan）/ Linux（Vulkan）通用 2D·3D 渲染引擎**  
 > 范围分段：M1–M16（既有能力）+ M17–M19（后端/Linux/网络）+ **M20–M25 引擎缺口补齐（P2）**。  
 > **当前迭代看板**（Doing / Undo / Todo）：[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)  
-> **引擎状态：已解封 · M27+ W4–W7 已收口**（不动 editor/game_kit；封板基线 `1700a71`）。  
-> 详见 [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)、[ADR 0034](learn/adr/0034-m27-w7-parity-deepen.md)。  
+> **引擎状态：Mega-W8 已收口**（尾巴完善 + VT + MsQuic + 天气/海/浮力 + game_kit/editor 冒烟；封板基线见 `99542b6` 前推）。  
+> 详见 [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)、[ADR 0035](learn/adr/0035-mega-w8-deepen.md)。  
 > **游戏可用 ≠ 渲染可用**：工作区可玩产品水位见 **§1.9**（主缺口 `game_kit` GK0–GK3）。
 
 ## 1. 总验收目标
@@ -555,6 +555,7 @@ Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
 | **M26** Forward+ / P3    | **已开簇（ADR 0032）**：C01/C02/C10/C04/C16/C20 落地；其余 §4 后置                                    |
 | **M27+** W4–W6 加深       | **已收口（ADR 0033）**：画质债 / Linux·HTTPS·VA 文档 / GI·水面·混合·GPU 蒙皮 stub·Meshlet 门控·PSO 热更请求 |
 | **M27+** W7 对标加深       | **已收口（ADR 0034）**：C05 云雾 · C03 IES · C14 世界字 · C04 色差 · C12 D3D12 CS 蒙皮 · DXR 真 DispatchRays |
+| **M27+** Mega-W8            | **已收口（ADR 0035）**：tile 灯/meshlet/VT/MsQuic/天气·FFT海·浮力/动画2D/VK蒙皮·热更/GK·ED 冒烟 |
 
 
 > 无 vendor 100% 口径见看板；测试门禁：`ci_headless.ps1 -Golden`（Q1+Q3+C2+C3+C6）+ matrix 比图 + C4 薄对标（默认记回归）；可选 `-Validation`（C1）。**Harness 冻结；MCP 不进门禁。** §3.1：**Q1–Q3 / C1–C6 已落地（C4 记对标）**；Q4/Q5 / 严 C4 仍后置。

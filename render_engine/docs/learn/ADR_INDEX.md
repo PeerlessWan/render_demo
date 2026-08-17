@@ -43,10 +43,11 @@ ADR 记录 **为什么这样设计**，是学习封装的核心（比 API 列表
 | 0028 | 多品类：薄 game_kit + genre_kits + games | [0028-…](adr/0028-genre-kits-layering.md) | — | Accepted |
 | 0029 | 物理加深边界：薄 SoftBody/Cloth 进引擎；服装管线外置 | [0029-…](adr/0029-physics-softbody-boundary.md) | CH25 | Accepted |
 | 0030 | M25 DXR demo 范围：Feature 门控优先，非完整光追帧 | [0030-…](adr/0030-m25-dxr-demo-scope.md) | CH19 | Accepted |
-| 0031 | M19 QUIC SKIP：本波不捆绑 MsQuic | [0031-…](adr/0031-m19-quic-skip-msquic.md) | CH31 | Accepted |
+| 0031 | QUIC：MsQuic 可选启用（存在则 Feature；否则 Unavailable SKIP） | [0031-…](adr/0031-m19-quic-skip-msquic.md) | CH31 | Accepted |
 | 0032 | M26/P3：Forward+ 钉死与 C01/C02/C10/C08/C04/C16/C20 加深簇 | [0032-…](adr/0032-m26-forward-plus-cluster.md) | — | Accepted |
 | 0033 | M27/W6 场景规模加深边界（GI/水面/混合/GPU 蒙皮 stub/Meshlet/PSO 热更） | [0033-…](adr/0033-m27-w6-scene-scale.md) | — | Accepted |
 | 0034 | M27/W7 对标加深（云雾/IES/世界字/色差/CS 蒙皮/DXR 真光线） | [0034-…](adr/0034-m27-w7-parity-deepen.md) | — | Accepted |
+| 0035 | Mega-W8 加深与尾巴完善（tile 灯/meshlet/VT/MsQuic/天气海浮力/动画2D/GK·ED） | [0035-…](adr/0035-mega-w8-deepen.md) | — | Accepted |
 
 ## 模板
 

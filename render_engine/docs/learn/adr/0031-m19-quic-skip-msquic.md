@@ -1,33 +1,34 @@
-# ADR 0031: M19 QUIC SKIP — MsQuic 本波不捆绑
+# ADR 0031: QUIC — MsQuic 可选启用（存在则 Feature；否则 Unavailable SKIP）
 
-- 状态: Accepted
-- 日期: 2026-08-15
-- 关联: PLAN M19、ADR 0021、`engine/net`、看板 `T-https-openssl-on`
+- 状态: Accepted（W8 修订）
+- 日期: 2026-08-17
+- 关联: PLAN M19、ADR 0021、`engine/net`、看板 `T-https-openssl-on`、Mega-W8
 
 ## 背景
 
-M19 验收需要 HTTP / WebSocket / QUIC。MsQuic 体积与平台构建成本高，且本波未授权捆绑。静默安装 OpenSSL / MsQuic 违反工程约束（不静默装系统 SDK）。
+M19 验收需要 HTTP / WebSocket / QUIC。MsQuic 体积与平台构建成本高，且**禁止静默安装**系统 SDK。本波允许在本机**已存在** MsQuic DLL/lib 时可选启用；未找到则诚实 SKIP。
 
 ## 决策
 
-1. **本波 QUIC = SKIP**：`IQuicEndpoint` 保持 stub；`supported()==false`；`Connect`/`SendReliable` 返回 `Unavailable`，消息点名 **ADR 0031** / MsQuic 未捆绑。  
-2. **不捆绑、不安装 MsQuic**；后续若启用须另批 + CMake/vendor，并可换 ngtcp2（须新 ADR，延续 0021）。  
-3. **HTTPS**：继续依赖系统 OpenSSL（`ENGINE_WITH_OPENSSL` + `OPENSSL_ROOT_DIR`）；未链接时返回清晰 `Unavailable` 提示，**引擎不安装 OpenSSL**。  
-4. **WebSocket**：保持 **loopback://** 回显路径可测；远程 IXWebSocket 仍可后置。  
-5. 本 ADR **不修改** ADR 0021 的长期目标（仍以 MsQuic 为默认三方），仅冻结本波交付口径。
+1. **默认不捆绑 MsQuic**；`ENGINE_WITH_MSQUIC` 仅在 `third_party/msquic` 或显式路径就绪时默认 ON，否则 OFF。  
+2. **运行时探测**：`ProbeMsQuicPresent` / `ProbeAndSetQuicFeature`（`LoadLibrary("msquic.dll")` 或 `ENGINE_MSQUIC_DLL_PATH`）。存在 → `Feature quic=true`；缺失 → `quic=false`。  
+3. **`IQuicEndpoint`**：`NetSystem` 挂 `QuicEndpointHook`。缺失时 `supported()==false`，`Connect`/`SendReliable` 返回 `Unavailable`，消息点名 **ADR 0031** / optional enable。  
+4. **存在时仍为 link/Connect stub**：本波不要求完整可靠流会话；`TryQuicConnectStub` 在 Feature/探测为真时仍返回可诊断 `Unavailable`（禁止假成功），直至另批接真 API。  
+5. **HTTPS**：继续依赖系统 OpenSSL（`ENGINE_WITH_OPENSSL`）；引擎不安装 OpenSSL / MsQuic。  
+6. 长期目标仍见 ADR 0021（MsQuic 为默认三方候选）；本 ADR 只定义**可选探测启用**口径。
 
 ## 备选方案
 
-- 本波强制 vendor MsQuic —— 阻塞加深波，超出授权。  
+- 强制 vendor MsQuic —— 违反「不静默安装」与本波边界。  
 - 假实现 QUIC 回显 —— 违反「失败可诊断、禁止假成功」。
 
 ## 后果
 
-- 优点：M19 在 Win 口径下可勾「可用加深」：HTTP 明文 + loopback WS + HTTPS/QUIC 外置可诊断。  
-- 代价：无真实 QUIC 可靠流集成测，直至另批依赖。
+- 优点：无 MsQuic 机器保持 SKIP；有 DLL/lib 时可打开 Feature 与后续接线入口。  
+- 代价：完整 QUIC 可靠流集成测仍后置，直至真 Connect 接线。
 
 ## 学习提示
 
-1. SKIP 也是验收结论，只要 Status 诚实。  
-2. loopback WS ≠ 生产 wss；HTTPS 与 QUIC 的 TLS 依赖是两件事。  
-3. 看板 `T-https-openssl-on` 仍是授权装 SDK 后的 HTTPS loopback 闸门。
+1. SKIP / Unavailable 也是验收结论，只要 Status 诚实。  
+2. `Feature quic` ≠ 生产会话已通；先看 `QueryMsQuicProbeInfo().detail`。  
+3. 看板 `T-https-openssl-on` 与 QUIC TLS 依赖是两件事。

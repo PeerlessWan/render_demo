@@ -1,6 +1,7 @@
 #include "engine/animation/skeleton.h"
 
 #include "engine/animation/gpu_skin_d3d12.h"
+#include "engine/animation/gpu_skin_vk.h"
 #include "engine/core/feature.h"
 #include "engine/core/log.h"
 
@@ -130,13 +131,18 @@ void SkinVerticesGpuDispatch(const std::vector<Vec3>& bind_positions, const Skin
                              const std::vector<int>& bones4, const std::vector<float>& weights4,
                              std::vector<Vec3>& out_positions) {
   if (GpuSkinningAvailable()) {
-    const Status st =
+    const Status d3d =
         DispatchGpuSkinD3d12Status(bind_positions, pose, bones4, weights4, out_positions, {});
-    if (st) {
+    if (d3d) {
       return;
     }
-    LogInfo(std::string("SkinVerticesGpuDispatch: D3D12 CS unavailable (") + st.message() +
-            "); using CPU stub");
+    const Status vk =
+        DispatchGpuSkinVkStatus(bind_positions, pose, bones4, weights4, out_positions, {});
+    if (vk) {
+      return;
+    }
+    LogInfo(std::string("SkinVerticesGpuDispatch: GPU CS unavailable (d3d=") + d3d.message() +
+            "; vk=" + vk.message() + "); using CPU stub");
   }
   SkinVerticesGpuDispatchStub(bind_positions, pose, bones4, weights4, out_positions);
 }
