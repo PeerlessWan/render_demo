@@ -1521,19 +1521,38 @@ class D3D12Device final : public IDevice {
     return Status::Ok();
   }
 
+  void SetDrawViewport(float x, float y, float w, float h) override {
+    draw_vp_x_ = x;
+    draw_vp_y_ = y;
+    draw_vp_w_ = w;
+    draw_vp_h_ = h;
+    draw_vp_on_ = w > 1.f && h > 1.f;
+  }
+
+  void SetPreferLdrTarget(bool on) override { prefer_ldr_ = on; }
+
   void BindSceneColorTargets() {
     D3D12_VIEWPORT vp{};
-    vp.Width = static_cast<float>(width_);
-    vp.Height = static_cast<float>(height_);
     vp.MaxDepth = 1.f;
+    if (draw_vp_on_) {
+      vp.TopLeftX = draw_vp_x_;
+      vp.TopLeftY = draw_vp_y_;
+      vp.Width = draw_vp_w_;
+      vp.Height = draw_vp_h_;
+    } else {
+      vp.Width = static_cast<float>(width_);
+      vp.Height = static_cast<float>(height_);
+    }
     command_list_->RSSetViewports(1, &vp);
-    D3D12_RECT scissor{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
+    D3D12_RECT scissor{static_cast<LONG>(vp.TopLeftX), static_cast<LONG>(vp.TopLeftY),
+                       static_cast<LONG>(vp.TopLeftX + vp.Width),
+                       static_cast<LONG>(vp.TopLeftY + vp.Height)};
     command_list_->RSSetScissorRects(1, &scissor);
 
     // After ResolvePostEffects, scene_color is still bound as SRV in post_srv_heap for this
     // command list. Rebinding it as RT caused DEVICE_REMOVED (0x887A0005) on Present.
     // Late draws (transparent / Sandbox scale instancing) go to the LDR backbuffer instead.
-    if (post_resolved_this_frame_ || !scene_color_ || !hdr_rtv_heap_) {
+    if (prefer_ldr_ || post_resolved_this_frame_ || !scene_color_ || !hdr_rtv_heap_) {
       const auto index = CurrentBbIndex();
       const D3D12_CPU_DESCRIPTOR_HANDLE rtv{
           rtv_heap_->GetCPUDescriptorHandleForHeapStart().ptr +
@@ -4725,6 +4744,12 @@ class D3D12Device final : public IDevice {
   HWND hwnd_ = nullptr;
   std::uint32_t width_ = 0;
   std::uint32_t height_ = 0;
+  float draw_vp_x_ = 0.f;
+  float draw_vp_y_ = 0.f;
+  float draw_vp_w_ = 0.f;
+  float draw_vp_h_ = 0.f;
+  bool draw_vp_on_ = false;
+  bool prefer_ldr_ = false;
   bool gpu_headless_ = false;
   int adapter_index_ = -1;
   bool vsync_ = false;

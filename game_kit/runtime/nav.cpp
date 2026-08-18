@@ -2,17 +2,22 @@
 
 #include "game_kit/entity.h"
 
+#include "engine/physics/i_physics_world.h"
 #include "engine/scene/world.h"
 
+#include <algorithm>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <utility>
 #include <vector>
 
 #if defined(GAME_KIT_WITH_RECAST) && GAME_KIT_WITH_RECAST
+#include "DetourCrowd.h"
 #include "DetourNavMesh.h"
 #include "DetourNavMeshBuilder.h"
 #include "DetourNavMeshQuery.h"
+#include "DetourStatus.h"
 #include "Recast.h"
 #endif
 
@@ -24,13 +29,73 @@ bool Overlaps(engine::Vec3 p, engine::Vec3 half, engine::Vec3 q) {
          std::abs(p.z - q.z) <= half.z;
 }
 
+void PushBox(std::vector<float>* verts, std::vector<int>* tris, engine::Vec3 c, engine::Vec3 h) {
+  const int base = static_cast<int>(verts->size() / 3);
+  const float xs[2] = {c.x - h.x, c.x + h.x};
+  const float ys[2] = {c.y - h.y, c.y + h.y};
+  const float zs[2] = {c.z - h.z, c.z + h.z};
+  for (int y = 0; y < 2; ++y) {
+    for (int z = 0; z < 2; ++z) {
+      for (int x = 0; x < 2; ++x) {
+        verts->push_back(xs[x]);
+        verts->push_back(ys[y]);
+        verts->push_back(zs[z]);
+      }
+    }
+  }
+  const int faces[12][3] = {{0, 1, 3}, {0, 3, 2}, {4, 6, 7}, {4, 7, 5}, {0, 4, 5}, {0, 5, 1},
+                            {2, 3, 7}, {2, 7, 6}, {0, 2, 6}, {0, 6, 4}, {1, 5, 7}, {1, 7, 3}};
+  for (auto f : faces) {
+    tris->push_back(base + f[0]);
+    tris->push_back(base + f[1]);
+    tris->push_back(base + f[2]);
+  }
+}
+
+void VisitWorld(engine::scene::World& world, engine::scene::NodeId id, const engine::Mat4& parent,
+                std::vector<NavObstacle>* boxes) {
+  const auto local = world.local_transform(id);
+  const engine::Mat4 m = parent * engine::Mat4::TRS(local.position, local.rotation, local.scale);
+  if (const auto* mesh = world.mesh(id)) {
+    engine::Vec3 mn{1e9f, 1e9f, 1e9f};
+    engine::Vec3 mx{-1e9f, -1e9f, -1e9f};
+    const auto b = mesh->local_bounds;
+    const engine::Vec3 corners[8] = {
+        {b.min.x, b.min.y, b.min.z}, {b.max.x, b.min.y, b.min.z}, {b.min.x, b.max.y, b.min.z},
+        {b.max.x, b.max.y, b.min.z}, {b.min.x, b.min.y, b.max.z}, {b.max.x, b.min.y, b.max.z},
+        {b.min.x, b.max.y, b.max.z}, {b.max.x, b.max.y, b.max.z},
+    };
+    for (const auto& c : corners) {
+      const auto p = m.TransformPoint(c);
+      mn.x = std::min(mn.x, p.x);
+      mn.y = std::min(mn.y, p.y);
+      mn.z = std::min(mn.z, p.z);
+      mx.x = std::max(mx.x, p.x);
+      mx.y = std::max(mx.y, p.y);
+      mx.z = std::max(mx.z, p.z);
+    }
+    boxes->push_back(NavObstacle{(mn + mx) * 0.5f, (mx - mn) * 0.5f});
+  }
+  if (const auto* col = world.collider(id)) {
+    const auto p = m.TransformPoint({});
+    boxes->push_back(NavObstacle{p, {col->hx, col->hy, col->hz}});
+  }
+  for (auto child : world.children(id)) {
+    VisitWorld(world, child, m, boxes);
+  }
+}
+
 }  // namespace
 
 struct NavMeshImpl {
 #if defined(GAME_KIT_WITH_RECAST) && GAME_KIT_WITH_RECAST
   dtNavMesh* mesh = nullptr;
   dtNavMeshQuery* query = nullptr;
+  dtCrowd* crowd = nullptr;
   ~NavMeshImpl() {
+    if (crowd) {
+      dtFreeCrowd(crowd);
+    }
     if (query) {
       dtFreeNavMeshQuery(query);
     }
@@ -53,6 +118,7 @@ void NavWorld::AddObstacle(engine::Vec3 pos, engine::Vec3 half) {
 void NavWorld::Clear() {
   obstacles_.clear();
   paths_.clear();
+  agents_.clear();
   mesh_.reset();
 }
 
@@ -110,6 +176,35 @@ void NavWorld::SetPath(std::string entity, std::vector<engine::Vec3> points, flo
   paths_.push_back(std::move(f));
 }
 
+engine::Vec3 NavWorld::FollowStep(engine::Vec3 from, engine::Vec3 goal, float speed, float dt) const {
+#if defined(GAME_KIT_WITH_RECAST) && GAME_KIT_WITH_RECAST
+  if (has_navmesh()) {
+    engine::Vec3 delta = goal - from;
+    if (delta.length_squared() > 0.0001f) {
+      const engine::Vec3 next = from + engine::Normalize(delta) * (speed * dt);
+      const float ext[3] = {2.f, 4.f, 2.f};
+      const float s[3] = {from.x, from.y, from.z};
+      const float n[3] = {next.x, next.y, next.z};
+      dtQueryFilter filter;
+      dtPolyRef startRef = 0;
+      float sn[3]{};
+      mesh_->query->findNearestPoly(s, ext, &filter, &startRef, sn);
+      if (startRef) {
+        float result[3]{};
+        dtPolyRef visited[16];
+        int nvisited = 0;
+        const auto st =
+            mesh_->query->moveAlongSurface(startRef, sn, n, &filter, result, visited, &nvisited, 16);
+        if (dtStatusSucceed(st)) {
+          return {result[0], result[1], result[2]};
+        }
+      }
+    }
+  }
+#endif
+  return Steer(from, goal, speed, dt);
+}
+
 void NavWorld::TickFollow(EntityWorld& entities, engine::scene::World* world, float dt) {
   if (!world || dt <= 0.f) {
     return;
@@ -124,7 +219,7 @@ void NavWorld::TickFollow(EntityWorld& entities, engine::scene::World* world, fl
     }
     auto t = world->local_transform(e->node);
     const auto goal = p.points[p.index];
-    t.position = Steer(t.position, goal, p.speed, dt);
+    t.position = FollowStep(t.position, goal, p.speed, dt);
     world->set_local_transform(e->node, t);
     engine::Vec3 d = goal - t.position;
     d.y = 0.f;
@@ -173,40 +268,62 @@ bool NavWorld::has_navmesh() const {
 #endif
 }
 
-namespace {
-
-void PushBox(std::vector<float>* verts, std::vector<int>* tris, engine::Vec3 c, engine::Vec3 h) {
-  const int base = static_cast<int>(verts->size() / 3);
-  const float xs[2] = {c.x - h.x, c.x + h.x};
-  const float ys[2] = {c.y - h.y, c.y + h.y};
-  const float zs[2] = {c.z - h.z, c.z + h.z};
-  for (int y = 0; y < 2; ++y) {
-    for (int z = 0; z < 2; ++z) {
-      for (int x = 0; x < 2; ++x) {
-        verts->push_back(xs[x]);
-        verts->push_back(ys[y]);
-        verts->push_back(zs[z]);
-      }
+void NavWorld::ResetCrowd() {
+  agents_.clear();
+#if defined(GAME_KIT_WITH_RECAST) && GAME_KIT_WITH_RECAST
+  if (!mesh_) {
+    return;
+  }
+  if (mesh_->crowd) {
+    dtFreeCrowd(mesh_->crowd);
+    mesh_->crowd = nullptr;
+  }
+  if (mesh_->mesh) {
+    mesh_->crowd = dtAllocCrowd();
+    if (mesh_->crowd) {
+      (void)mesh_->crowd->init(16, 0.6f, mesh_->mesh);
     }
   }
-  const int faces[12][3] = {{0, 1, 3}, {0, 3, 2}, {4, 6, 7}, {4, 7, 5}, {0, 4, 5}, {0, 5, 1},
-                            {2, 3, 7}, {2, 7, 6}, {0, 2, 6}, {0, 6, 4}, {1, 5, 7}, {1, 7, 3}};
-  for (auto f : faces) {
-    tris->push_back(base + f[0]);
-    tris->push_back(base + f[1]);
-    tris->push_back(base + f[2]);
-  }
+#endif
 }
 
-}  // namespace
-
 bool NavWorld::BakeFromObstacles() {
+  std::vector<NavObstacle> boxes = obstacles_;
+  boxes.insert(boxes.begin(), NavObstacle{{0.f, -0.25f, 0.f}, {20.f, 0.25f, 20.f}});
+  return BakeBoxes(boxes);
+}
+
+bool NavWorld::BakeFromPhysics(const engine::physics::IPhysicsWorld& phys) {
+  std::vector<NavObstacle> boxes;
+  const int n = phys.body_count();
+  for (int i = 0; i < n; ++i) {
+    boxes.push_back(NavObstacle{phys.body_position(i), phys.body_half_extents(i)});
+  }
+  if (boxes.empty()) {
+    return BakeFromObstacles();
+  }
+  return BakeBoxes(boxes);
+}
+
+bool NavWorld::BakeFromWorld(engine::scene::World& world) {
+  std::vector<NavObstacle> boxes;
+  for (auto root : world.roots()) {
+    VisitWorld(world, root, engine::Mat4::Identity(), &boxes);
+  }
+  boxes.insert(boxes.end(), obstacles_.begin(), obstacles_.end());
+  if (boxes.empty()) {
+    return BakeFromObstacles();
+  }
+  return BakeBoxes(boxes);
+}
+
+bool NavWorld::BakeBoxes(const std::vector<NavObstacle>& boxes) {
   mesh_.reset();
+  agents_.clear();
 #if defined(GAME_KIT_WITH_RECAST) && GAME_KIT_WITH_RECAST
   std::vector<float> verts;
   std::vector<int> tris;
-  PushBox(&verts, &tris, {0.f, -0.25f, 0.f}, {20.f, 0.25f, 20.f});
-  for (const auto& o : obstacles_) {
+  for (const auto& o : boxes) {
     PushBox(&verts, &tris, o.position, o.half_extents);
   }
   if (verts.empty() || tris.empty()) {
@@ -270,7 +387,8 @@ bool NavWorld::BakeFromObstacles() {
     cleanup();
     return false;
   }
-  if (!rcBuildDistanceField(&ctx, *chf) || !rcBuildRegions(&ctx, *chf, 0, cfg.minRegionArea, cfg.mergeRegionArea)) {
+  if (!rcBuildDistanceField(&ctx, *chf) ||
+      !rcBuildRegions(&ctx, *chf, 0, cfg.minRegionArea, cfg.mergeRegionArea)) {
     cleanup();
     return false;
   }
@@ -285,7 +403,8 @@ bool NavWorld::BakeFromObstacles() {
     return false;
   }
   dmesh = rcAllocPolyMeshDetail();
-  if (!dmesh || !rcBuildPolyMeshDetail(&ctx, *pmesh, *chf, cfg.detailSampleDist, cfg.detailSampleMaxError, *dmesh)) {
+  if (!dmesh ||
+      !rcBuildPolyMeshDetail(&ctx, *pmesh, *chf, cfg.detailSampleDist, cfg.detailSampleMaxError, *dmesh)) {
     cleanup();
     return false;
   }
@@ -334,9 +453,10 @@ bool NavWorld::BakeFromObstacles() {
   }
   cleanup();
   mesh_ = std::move(impl);
+  ResetCrowd();
   return true;
 #else
-  (void)0;
+  (void)boxes;
   return false;
 #endif
 }
@@ -383,6 +503,115 @@ std::vector<engine::Vec3> NavWorld::FindPath(engine::Vec3 from, engine::Vec3 to)
 #else
   return {from, to};
 #endif
+}
+
+int NavWorld::AddAgent(std::string name, engine::Vec3 pos, float speed) {
+#if defined(GAME_KIT_WITH_RECAST) && GAME_KIT_WITH_RECAST
+  if (!has_navmesh()) {
+    return -1;
+  }
+  if (!mesh_->crowd) {
+    ResetCrowd();
+  }
+  if (!mesh_->crowd) {
+    return -1;
+  }
+  dtCrowdAgentParams ap{};
+  ap.radius = 0.4f;
+  ap.height = 1.8f;
+  ap.maxAcceleration = 8.f;
+  ap.maxSpeed = speed;
+  ap.collisionQueryRange = ap.radius * 8.f;
+  ap.pathOptimizationRange = ap.radius * 30.f;
+  ap.separationWeight = 2.f;
+  ap.updateFlags = DT_CROWD_SEPARATION | DT_CROWD_OBSTACLE_AVOIDANCE | DT_CROWD_ANTICIPATE_TURNS;
+  const float p[3] = {pos.x, pos.y, pos.z};
+  const int idx = mesh_->crowd->addAgent(p, &ap);
+  if (idx < 0) {
+    return -1;
+  }
+  agents_.push_back({std::move(name), idx});
+  return idx;
+#else
+  (void)name;
+  (void)pos;
+  (void)speed;
+  return -1;
+#endif
+}
+
+void NavWorld::SetAgentTarget(std::string_view name, engine::Vec3 pos) {
+#if defined(GAME_KIT_WITH_RECAST) && GAME_KIT_WITH_RECAST
+  if (!has_navmesh() || !mesh_->crowd) {
+    return;
+  }
+  int idx = -1;
+  for (const auto& a : agents_) {
+    if (a.first == name) {
+      idx = a.second;
+      break;
+    }
+  }
+  if (idx < 0) {
+    return;
+  }
+  const float ext[3] = {2.f, 4.f, 2.f};
+  const float e[3] = {pos.x, pos.y, pos.z};
+  dtQueryFilter filter;
+  dtPolyRef ref = 0;
+  float nearest[3]{};
+  mesh_->query->findNearestPoly(e, ext, &filter, &ref, nearest);
+  if (ref) {
+    (void)mesh_->crowd->requestMoveTarget(idx, ref, nearest);
+  }
+#else
+  (void)name;
+  (void)pos;
+#endif
+}
+
+void NavWorld::TickCrowd(float dt) {
+#if defined(GAME_KIT_WITH_RECAST) && GAME_KIT_WITH_RECAST
+  if (mesh_ && mesh_->crowd && dt > 0.f) {
+    mesh_->crowd->update(dt, nullptr);
+  }
+#else
+  (void)dt;
+#endif
+}
+
+engine::Vec3 NavWorld::AgentPosition(std::string_view name) {
+#if defined(GAME_KIT_WITH_RECAST) && GAME_KIT_WITH_RECAST
+  if (!mesh_ || !mesh_->crowd) {
+    return {};
+  }
+  for (const auto& a : agents_) {
+    if (a.first == name) {
+      const auto* ag = mesh_->crowd->getAgent(a.second);
+      if (ag && ag->active) {
+        return {ag->npos[0], ag->npos[1], ag->npos[2]};
+      }
+    }
+  }
+#else
+  (void)name;
+#endif
+  return {};
+}
+
+void NavWorld::SyncAgents(EntityWorld& entities, engine::scene::World* world) {
+  if (!world) {
+    return;
+  }
+  for (const auto& a : agents_) {
+    Entity* e = entities.FindByName(a.first);
+    if (!e || e->node == engine::scene::kInvalidNode || !world->valid(e->node)) {
+      continue;
+    }
+    auto t = world->local_transform(e->node);
+    t.position = AgentPosition(a.first);
+    world->set_local_transform(e->node, t);
+  }
 }
 
 }  // namespace game_kit

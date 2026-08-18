@@ -12,6 +12,10 @@
 
 #include "engine/scene/world.h"
 
+namespace engine::rhi {
+class IDevice;
+}
+
 #include <filesystem>
 #include <string>
 #include <unordered_map>
@@ -105,6 +109,7 @@ struct EditorSession {
   engine::scene::World* play_world = nullptr;
   std::string* lint_json = nullptr;
   std::string* screenshot_path = nullptr;
+  engine::rhi::IDevice* device = nullptr;
 };
 
 struct EditorHost {

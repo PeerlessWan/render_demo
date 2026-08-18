@@ -45,6 +45,19 @@ void Visit(const scene::World& world, scene::NodeId id, const Frustum& frustum, 
         ++out.culled;
       }
     }
+  } else if (world.light(id) || world.camera(id) || world.collider(id) || world.sprite(id)) {
+    const Mat4& wm = world.world_matrix(id);
+    Aabb local{{-0.25f, -0.25f, -0.25f}, {0.25f, 0.25f, 0.25f}};
+    if (const auto* col = world.collider(id)) {
+      local.min = {-col->hx, -col->hy, -col->hz};
+      local.max = {col->hx, col->hy, col->hz};
+    }
+    RenderInstance inst;
+    inst.node = id;
+    inst.world = wm;
+    inst.world_bounds = TransformAabb(local, wm);
+    inst.mesh_id.clear();
+    out.instances.push_back(std::move(inst));
   }
   for (scene::NodeId c : world.children(id)) {
     Visit(world, c, frustum, out);

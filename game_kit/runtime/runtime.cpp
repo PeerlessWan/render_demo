@@ -104,6 +104,8 @@ void GameRuntime::TickLogic(float dt) {
   }
   nav_.TickConfiguredSense(entities_, world_);
   nav_.TickFollow(entities_, world_, logic_dt_);
+  nav_.TickCrowd(logic_dt_);
+  nav_.SyncAgents(entities_, world_);
   anims_.Update(logic_dt_, events_, entities_, scripts_, world_);
   if (world_) {
     if (auto* e = entities_.FindByName(player_.entity_name)) {
@@ -140,6 +142,10 @@ void GameRuntime::Tick(engine::Application& app, float dt) {
     for (const auto& e : evs) {
       if (e.type == engine::ui::UiEventType::Click) {
         events_.Publish(std::string("ui.click.") + e.id, e.id);
+      } else if (e.type == engine::ui::UiEventType::Toggle) {
+        events_.Publish(std::string("ui.toggle.") + e.id, e.bool_value ? "1" : "0");
+      } else if (e.type == engine::ui::UiEventType::SliderChanged) {
+        events_.Publish(std::string("ui.slider.") + e.id, std::to_string(e.float_value));
       }
     }
     ui_mouse_was_down_ = snap.mouse_left;

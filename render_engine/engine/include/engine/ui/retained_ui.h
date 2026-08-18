@@ -71,6 +71,7 @@ class RetainedUi {
   std::vector<UiEvent> Pump(float mouse_x, float mouse_y, bool mouse_down, bool mouse_pressed);
 
   [[nodiscard]] std::vector<UiDrawRect> BuildDrawList() const;
+  void LayoutColumn(std::string_view parent, float gap = 8.f);
 
   // RmlUi thin document hooks (default no-op).
   virtual bool LoadRmlDocument(std::string_view /*rml*/) { return false; }

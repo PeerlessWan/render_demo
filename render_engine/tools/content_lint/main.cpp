@@ -35,6 +35,16 @@ int main(int argc, char** argv) {
   const auto& manifest = loaded.value();
   std::cout << "manifest_ok " << manifest_path.string() << "\n";
   std::cout << "assets " << manifest.entries().size() << "\n";
+  // Mega-W10 optional content roots (character / large_terrain) — warn only.
+  const auto content_root = manifest_path.parent_path();
+  for (const char* rel : {"scenes/large_terrain", "characters"}) {
+    const auto p = content_root / rel;
+    if (std::filesystem::exists(p)) {
+      std::cout << "w10_content_ok " << rel << "\n";
+    } else {
+      std::cout << "w10_content_missing " << rel << " (optional)\n";
+    }
+  }
   for (const auto& [id, entry] : manifest.entries()) {
     std::cout << "asset " << id.value() << " type=" << entry.type << " path=" << entry.path;
     if (!entry.deps.empty()) {

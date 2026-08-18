@@ -1064,6 +1064,44 @@ int LBakeNav(lua_State* L) {
   return 1;
 }
 
+int LBakeNavWorld(lua_State* L) {
+  auto* h = Host(L);
+  if (!h || !h->rt) {
+    lua_pushboolean(L, 0);
+    return 1;
+  }
+  bool ok = false;
+  if (h->rt->physics()) {
+    ok = h->rt->nav().BakeFromPhysics(*h->rt->physics());
+  } else if (h->world) {
+    ok = h->rt->nav().BakeFromWorld(*h->world);
+  } else {
+    ok = h->rt->nav().BakeFromObstacles();
+  }
+  lua_pushboolean(L, ok ? 1 : 0);
+  return 1;
+}
+
+int LNavAgent(lua_State* L) {
+  auto* h = Host(L);
+  if (!h || !h->rt) {
+    lua_pushinteger(L, -1);
+    return 1;
+  }
+  const char* name = luaL_checkstring(L, 1);
+  const engine::Vec3 pos{static_cast<float>(luaL_optnumber(L, 2, 0.0)),
+                         static_cast<float>(luaL_optnumber(L, 3, 0.0)),
+                         static_cast<float>(luaL_optnumber(L, 4, 0.0))};
+  const int idx = h->rt->nav().AddAgent(name, pos, static_cast<float>(luaL_optnumber(L, 5, 4.0)));
+  if (lua_gettop(L) >= 8) {
+    h->rt->nav().SetAgentTarget(name, {static_cast<float>(lua_tonumber(L, 6)),
+                                       static_cast<float>(lua_tonumber(L, 7)),
+                                       static_cast<float>(lua_tonumber(L, 8))});
+  }
+  lua_pushinteger(L, idx);
+  return 1;
+}
+
 int LFindPath(lua_State* L) {
   auto* h = Host(L);
   if (!h || !h->rt) {
@@ -1107,6 +1145,64 @@ int LUiButton(lua_State* L) {
                       static_cast<float>(luaL_optnumber(L, 4, 48.0)),
                       static_cast<float>(luaL_optnumber(L, 5, 80.0)),
                       static_cast<float>(luaL_optnumber(L, 6, 24.0)));
+  lua_pushboolean(L, 1);
+  return 1;
+}
+
+int LUiPanel(lua_State* L) {
+  auto* h = Host(L);
+  if (!h || !h->rt || !h->rt->ui()) {
+    lua_pushboolean(L, 0);
+    return 1;
+  }
+  h->rt->ui()->Panel(luaL_checkstring(L, 1), static_cast<float>(luaL_optnumber(L, 2, 16.0)),
+                     static_cast<float>(luaL_optnumber(L, 3, 16.0)),
+                     static_cast<float>(luaL_optnumber(L, 4, 280.0)),
+                     static_cast<float>(luaL_optnumber(L, 5, 120.0)));
+  lua_pushboolean(L, 1);
+  return 1;
+}
+
+int LUiToggle(lua_State* L) {
+  auto* h = Host(L);
+  if (!h || !h->rt || !h->rt->ui()) {
+    lua_pushboolean(L, 0);
+    return 1;
+  }
+  h->rt->ui()->Toggle(luaL_checkstring(L, 1), luaL_optstring(L, 2, ""),
+                      static_cast<float>(luaL_optnumber(L, 3, 16.0)),
+                      static_cast<float>(luaL_optnumber(L, 4, 16.0)),
+                      static_cast<float>(luaL_optnumber(L, 5, 80.0)),
+                      static_cast<float>(luaL_optnumber(L, 6, 22.0)), lua_toboolean(L, 7) != 0);
+  lua_pushboolean(L, 1);
+  return 1;
+}
+
+int LUiSlider(lua_State* L) {
+  auto* h = Host(L);
+  if (!h || !h->rt || !h->rt->ui()) {
+    lua_pushboolean(L, 0);
+    return 1;
+  }
+  h->rt->ui()->Slider(luaL_checkstring(L, 1), luaL_optstring(L, 2, ""),
+                      static_cast<float>(luaL_optnumber(L, 3, 16.0)),
+                      static_cast<float>(luaL_optnumber(L, 4, 16.0)),
+                      static_cast<float>(luaL_optnumber(L, 5, 160.0)),
+                      static_cast<float>(luaL_optnumber(L, 6, 18.0)),
+                      static_cast<float>(luaL_optnumber(L, 7, 0.0)),
+                      static_cast<float>(luaL_optnumber(L, 8, 0.0)),
+                      static_cast<float>(luaL_optnumber(L, 9, 1.0)));
+  lua_pushboolean(L, 1);
+  return 1;
+}
+
+int LUiLayout(lua_State* L) {
+  auto* h = Host(L);
+  if (!h || !h->rt || !h->rt->ui()) {
+    lua_pushboolean(L, 0);
+    return 1;
+  }
+  h->rt->ui()->LayoutColumn(luaL_checkstring(L, 1), static_cast<float>(luaL_optnumber(L, 2, 8.0)));
   lua_pushboolean(L, 1);
   return 1;
 }

@@ -74,15 +74,18 @@ void PlayerController::TickMove(engine::input::InputSystem& input, GameRuntime& 
   }
 
   const bool jump_down = use_actions ? input.pressed("Jump") : input.key_down(engine::input::Key::Space);
-  const bool jump = jump_down && !jump_held_ && grounded;
+  const bool can_jump = grounded || coyote_left_ > 0.f;
+  const bool jump = jump_down && !jump_held_ && can_jump;
   jump_held_ = jump_down;
   if (jump) {
     vertical_vel = jump_speed;
     grounded = false;
+    coyote_left_ = 0.f;
   }
   if (!grounded) {
     vertical_vel -= gravity * dt;
     move.y += vertical_vel * dt;
+    coyote_left_ -= dt;
   }
 
   auto* phys = rt.physics();
@@ -92,9 +95,12 @@ void PlayerController::TickMove(engine::input::InputSystem& input, GameRuntime& 
     const auto he = phys->body_half_extents(physics_body);
     const auto hit = phys->Raycast(pos + engine::Vec3{0.f, 0.05f, 0.f}, {0.f, -1.f, 0.f},
                                    he.y * 2.f + 0.6f);
-    grounded = hit.hit && hit.distance <= he.y + 0.35f;
+    const float slope = hit.hit ? std::acos(std::max(-1.f, std::min(1.f, hit.normal.y))) * (180.f / 3.14159265f)
+                                : 90.f;
+    grounded = hit.hit && hit.distance <= he.y + 0.35f && slope <= max_slope_deg;
     if (grounded) {
       vertical_vel = 0.f;
+      coyote_left_ = coyote;
     }
     Entity* e = rt.entities().FindByName(entity_name);
     auto* world = rt.world();
@@ -117,6 +123,7 @@ void PlayerController::TickMove(engine::input::InputSystem& input, GameRuntime& 
     t.position.y = ground_y;
     vertical_vel = 0.f;
     grounded = true;
+    coyote_left_ = coyote;
   }
   world->set_local_transform(e->node, t);
 }

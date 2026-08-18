@@ -26,7 +26,7 @@
 | ED-G04 | 拣选 API 未单列 | 已包 `mixed::Pick` | ED2 |
 | ED-G05 | Undo 模型未定 | **已选定命令栈** | ED2 |
 | ED-G06 | Play 快照策略未定 | **退出恢复快照**（ADR 0001） | ED4 |
-| ED-G08 | C20 CLI 未做 | Manifest 依赖图：editor Lint 面板 + `content_lint` | 引擎 TOOLING |
+| ED-G08 | C20 CLI 未做 | **已闭环**：内置 SceneDocument v3 校验 + Manifest 依赖图；缺 `content_lint` 不掩盖场景错误 | 引擎 TOOLING |
 
 ---
 
@@ -59,13 +59,13 @@
 
 | ID | 缺口 | 说明 | 建议 |
 |---|---|---|---|
-| ED-G30 | 多视口 | 四视图等 | **2×2 pane 布局 + 活动格相机**（单 RT 提交） |
-| ED-G32 | Prefab 源 vs 实例覆盖 | 属性级 override JSON；Apply 写回源文件 | **已写** |
-| ED-G33 | 动画状态机 / 曲线 | Anim 面板状态 + 4 键曲线 | Inspector + Anim 窗 |
-| ED-G34 | 地形雕刻套件 | 笔刷 Raise + `BuildTerrainMesh` 上传 slot2 | **已写** |
-| ED-G35 | 2D Tilemap / 图集编辑 | `TilemapStreamer::SetGid` + Sprite 展开 | **已写** |
-| ED-G36 | 光照烘焙 UI | Bake 按钮 + Lint 依赖图 JSON | **已写** |
-| ED-G37 | 资源/脚本热重载 | 编辑态 AssetHotReload + Play 脚本 Poll | **已写** |
+| ED-G30 | 多视口 | 四视图等 | **已闭环**：同一帧四相机四视口矩形 |
+| ED-G32 | Prefab 源 vs 实例覆盖 | 属性级 override JSON；Apply 写回源文件 | **已闭环**（TRS/visible/material/light/fields + nested Place） |
+| ED-G33 | 动画状态机 / 曲线 | 可增删状态与转移；4 键曲线驱动选中 AnimPlayer | **已闭环**（不绑骨骼蒙皮编辑） |
+| ED-G34 | 地形雕刻套件 | Raise/Lower/Smooth；Undo；随场景存盘 | **已闭环** |
+| ED-G35 | 2D Tilemap / 图集编辑 | 图集路径 + GID；Sprite/Tile 可见可点选 | **已闭环** |
+| ED-G36 | 光照烘焙 UI | 读场景灯 CPU 烘 lightmap 并套地面/地形；失败 isError | **已闭环** |
+| ED-G37 | 资源/脚本热重载 | 贴图 + 网格 Upload；Play 中脚本 ReloadPath | **已闭环** |
 
 ---
 
@@ -85,7 +85,7 @@
 | ED-G46 | 包管理器 / 协作 / 版本控制套件 | **不做** |
 | ED-G47 | 音频混音台 / DSP 编辑 | 引擎不做 DSP（ADR 0013） |
 
-即使得完 ED5，对标主流仍弱在：**材质图、UI 编辑、动画工具、导入管线、地形雕刻**。这是定位，不是漏排。
+即使得完 ED5/ED6，对标主流仍弱在：**材质图、UI 编辑、蓝图、导入管线、粒子/时间轴**。这是定位，不是漏排。
 
 ---
 

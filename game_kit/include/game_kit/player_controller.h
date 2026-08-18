@@ -40,6 +40,8 @@ class PlayerController {
   CameraMode camera_mode = CameraMode::SpringArm;
   bool grounded = true;
   float vertical_vel = 0.f;
+  float coyote = 0.12f;
+  float max_slope_deg = 50.f;
 
   static void InstallPlayDefaults(engine::input::InputSystem& input);
 
@@ -50,6 +52,7 @@ class PlayerController {
 
  private:
   bool jump_held_ = false;
+  float coyote_left_ = 0.f;
 };
 
 }  // namespace game_kit

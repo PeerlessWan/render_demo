@@ -6,6 +6,7 @@
 #include "game_kit/script_fields.h"
 
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <sstream>
@@ -88,8 +89,10 @@ std::string ReadAllText(const std::filesystem::path& path) {
 std::string EncodeNodeMeta(const NodeMeta& m) {
   std::ostringstream o;
   o << "{\"has_light\":" << (m.has_light ? "true" : "false") << ",\"light_range\":" << m.light_range
-    << ",\"light_intensity\":" << m.light_intensity << ",\"has_camera\":"
-    << (m.has_camera ? "true" : "false") << ",\"active_camera\":" << (m.active_camera ? "true" : "false")
+    << ",\"light_intensity\":" << m.light_intensity << ",\"light_kind\":" << m.light_kind
+    << ",\"light_r\":" << m.light_r << ",\"light_g\":" << m.light_g << ",\"light_b\":" << m.light_b
+    << ",\"has_camera\":" << (m.has_camera ? "true" : "false")
+    << ",\"active_camera\":" << (m.active_camera ? "true" : "false") << ",\"camera_fovy\":" << m.camera_fovy
     << ",\"has_collider\":" << (m.has_collider ? "true" : "false") << ",\"collider_hx\":" << m.collider_hx
     << ",\"collider_hy\":" << m.collider_hy << ",\"collider_hz\":" << m.collider_hz << ",\"material\":\""
     << m.material_id << "\",\"fields\":\"" << EscapeMeta(m.script_fields) << "\",\"anim\":\""
@@ -131,6 +134,13 @@ void DecodeNodeMetaExtra(std::string_view extra, NodeMeta* m) {
   m->has_collider = has("has_collider");
   num("light_range", &m->light_range);
   num("light_intensity", &m->light_intensity);
+  float kind = static_cast<float>(m->light_kind);
+  num("light_kind", &kind);
+  m->light_kind = static_cast<int>(kind);
+  num("light_r", &m->light_r);
+  num("light_g", &m->light_g);
+  num("light_b", &m->light_b);
+  num("camera_fovy", &m->camera_fovy);
   num("collider_hx", &m->collider_hx);
   num("collider_hy", &m->collider_hy);
   num("collider_hz", &m->collider_hz);
@@ -257,6 +267,8 @@ void SyncMetaToWorld(engine::scene::World& world,
       engine::scene::LightComponent L;
       L.range = m.light_range;
       L.intensity = m.light_intensity;
+      L.kind = m.light_kind;
+      L.color = {m.light_r, m.light_g, m.light_b};
       world.set_light(kv.first, L);
     } else {
       world.clear_light(kv.first);
@@ -264,6 +276,7 @@ void SyncMetaToWorld(engine::scene::World& world,
     if (m.has_camera) {
       engine::scene::CameraComponent cam;
       cam.active = m.active_camera;
+      cam.fovy_rad = m.camera_fovy;
       world.set_camera(kv.first, cam);
     } else {
       world.clear_camera(kv.first);
@@ -298,10 +311,15 @@ void SyncWorldToMeta(const engine::scene::World& world,
       m.has_light = true;
       m.light_range = L->range;
       m.light_intensity = L->intensity;
+      m.light_kind = L->kind;
+      m.light_r = L->color.x;
+      m.light_g = L->color.y;
+      m.light_b = L->color.z;
     }
     if (const auto* cam = world.camera(id)) {
       m.has_camera = true;
       m.active_camera = cam->active;
+      m.camera_fovy = cam->fovy_rad;
     }
     if (const auto* col = world.collider(id)) {
       m.has_collider = true;
@@ -415,6 +433,33 @@ void FollowPlayerCamera(engine::render::Camera* cam, const engine::Vec3& player_
   const engine::Vec3 fwd =
       engine::Quat::FromEulerYxz(cam->yaw, cam->pitch, 0.f).Rotate(engine::Vec3{0.f, 0.f, -1.f});
   cam->position = eye - fwd * 5.f;
+}
+
+void WriteInstanceOverride(const engine::scene::World& world, engine::scene::NodeId id, NodeMeta* m) {
+  if (!m || !world.valid(id)) {
+    return;
+  }
+  if (m->source_prefab.empty() && m->prefab_id.empty()) {
+    return;
+  }
+  const auto t = world.local_transform(id);
+  std::ostringstream o;
+  o << "{\"x\":" << t.position.x << ",\"y\":" << t.position.y << ",\"z\":" << t.position.z
+    << ",\"sx\":" << t.scale.x << ",\"sy\":" << t.scale.y << ",\"sz\":" << t.scale.z
+    << ",\"visible\":" << (world.visible(id) ? "true" : "false");
+  if (!m->material_id.empty()) {
+    o << ",\"material\":\"" << EscapeMeta(m->material_id) << '"';
+  }
+  if (m->has_light) {
+    o << ",\"kind\":" << m->light_kind << ",\"range\":" << m->light_range
+      << ",\"intensity\":" << m->light_intensity << ",\"color\":[" << m->light_r << ',' << m->light_g
+      << ',' << m->light_b << ']';
+  }
+  if (!m->script_fields.empty()) {
+    o << ",\"fields\":" << m->script_fields;
+  }
+  o << '}';
+  m->override_json = o.str();
 }
 
 }  // namespace editor

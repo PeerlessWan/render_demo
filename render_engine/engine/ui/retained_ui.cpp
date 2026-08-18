@@ -271,4 +271,30 @@ std::vector<UiDrawRect> RetainedUi::BuildDrawList() const {
   return rects;
 }
 
+void RetainedUi::LayoutColumn(std::string_view parent, float gap) {
+  Widget* p = Find(parent);
+  if (!p) {
+    return;
+  }
+  float y = p->y + 8.f;
+  const float x = p->x + 8.f;
+  bool after = false;
+  for (auto& w : widgets_) {
+    if (w.id == p->id) {
+      after = true;
+      continue;
+    }
+    if (!after) {
+      continue;
+    }
+    if (w.kind == WidgetKind::Panel) {
+      break;
+    }
+    w.x = x;
+    w.y = y;
+    y += w.h + gap;
+  }
+  p->h = std::max(p->h, y - p->y + 8.f);
+}
+
 }  // namespace engine::ui

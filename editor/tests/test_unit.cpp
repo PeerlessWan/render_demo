@@ -2,12 +2,15 @@
 #include "editing/terrain_edit.h"
 #include "editing/tile_edit.h"
 #include "editing/viewport_layout.h"
+#include "io/content_browser.h"
 #include "io/dep_graph.h"
 
+#include "game_kit/scene_document.h"
 #include "game_kit/script_fields.h"
 
 #include "kit_test.h"
 
+#include "engine/render/camera.h"
 #include "engine/scene/world.h"
 
 #include <cmath>
@@ -49,6 +52,9 @@ TEST_CASE("script export fields parse", "[unit]") {
   REQUIRE(fields[1].name == "name");
   const auto blob = game_kit::FieldsToPersist(fields);
   REQUIRE(blob.find("speed=5") != std::string::npos);
+  const auto merged = game_kit::MergeExportsAndPersist(src, R"({"speed":9,"name":"npc"})");
+  REQUIRE(merged.find("speed=9") != std::string::npos);
+  REQUIRE(merged.find("name=npc") != std::string::npos);
 }
 
 TEST_CASE("viewport quad layout panes", "[unit]") {
@@ -95,4 +101,65 @@ TEST_CASE("dep graph from missing manifest", "[unit]") {
   REQUIRE(!g.ok);
   const auto json = editor::DepGraphJson(g);
   REQUIRE(json.find("\"ok\":false") != std::string::npos);
+}
+
+TEST_CASE("viewport split cameras differ yaw and fovy", "[unit]") {
+  engine::render::Camera persp;
+  persp.yaw = 0.4f;
+  persp.fovy_rad = 1.047f;
+  engine::render::Camera top;
+  engine::render::Camera front;
+  engine::render::Camera side;
+  editor::ApplyPaneCamera(0, &top, persp);
+  editor::ApplyPaneCamera(1, &top, persp);
+  editor::ApplyPaneCamera(2, &front, persp);
+  editor::ApplyPaneCamera(3, &side, persp);
+  REQUIRE(std::fabs(top.pitch + 1.55f) < 0.02f);
+  REQUIRE(std::fabs(front.yaw - 0.f) < 0.01f);
+  REQUIRE(std::fabs(side.yaw + 1.57f) < 0.02f);
+  REQUIRE(top.fovy_rad < persp.fovy_rad);
+  REQUIRE(std::fabs(front.fovy_rad - side.fovy_rad) < 0.01f);
+}
+
+TEST_CASE("terrain lower and smooth brushes", "[unit]") {
+  std::vector<float> h;
+  editor::RaiseHeight(&h, 8, 8, 2.f, 2.f);
+  const float peak = h[static_cast<std::size_t>(8 * 17 + 8)];
+  editor::LowerHeight(&h, 8, 8, 1.f, 2.f);
+  REQUIRE(h[static_cast<std::size_t>(8 * 17 + 8)] < peak);
+  editor::SmoothHeight(&h, 8, 8, 2.f);
+  REQUIRE(h.size() == static_cast<std::size_t>(17 * 17));
+}
+
+TEST_CASE("validate scene document parent cycle", "[unit]") {
+  game_kit::SceneDocument doc;
+  doc.format_version = 3;
+  game_kit::SceneNode a;
+  a.id = "a";
+  a.name = "a";
+  a.parent = "b";
+  game_kit::SceneNode b;
+  b.id = "b";
+  b.name = "b";
+  b.parent = "a";
+  doc.nodes.push_back(a);
+  doc.nodes.push_back(b);
+  REQUIRE(!game_kit::ValidateSceneDocument(doc).ok());
+}
+
+TEST_CASE("content json thumbs are stable not random", "[unit]") {
+  const auto dir = std::filesystem::temp_directory_path() / "editor_thumb_scan";
+  std::error_code ec;
+  std::filesystem::create_directories(dir, ec);
+  {
+    std::ofstream out(dir / "a.json");
+    out << R"({"format_version":3,"nodes":[]})";
+  }
+  editor::ContentBrowser b1;
+  b1.Scan({dir});
+  editor::ContentBrowser b2;
+  b2.Scan({dir});
+  REQUIRE(!b1.items.empty());
+  REQUIRE(std::fabs(b1.items.front().thumb_r - b2.items.front().thumb_r) < 1e-6f);
+  REQUIRE(b1.items.front().thumb_g > 0.2f);
 }

@@ -12,7 +12,7 @@
 |---|---|---|
 | **摆放器可用** | ED0–ED3 | **已收口** |
 | **编辑器可用** | ED4–ED5 | **已收口**（Play / Prefab / 脚本 Entity） |
-| **对标主流** | 不宣称 | 材质图 / UMG / 动画工具 / DCC — GAPS §3–§4，刻意不对齐 |
+| **对标主流** | 不宣称 | 材质图 / UMG / 蓝图 / DCC — GAPS §4，刻意不对齐 |
 
 一期是关卡摆放器，不替代 Blender，也不替代 `game_kit` GK0–GK3。
 
@@ -26,7 +26,7 @@
 | **ED3** 层级与内容 | 能摆 | 场景树、内容浏览器、拖拽创建、保存完整 | 搭一个小关卡无手改 JSON |
 | **ED4** Play | 能验 | Play-in-Editor、暂停、退出恢复 | 进 Play 可动，退出场景不脏（或可弃） |
 | **ED5** Prefab/脚本 | 内容协作 | Prefab 放置；可选 game_kit 脚本字段 | 与 GK4 对齐 |
-| **ED6** 打磨 | 产品切片 | 多视口 pane、Prefab Apply 写回、地形网格、Tilemap、Lint 图、热重载 | 单测 + 集成 + 自动化 |
+| **ED6** 打磨 | 产品闭环 | 四分屏、Prefab override 全字段、地形/Tile 进关卡、Anim、Bake/Lint/热重载、真截图 | 单测 + 集成 + 自动化钉死 100% 行为 |
 
 ## 2. 建议时序
 
@@ -47,7 +47,7 @@
 | ED0–ED3 | 已收口 |
 | ED4 Play | 场景 Entity+脚本+地面钳制；体素生存出生+HUD；退出恢复 |
 | ED5 Prefab | Content 打开场景 / 放置实例 + 选中存 Prefab + 脚本 Combo |
-| ED6 | 产品切片：2×2 pane、World 组件、Prefab Apply 写回、地形网格、Tilemap streamer、Lint 图、热重载、三层测试 |
+| ED6 | **已闭环**（GAPS §4 刻意不做除外）：四分屏、override、地形/Tile 存盘、Anim、Bake/Lint/热重载、真截图 |
 
 ## 4. 相关
 

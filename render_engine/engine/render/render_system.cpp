@@ -155,16 +155,29 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
                                const Environment& env, float aspect,
                                const std::vector<render2d::Sprite>* sprites,
                                const std::vector<rhi::ScreenQuad>* ui_quads,
-                               const debug::DebugDraw* debug_draw) {
+                               const debug::DebugDraw* debug_draw,
+                               const ColorViewport* color_vp) {
   if (!ready_) {
     return Status::Fail("RenderSystem not initialized");
   }
   ++frame_index_;
+  const bool split_vp = color_vp && color_vp->enabled && color_vp->w > 1.f && color_vp->h > 1.f;
+  if (split_vp) {
+    device.SetDrawViewport(color_vp->x, color_vp->y, color_vp->w, color_vp->h);
+    device.SetPreferLdrTarget(true);
+  } else {
+    device.SetDrawViewport(0.f, 0.f, 0.f, 0.f);
+    device.SetPreferLdrTarget(false);
+  }
+  const bool skip_post = split_vp && color_vp->skip_post;
 
   std::vector<rhi::LitDrawItem> opaque;
   std::vector<rhi::LitDrawItem> transparent;
   opaque.reserve(scene.instances.size());
   for (const auto& inst : scene.instances) {
+    if (inst.mesh_id.empty()) {
+      continue;
+    }
     rhi::LitDrawItem item;
     item.world = inst.world;
     const auto mat = ResolveMeshMaterial(inst.mesh_id);
@@ -540,7 +553,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       pass_end();
     });
   }
-  if (sky_ready_ && effect_.enable_skybox) {
+  if (sky_ready_ && effect_.enable_skybox && !skip_post) {
     graph_.AddPass("Skybox", {"Color", "Depth"}, {"Color"}, [&] {
       pass_begin("Skybox");
       Mat4 view_rot = scene.camera.view_matrix();
@@ -563,7 +576,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   const bool want_motion_blur = effect_.enable_motion_blur && post_.enabled("MotionBlur");
   (void)want_tonemap;
   // HDR lit target must always be resolved (at least tonemap) into the LDR swapchain.
-  if (post_ready_) {
+  if (post_ready_ && !skip_post) {
     graph_.AddPass("PostSSAO_TAA", {"Color", "Depth"}, {"Color"}, [&] {
       pass_begin("Post");
       rhi::PostResolveDesc post;

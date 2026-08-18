@@ -30,6 +30,9 @@ struct SceneComponent {
   float hz = 0.5f;
   int gid = 0;
   std::string atlas;
+  float color_r = 1.f;
+  float color_g = 0.95f;
+  float color_b = 0.85f;
 };
 
 struct SceneNode {
@@ -61,6 +64,7 @@ SceneDocument CaptureWorld(const engine::scene::World& world);
 SceneDocument CaptureWorld(const engine::scene::World& world, const GameRuntime& rt);
 engine::Status ApplyWorld(engine::scene::World& world, const SceneDocument& doc,
                           std::unordered_map<std::string, engine::scene::NodeId>* out_ids = nullptr);
+[[nodiscard]] engine::Status ValidateSceneDocument(const SceneDocument& doc);
 void BindSceneScripts(GameRuntime& rt, engine::scene::World& world, const SceneDocument& doc,
                       const std::unordered_map<std::string, engine::scene::NodeId>& ids);
 void ClearWorld(engine::scene::World& world);

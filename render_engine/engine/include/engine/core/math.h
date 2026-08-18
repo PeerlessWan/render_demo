@@ -70,6 +70,36 @@ struct Quat {
   [[nodiscard]] Vec3 Rotate(const Vec3& v) const;
 };
 
+inline float Dot(const Quat& a, const Quat& b) {
+  return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+}
+
+inline Quat Slerp(Quat a, Quat b, float t) {
+  float cosom = Dot(a, b);
+  if (cosom < 0.f) {
+    b.x = -b.x;
+    b.y = -b.y;
+    b.z = -b.z;
+    b.w = -b.w;
+    cosom = -cosom;
+  }
+  if (t <= 0.f) {
+    return a;
+  }
+  if (t >= 1.f) {
+    return b;
+  }
+  if (cosom > 0.9995f) {
+    return Quat{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t,
+                a.w + (b.w - a.w) * t};
+  }
+  const float omega = std::acos(cosom);
+  const float sinom = std::sin(omega);
+  const float s0 = std::sin((1.f - t) * omega) / sinom;
+  const float s1 = std::sin(t * omega) / sinom;
+  return Quat{a.x * s0 + b.x * s1, a.y * s0 + b.y * s1, a.z * s0 + b.z * s1, a.w * s0 + b.w * s1};
+}
+
 // Column-major 4x4.
 struct Mat4 {
   std::array<float, 16> m{

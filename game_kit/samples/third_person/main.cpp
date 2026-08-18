@@ -53,9 +53,11 @@ class CorridorModule final : public game_kit::IGameModule {
     hud_ = engine::ui::CreateRetainedUiBackend();
     (void)engine::ui::LoadRmlDocumentFromMemory(*hud_,
                                                 "<rml><head></head><body>GK3</body></rml>");
-    hud_->Panel("hud", 16.f, 16.f, 280.f, 96.f);
+    hud_->Panel("hud", 16.f, 16.f, 280.f, 128.f);
     hud_->Label("msg", "Reach the far cube", 28.f, 36.f);
     hud_->Button("save", "Save", 28.f, 64.f, 72.f, 22.f);
+    hud_->Toggle("dbg", "Debug", 28.f, 90.f, 72.f, 22.f, false);
+    hud_->LayoutColumn("hud", 8.f);
     rt_.set_ui(hud_.get());
     rt_.set_script_debug(true);
 
@@ -81,6 +83,9 @@ class CorridorModule final : public game_kit::IGameModule {
         hud_->set_text("msg", "Saved");
       }
     });
+    rt_.events().Subscribe("ui.toggle.dbg", [this](std::string_view payload) {
+      rt_.set_script_debug(payload == "1");
+    });
     rt_.events().Subscribe("level.complete", [this](std::string_view) {
       done_ = true;
       if (hud_) {
@@ -95,11 +100,22 @@ class CorridorModule final : public game_kit::IGameModule {
           MakeBox(a.world(), "floor", {0.f, -0.05f, 8.f}, {8.f, 0.1f, 24.f});
           const auto p = MakeBox(a.world(), "player", {0.f, 1.f, 0.f}, {0.8f, 1.8f, 0.8f});
           const auto goal = MakeBox(a.world(), "goal", goal_pos_, {1.f, 1.f, 1.f});
+          const auto npc = MakeBox(a.world(), "npc", {-2.f, 1.f, 2.f}, {0.7f, 1.6f, 0.7f});
           rt.entities().Create("player", p);
           rt.entities().Create("goal", goal);
+          rt.entities().Create("npc", npc);
           rt.triggers().Add("goal", goal, {1.6f, 1.6f, 1.6f}, "player");
+          engine::physics::RigidBodyDesc wall;
+          wall.position = {2.f, 0.5f, 8.f};
+          wall.half_extents = {0.6f, 0.5f, 0.6f};
+          wall.mass = 0.f;
+          (void)phys_->CreateBox(wall);
           rt.nav().AddObstacle({2.f, 0.5f, 8.f}, {0.6f, 0.5f, 0.6f});
-          (void)rt.nav().BakeFromObstacles();
+          (void)rt.nav().BakeFromPhysics(*phys_);
+          auto pts = rt.nav().FindPath({-2.f, 1.f, 2.f}, goal_pos_);
+          rt.nav().SetPath("npc", pts, 3.f);
+          (void)rt.nav().AddAgent("guard", {2.f, 1.f, 4.f});
+          rt.nav().SetAgentTarget("guard", goal_pos_);
           const auto sid =
               rt.scripts().Attach(goal, rt.ResolveScriptPath("scripts/goal.lua").string());
           if (auto* sc = rt.scripts().Get(sid)) {

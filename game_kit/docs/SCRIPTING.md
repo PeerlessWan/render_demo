@@ -23,9 +23,9 @@ Script Source (.lua 等)
 
 绑定只经 [HOST_API.md](../../render_engine/docs/HOST_API.md)。  
 
-默认绑定源：[`script/bindings/api.json`](../script/bindings/api.json) 生成 `lua_api_reg.inc`。含 `ui_label`/`ui_button`、`bake_nav`/`find_path`。  
+默认绑定源：[`script/bindings/api.json`](../script/bindings/api.json) 生成 `lua_api_reg.inc`。含 `ui_label`/`ui_button`/`ui_panel`/`ui_toggle`/`ui_slider`/`ui_layout`、`bake_nav`/`bake_nav_world`/`find_path`/`nav_agent`。  
 
-每 VM 一份 Host（Lua extraspace）。pcall 走 `luaL_traceback`。`set_instruction_budget` 用 count hook 打断死循环。`set_debug_hooks(true)` 记录 `last_line` / `last_chunk`，`ScriptDebugger` 行断点在 hook 内调 `on_break` 可读 locals。热重载可保留 `persist`。`wait_event(topic)` 挂起协程直到 EventBus 发布该主题。打开 base 后剥掉 `load`/`loadfile`/`dofile`。  
+每 VM 一份 Host（Lua extraspace）。pcall 走 `luaL_traceback`。`set_instruction_budget` 用 count hook 打断死循环。`set_debug_hooks(true)` 记录 `last_line` / `last_chunk`，`ScriptDebugger` 行断点在 hook 内调 `on_break` 可读 locals；`DapSession` 可 `Handle` DAP JSON（命中后 hook 内阻塞直到 `continue`）。热重载可保留 `persist`。`wait_event(topic)` 挂起协程直到 EventBus 发布该主题。打开 base 后剥掉 `load`/`loadfile`/`dofile`。  
 
 - **不进引擎核心：** 与 ADR 0027 / HOSTING 方案 A 一致；game_kit 实现薄 `GameKitScriptHost`（C19）。  
 - **Host API：** 绑定只经 [HOST_API.md](../../render_engine/docs/HOST_API.md)。  
@@ -50,7 +50,7 @@ Script Source (.lua 等)
 - 生成/销毁实体（Prefab / 模板）  
 - Animation：`play_anim` 经 `AnimPlayer`（无骨骼 clip 也可播；Notify / 根运动）  
 - Audio：Play/Stop/增益；`mixer_*` 距离衰减  
-- UI：显隐、文本（可选注入 Retained UI）  
+- UI：显隐、文本、panel/button/toggle/slider、`ui_layout` 列布局；点击/开关进 EventBus  
 - Physics：Raycast（可选注入）；Trigger 为本层 AABB；body AABB 接触 → `on_collision_*`  
 - Assets：`request_load`、`asset_ready`、`on_asset_ready`  
 - Input：读 Action / 轴  

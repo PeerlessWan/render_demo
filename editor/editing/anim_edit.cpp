@@ -27,6 +27,18 @@ void AddState(AnimGraphEdit* g, std::string name) {
   g->states.push_back(std::move(name));
 }
 
+void RemoveState(AnimGraphEdit* g, int index) {
+  if (!g || index < 0 || index >= static_cast<int>(g->states.size()) || g->states.size() <= 1) {
+    return;
+  }
+  const std::string gone = g->states[static_cast<std::size_t>(index)];
+  g->states.erase(g->states.begin() + index);
+  g->transitions.erase(std::remove_if(g->transitions.begin(), g->transitions.end(),
+                                      [&](const auto& t) { return t.first == gone || t.second == gone; }),
+                       g->transitions.end());
+  g->current = std::clamp(g->current, 0, static_cast<int>(g->states.size()) - 1);
+}
+
 void AddTransition(AnimGraphEdit* g, std::string from, std::string to) {
   if (!g) {
     return;

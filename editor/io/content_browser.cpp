@@ -1,11 +1,15 @@
 #include "io/content_browser.h"
 
+#include "engine/assets/image_loader.h"
 #include "engine/assets/manifest.h"
 #include "engine/core/log.h"
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstdint>
+#include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -72,6 +76,39 @@ bool LooksLikePrefab(const std::filesystem::path& path) {
 
 }  // namespace
 
+void FillThumbFromImage(ContentItem* it) {
+  if (!it) {
+    return;
+  }
+  auto loader = engine::assets::CreateDefaultImageLoader();
+  if (!loader) {
+    return;
+  }
+  auto img = loader->LoadFile(it->path);
+  if (!img || img.value().rgba.empty()) {
+    return;
+  }
+  const auto& im = img.value();
+  std::uint32_t r = 0;
+  std::uint32_t g = 0;
+  std::uint32_t b = 0;
+  const int n = im.width * im.height;
+  for (int i = 0; i < n; ++i) {
+    r += im.rgba[static_cast<std::size_t>(i) * 4 + 0];
+    g += im.rgba[static_cast<std::size_t>(i) * 4 + 1];
+    b += im.rgba[static_cast<std::size_t>(i) * 4 + 2];
+  }
+  if (n > 0) {
+    it->thumb_r = static_cast<float>(r / static_cast<std::uint32_t>(n)) / 255.f;
+    it->thumb_g = static_cast<float>(g / static_cast<std::uint32_t>(n)) / 255.f;
+    it->thumb_b = static_cast<float>(b / static_cast<std::uint32_t>(n)) / 255.f;
+  }
+  it->thumb_w = std::min(im.width, 8);
+  it->thumb_h = 1;
+  const auto ncopy = std::min(im.rgba.size(), static_cast<std::size_t>(32));
+  it->thumb_px.assign(im.rgba.begin(), im.rgba.begin() + static_cast<std::ptrdiff_t>(ncopy));
+}
+
 void ContentBrowser::Scan(const std::vector<std::filesystem::path>& roots) {
   items.clear();
   pending = -1;
@@ -91,15 +128,25 @@ void ContentBrowser::Scan(const std::vector<std::filesystem::path>& roots) {
       if (ext == ".json") {
         it.kind = LooksLikePrefab(ent.path()) ? ContentItem::Kind::Prefab : ContentItem::Kind::Scene;
         it.type = it.kind == ContentItem::Kind::Prefab ? "prefab" : "scene";
-        it.thumb_r = it.kind == ContentItem::Kind::Prefab ? 0.85f : 0.35f;
-        it.thumb_g = it.kind == ContentItem::Kind::Prefab ? 0.55f : 0.7f;
-        it.thumb_b = 0.35f;
+        it.thumb_r = it.kind == ContentItem::Kind::Prefab ? 0.85f : 0.25f;
+        it.thumb_g = it.kind == ContentItem::Kind::Prefab ? 0.55f : 0.65f;
+        it.thumb_b = it.kind == ContentItem::Kind::Prefab ? 0.20f : 0.70f;
       } else if (ext == ".lua") {
         it.kind = ContentItem::Kind::Script;
         it.type = "script";
-        it.thumb_r = 0.4f;
-        it.thumb_g = 0.8f;
-        it.thumb_b = 0.45f;
+        it.thumb_r = 0.35f;
+        it.thumb_g = 0.75f;
+        it.thumb_b = 0.40f;
+      } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg") {
+        it.kind = ContentItem::Kind::Other;
+        it.type = "texture";
+        FillThumbFromImage(&it);
+      } else if (ext == ".gltf" || ext == ".glb") {
+        it.kind = ContentItem::Kind::Mesh;
+        it.type = "mesh";
+        it.thumb_r = 0.55f;
+        it.thumb_g = 0.35f;
+        it.thumb_b = 0.80f;
       } else {
         continue;
       }
@@ -129,9 +176,9 @@ void ContentBrowser::Scan(const std::vector<std::filesystem::path>& roots) {
             it.kind = entry.type == "prefab" ? ContentItem::Kind::Prefab
                                             : (entry.type == "scene" ? ContentItem::Kind::Scene
                                                                      : ContentItem::Kind::Mesh);
-            it.thumb_r = 0.7f;
-            it.thumb_g = 0.7f;
-            it.thumb_b = 0.3f;
+            it.thumb_r = 0.60f;
+            it.thumb_g = 0.50f;
+            it.thumb_b = 0.25f;
             items.push_back(std::move(it));
           }
         }

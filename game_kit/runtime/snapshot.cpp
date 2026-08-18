@@ -7,6 +7,7 @@
 
 #include "engine/scene/world.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <sstream>
 
@@ -277,7 +278,8 @@ void LoopbackReplicator::PushDiff(const WorldSnapshot& now) {
         }
         changed = old.ai != e.ai || old.active != e.active || old.script_path != e.script_path ||
                   (old.position - e.position).length_squared() > 0.0001f ||
-                  (old.scale - e.scale).length_squared() > 0.0001f;
+                  (old.scale - e.scale).length_squared() > 0.0001f ||
+                  std::abs(engine::Dot(old.rotation, e.rotation)) < 0.9995f;
         break;
       }
     }
@@ -321,8 +323,8 @@ void ReplicationSession::ClientApply(GameRuntime& rt, engine::scene::World* worl
     }
     auto t = world->local_transform(e->node);
     t.position = t.position * (1.f - a) + s.position * a;
-    t.scale = s.scale;
-    t.rotation = s.rotation;
+    t.scale = t.scale * (1.f - a) + s.scale * a;
+    t.rotation = engine::Slerp(t.rotation, s.rotation, a);
     world->set_local_transform(e->node, t);
   }
 }

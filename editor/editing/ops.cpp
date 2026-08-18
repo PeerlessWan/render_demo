@@ -105,8 +105,15 @@ void ApplyProp(engine::scene::World& world, const PropSnap& p,
   } else {
     world.clear_mesh(p.id);
   }
+  if (p.has_sprite) {
+    world.set_sprite(p.id, p.sprite);
+  } else {
+    world.clear_sprite(p.id);
+  }
   engine::scene::NodeId parent = engine::scene::kInvalidNode;
-  if (!p.parent_name.empty()) {
+  if (world.valid(p.parent_id)) {
+    parent = p.parent_id;
+  } else if (!p.parent_name.empty()) {
     std::vector<engine::scene::NodeId> all;
     std::vector<engine::scene::NodeId> stack = world.roots();
     while (!stack.empty()) {
@@ -126,8 +133,10 @@ void ApplyProp(engine::scene::World& world, const PropSnap& p,
   }
   (void)world.set_parent(p.id, parent);
   if (meta) {
-    (*meta)[p.id].prefab_id = p.prefab_id;
-    (*meta)[p.id].script_path = p.script_path;
+    (*meta)[p.id] = p.meta;
+    (*meta)[p.id].prefab_id = p.prefab_id.empty() ? p.meta.prefab_id : p.prefab_id;
+    (*meta)[p.id].script_path = p.script_path.empty() ? p.meta.script_path : p.script_path;
+    SyncMetaToWorld(world, *meta);
   }
 }
 
@@ -143,15 +152,21 @@ PropSnap CaptureProp(const engine::scene::World& world, engine::scene::NodeId id
   const auto parent = world.parent(id);
   if (world.valid(parent)) {
     p.parent_name = world.name(parent);
+    p.parent_id = parent;
   }
   if (const auto* mesh = world.mesh(id)) {
     p.has_mesh = true;
     p.mesh = *mesh;
   }
+  if (const auto* spr = world.sprite(id)) {
+    p.has_sprite = true;
+    p.sprite = *spr;
+  }
   auto it = meta.find(id);
   if (it != meta.end()) {
     p.prefab_id = it->second.prefab_id;
     p.script_path = it->second.script_path;
+    p.meta = it->second;
   }
   return p;
 }

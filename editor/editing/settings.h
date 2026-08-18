@@ -1,5 +1,7 @@
 #pragma once
 
+#include "editing/anim_edit.h"
+
 #include <string>
 #include <vector>
 
@@ -24,11 +26,14 @@ struct EditorSettings {
   int workspace = 0;  // 0 scene, 1 voxel
   char search[48]{};
   float sculpt = 0.25f;
+  int sculpt_mode = 0;  // 0 Raise, 1 Lower, 2 Smooth
   int tile_gid = 1;
   int tile_x = 8;
   int tile_y = 8;
+  std::string tile_atlas = "tiles";
   std::vector<float> heights;
   std::vector<int> tiles;
+  AnimGraphEdit anim;
 };
 
 }  // namespace editor

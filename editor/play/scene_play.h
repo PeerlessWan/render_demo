@@ -28,8 +28,13 @@ struct NodeMeta {
   bool has_light = false;
   float light_range = 8.f;
   float light_intensity = 1.f;
+  int light_kind = 0;
+  float light_r = 1.f;
+  float light_g = 0.95f;
+  float light_b = 0.85f;
   bool has_camera = false;
   bool active_camera = false;
+  float camera_fovy = 1.04719755f;
   bool has_collider = false;
   float collider_hx = 0.5f;
   float collider_hy = 0.5f;
@@ -54,6 +59,8 @@ void SyncMetaToWorld(engine::scene::World& world,
                      const std::unordered_map<engine::scene::NodeId, NodeMeta>& meta);
 void SyncWorldToMeta(const engine::scene::World& world,
                      std::unordered_map<engine::scene::NodeId, NodeMeta>* meta);
+
+void WriteInstanceOverride(const engine::scene::World& world, engine::scene::NodeId id, NodeMeta* m);
 
 void BindPlayScripts(game_kit::ScriptComponentWorld& scripts, engine::scene::World& world,
                      game_kit::GameRuntime& rt,

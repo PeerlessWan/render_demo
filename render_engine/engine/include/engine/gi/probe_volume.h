@@ -40,6 +40,7 @@ class ProbeVolume {
   // Trilinear sample of grid irradiance (clamped edges).
   [[nodiscard]] ColorRgba Sample(const Vec3& world_pos) const;
   [[nodiscard]] const std::vector<Probe>& probes() const { return probes_; }
+  [[nodiscard]] std::vector<Probe>& probes() { return probes_; }
   [[nodiscard]] int grid_nx() const { return nx_; }
   [[nodiscard]] int grid_ny() const { return ny_; }
   [[nodiscard]] int grid_nz() const { return nz_; }

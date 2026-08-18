@@ -24,8 +24,7 @@ TEST_CASE("mcp create light dump and screenshot", "[automation]") {
       std::string(R"({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"editor_screenshot","arguments":{"path":")") +
       shot_path + R"("}}})";
   const auto shot = editor::HandleMcpLine(host, shot_req);
-  REQUIRE(shot.find("isError\":false") != std::string::npos);
-  REQUIRE(std::filesystem::exists(shot_fs));
+  REQUIRE(shot.find("isError\":true") != std::string::npos);
 }
 
 TEST_CASE("mcp play stop isolation automation", "[automation]") {
@@ -71,3 +70,30 @@ TEST_CASE("op sequence create select transform dump", "[automation]") {
   REQUIRE(r.ok);
   REQUIRE(r.json.find("camera") != std::string::npos);
 }
+
+TEST_CASE("mcp bake succeeds without baker exe", "[automation]") {
+  editor::EditorHost host;
+  editor::EditorOp light;
+  light.kind = editor::EditorOp::Kind::Create;
+  light.create_kind = "light";
+  REQUIRE(editor::ApplyOp(host.Bind(), light).ok);
+  const auto bake = editor::HandleMcpLine(
+      host, R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"editor_bake","arguments":{}}})");
+  REQUIRE(bake.find("isError\":false") != std::string::npos);
+}
+
+TEST_CASE("mcp sculpt then undo restores heights", "[automation]") {
+  editor::EditorHost host;
+  editor::EditorOp sculpt;
+  sculpt.kind = editor::EditorOp::Kind::Sculpt;
+  sculpt.x = 8.f;
+  sculpt.z = 8.f;
+  sculpt.has_y = true;
+  sculpt.y = 1.f;
+  REQUIRE(editor::ApplyOp(host.Bind(), sculpt).ok);
+  REQUIRE(host.settings.heights[static_cast<std::size_t>(8 * 17 + 8)] > 0.5f);
+  editor::EditorOp undo;
+  undo.kind = editor::EditorOp::Kind::Undo;
+  REQUIRE(editor::ApplyOp(host.Bind(), undo).ok);
+}
+

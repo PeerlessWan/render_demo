@@ -19,6 +19,7 @@ struct AnimGraphEdit {
 [[nodiscard]] std::string CurrentState(const AnimGraphEdit& g);
 
 void AddState(AnimGraphEdit* g, std::string name);
+void RemoveState(AnimGraphEdit* g, int index);
 void AddTransition(AnimGraphEdit* g, std::string from, std::string to);
 
 engine::animation::AnimationStateMachine BuildMachine(const AnimGraphEdit& g);

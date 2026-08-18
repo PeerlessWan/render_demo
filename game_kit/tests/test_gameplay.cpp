@@ -11,6 +11,7 @@
 #include "game_kit/timeline.h"
 #include "kit_test.h"
 
+#include "engine/core/math.h"
 #include "engine/input/input_system.h"
 #include "engine/physics/i_physics_world.h"
 #include "engine/render/camera.h"
@@ -398,18 +399,6 @@ TEST_CASE("replication session interpolates replica", "[gk-snap]") {
   REQUIRE(client_w.local_transform(nc).position.x > 5.f);
 }
 
-TEST_CASE("nav bake findpath fallback", "[gk-nav]") {
-  game_kit::NavWorld nav;
-  nav.AddObstacle({0.f, 0.5f, 0.f}, {1.f, 0.5f, 1.f});
-  const bool baked = nav.BakeFromObstacles();
-  const auto path = nav.FindPath({-4.f, 0.f, 0.f}, {4.f, 0.f, 0.f});
-  REQUIRE(!path.empty());
-  if (baked) {
-    REQUIRE(nav.has_navmesh());
-    REQUIRE(path.size() >= 2);
-  }
-}
-
 TEST_CASE("player grounded from physics raycast", "[gk-player]") {
   engine::scene::World world;
   game_kit::GameRuntime rt;
@@ -436,4 +425,112 @@ TEST_CASE("player grounded from physics raycast", "[gk-player]") {
   pc.TickMove(input, rt, 0.016f);
   REQUIRE(pc.grounded);
   REQUIRE(world.local_transform(n).position.y > 0.f);
+}
+
+TEST_CASE("snapshot diff includes rotation", "[gk-snap]") {
+  game_kit::LoopbackReplicator r;
+  game_kit::WorldSnapshot a;
+  game_kit::EntitySnap e;
+  e.name = "p";
+  a.entities.push_back(e);
+  r.Push(a);
+  game_kit::WorldSnapshot b = a;
+  b.entities[0].rotation = engine::Quat::FromEulerYxz(1.2f, 0.f, 0.f);
+  r.PushDiff(b);
+  REQUIRE(r.has_diff());
+}
+
+TEST_CASE("replication session slerps rotation", "[gk-snap]") {
+  engine::scene::World server_w;
+  engine::scene::World client_w;
+  game_kit::GameRuntime server;
+  game_kit::GameRuntime client;
+  server.set_world(&server_w);
+  client.set_world(&client_w);
+  const auto ns = server_w.CreateNode("p");
+  const auto nc = client_w.CreateNode("p");
+  server.entities().Create("p", ns);
+  client.entities().Create("p", nc);
+  engine::scene::Transform t;
+  t.rotation = engine::Quat::FromEulerYxz(1.5f, 0.f, 0.f);
+  server_w.set_local_transform(ns, t);
+  game_kit::ReplicationSession session;
+  session.ServerCapture(server, &server_w);
+  session.ClientApply(client, &client_w, 0.01f);
+  const auto got = client_w.local_transform(nc).rotation;
+  REQUIRE(std::abs(engine::Dot(got, t.rotation)) < 0.999f);
+  REQUIRE(std::abs(engine::Dot(got, engine::Quat::Identity())) < 0.999f);
+}
+
+TEST_CASE("nav bake findpath fallback", "[gk-nav]") {
+  game_kit::NavWorld nav;
+  nav.AddObstacle({0.f, 0.5f, 0.f}, {1.f, 0.5f, 1.f});
+  const bool baked = nav.BakeFromObstacles();
+  const auto path = nav.FindPath({-4.f, 0.f, 0.f}, {4.f, 0.f, 0.f});
+  REQUIRE(!path.empty());
+  if (baked) {
+    REQUIRE(nav.has_navmesh());
+    REQUIRE(path.size() >= 2);
+    for (const auto& p : path) {
+      REQUIRE(!(std::abs(p.x) < 0.5f && std::abs(p.z) < 0.5f && p.y < 0.35f));
+    }
+  }
+}
+
+TEST_CASE("nav bake from physics and crowd", "[gk-nav]") {
+  auto phys = engine::physics::CreateBuiltinPhysicsWorld();
+  engine::physics::RigidBodyDesc floor;
+  floor.position = {0.f, -0.25f, 0.f};
+  floor.half_extents = {12.f, 0.25f, 12.f};
+  floor.mass = 0.f;
+  (void)phys->CreateBox(floor);
+  engine::physics::RigidBodyDesc wall;
+  wall.position = {0.f, 0.5f, 0.f};
+  wall.half_extents = {1.f, 0.5f, 1.f};
+  wall.mass = 0.f;
+  (void)phys->CreateBox(wall);
+  game_kit::NavWorld nav;
+  const bool baked = nav.BakeFromPhysics(*phys);
+  if (!baked) {
+    return;
+  }
+  REQUIRE(nav.has_navmesh());
+  const int a = nav.AddAgent("a", {-3.f, 0.f, -2.f});
+  const int b = nav.AddAgent("b", {3.f, 0.f, 2.f});
+  if (a < 0 || b < 0) {
+    return;
+  }
+  nav.SetAgentTarget("a", {3.f, 0.f, 2.f});
+  nav.SetAgentTarget("b", {-3.f, 0.f, -2.f});
+  for (int i = 0; i < 30; ++i) {
+    nav.TickCrowd(0.05f);
+  }
+  const auto pa = nav.AgentPosition("a");
+  const auto pb = nav.AgentPosition("b");
+  REQUIRE((pa - pb).length_squared() > 0.01f);
+}
+
+TEST_CASE("nav follow stays on mesh", "[gk-nav]") {
+  engine::scene::World world;
+  game_kit::EntityWorld entities;
+  const auto n = world.CreateNode("npc");
+  engine::scene::Transform t;
+  t.position = {-4.f, 0.f, 0.f};
+  world.set_local_transform(n, t);
+  entities.Create("npc", n);
+  game_kit::NavWorld nav;
+  nav.AddObstacle({0.f, 0.5f, 0.f}, {1.f, 0.5f, 1.f});
+  if (!nav.BakeFromObstacles()) {
+    nav.SetPath("npc", {{-4.f, 0.f, 0.f}, {4.f, 0.f, 0.f}});
+    nav.TickFollow(entities, &world, 0.1f);
+    REQUIRE(world.local_transform(n).position.x > -4.f);
+    return;
+  }
+  auto pts = nav.FindPath({-4.f, 0.f, 0.f}, {4.f, 0.f, 0.f});
+  nav.SetPath("npc", pts);
+  for (int i = 0; i < 40; ++i) {
+    nav.TickFollow(entities, &world, 0.05f);
+  }
+  const auto p = world.local_transform(n).position;
+  REQUIRE(p.x > -4.f);
 }

@@ -13,14 +13,15 @@
 | GKRT05 | 事件总线 | 玩法内 pub/sub；Lua `publish`/`subscribe`/`unsubscribe`；`wait_event` 经 `on_publish` 唤醒 | 已写 |
 | GKRT06 | 玩法存档 | 槽位 JSON v1；`WorldSnapshot` 位姿/旋转/缩放/tag/脚本 persist | 已写 |
 | GKRT07 | 触发器约定 | AABB 体积；enter/leave → EventBus + `on_trigger_*` | 已写 |
-| GKRT08 | 玩家控制器 | ActionMap + 跳跃 + 鼠标视角 + 相机相对移动 + E 冲刺；Follow / 弹簧臂 / 第一人称 | 已写 |
+| GKRT08 | 玩家控制器 | ActionMap + 跳跃 + coyote + 坡度 + 相机相对移动 + E 冲刺；Follow / 弹簧臂 / 第一人称 | 已写 |
 | GKRT09 | Prefab 实例化 | 生成 Node；可选挂 ScriptComponent | 已写 |
 | GKRT10 | 物理接触 | `ConsumeContacts` / `OverlapAabb`；角色 `MoveCharacter` + 地面 Raycast | 已写 |
 | GKRT11 | 动画播放 | `AnimPlayer` 接状态机；Notify；根运动默认写回实体 | 已写 |
 | GKRT12 | 音频混合 | Mixer master/sfx/music 总线 + 距离衰减 | 已写 |
-| GKRT13 | 导航 | Recast 烘焙 + FindPath；Steer 回退。无离线编辑器 | 已写 |
+| GKRT13 | 导航 | Recast 从 Physics/World 烘焙 + FindPath + 贴网跟随 + Crowd。Steer 回退。无离线编辑器 | 已写 |
 | GKRT14 | Timeline | cue → EventBus；Play/Pause/Seek | 已写 |
-| GKRT15 | 联机占位 | `LoopbackReplicator` tick/Diff + `ReplicationSession` 进程内插值 | 已写 |
+| GKRT15 | 联机占位 | `LoopbackReplicator` tick/Diff（含旋转）+ `ReplicationSession` 位置 lerp / 旋转 slerp | 已写 |
+| GKRT16 | Retained UI | panel/toggle/slider + `LayoutColumn`；Lua `ui_layout`；EventBus `ui.toggle.*` / `ui.slider.*` | 已写 |
 
 ## 2. 脚本系统
 
@@ -32,7 +33,7 @@
 | GKSC02 | 绑定白名单（`api.json` → `luaL_Reg`） | 已写 |
 | GKSC03 | 脚本热重载（开发构建） | 已写（可 `persist`） |
 | GKSC04 | 错误隔离（脚本异常不崩 Device） | 已写（`luaL_traceback`） |
-| GKSC05 | 调试钩子 | 已写（行断点 + `on_break` locals；无 IDE） |
+| GKSC05 | 调试钩子 | 已写（DAP 子集 + 行断点 + `on_break` locals；无 IDE 窗口） |
 | GKSC06 | 协程 / yield | 已写（`wait` / `wait_event` / `start_coroutine`） |
 | GKSC07 | `import` 模块缓存 | 已写 |
 
@@ -49,7 +50,7 @@
 | 材质节点图 | **范围外** / 外部 DCC（editor **不做**节点图） |
 | 关卡视口编辑器 | 独立 [`editor/`](../../editor/docs/README.md) 或继续 DCC+CLI |
 | 音频 DSP | 跨品类中间件或游戏 |
-| 绑定生成器全家桶 / IDE 调试器 / Luau | 后置工具；本层仅有 `api.json` 生成器与行断点 |
+| 绑定生成器全家桶 / IDE 调试器 / Luau | 后置工具；本层 `api.json` 生成器 + DAP 子集，不换 Luau |
 
 ## 4. 相关
 

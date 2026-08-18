@@ -15,9 +15,11 @@ add_executable(editor_app
   editing/terrain_edit.cpp
   editing/tile_edit.cpp
   editing/anim_edit.cpp
+  editing/light_bake.cpp
   io/scene_io.cpp
   io/content_browser.cpp
   io/dep_graph.cpp
+  io/scene_ext.cpp
   play/scene_play.cpp
   ui/editor_ui.cpp
   ui/voxel_ui.cpp
@@ -68,9 +70,11 @@ add_executable(editor_smoke_tests
   editing/terrain_edit.cpp
   editing/tile_edit.cpp
   editing/anim_edit.cpp
+  editing/light_bake.cpp
   io/scene_io.cpp
   io/content_browser.cpp
   io/dep_graph.cpp
+  io/scene_ext.cpp
   play/scene_play.cpp
 )
 target_include_directories(editor_smoke_tests PRIVATE
@@ -101,14 +105,18 @@ add_executable(editor_mcp
   editing/snap.cpp
   editing/terrain_edit.cpp
   editing/tile_edit.cpp
+  editing/anim_edit.cpp
+  editing/light_bake.cpp
   play/scene_play.cpp
   io/scene_io.cpp
+  io/scene_ext.cpp
   io/content_browser.cpp
   io/dep_graph.cpp
 )
 target_include_directories(editor_mcp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(editor_mcp PRIVATE
-  game_kit engine_scene engine_core engine_debug engine_assets engine_terrain engine_render2d)
+  game_kit engine_scene engine_core engine_debug engine_assets engine_terrain
+  engine_render2d engine_animation engine_rhi)
 if(WIN32)
   target_link_libraries(editor_mcp PRIVATE ws2_32)
 endif()

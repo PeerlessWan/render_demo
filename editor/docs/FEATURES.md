@@ -6,51 +6,52 @@
 
 | ID | 功能 | 说明 | 状态 |
 |---|---|---|---|
-| EDVP01 | 3D/2D 视口 | 经引擎 Present；质量档可降以保编辑流畅 | 已写 |
-| EDVP02 | 编辑相机 | 飞行/轨道；与游戏相机分离 | 已写 |
-| EDVP03 | 网格/Gizmo | 平移旋转缩放；吸附可选 | 已写（轴/环；Local/World；无轴时 Y 平面拖） |
-| EDVP04 | 选中高亮 | 轮廓或 DebugDraw；复用引擎拣选能力（对齐 M20） | 已写 |
-| EDVP05 | 多视口 | 2×2 pane；活动格驱动相机 | 已写 |
+| EDVP01 | 3D/2D 视口 | 经引擎 Present；质量档可降以保编辑流畅 | 已闭环 |
+| EDVP02 | 编辑相机 | 飞行/轨道；与游戏相机分离 | 已闭环 |
+| EDVP03 | 网格/Gizmo | 平移旋转缩放；吸附可选 | 已闭环（轴/环；Local/World；无轴时 Y 平面拖） |
+| EDVP04 | 选中高亮 | 轮廓或 DebugDraw；复用引擎拣选能力（对齐 M20） | 已闭环 |
+| EDVP05 | 多视口 | Split 勾选后同一帧 Persp/Top/Front/Side 四格提交；点击落到对应格 | 已闭环 |
 
 ## 2. 层级与属性
 
 | ID | 功能 | 说明 | 状态 |
 |---|---|---|---|
-| EDHI01 | 场景树 | 显隐、重父级、搜索 | 已写（DnD 重父级 / 搜索 / 改名 / Ctrl 多选） |
-| EDHI02 | 检视器 | 变换、灯光、相机、材质引用（AssetId） | 已写（World Light/Camera/Collider + 材质槽） |
-| EDHI03 | 创建/删除节点 | Cube/Empty/Ground/Player/Light/Camera/Collider/Sprite | 已写 |
-| EDHI04 | 脚本组件字段 | `--@export` + persist | 已写 |
-| EDHI05 | Prefab 编辑 | 放置 + 属性 override + Apply 写回源 | 已写 |
+| EDHI01 | 场景树 | 显隐、重父级、搜索 | 已闭环（DnD 重父级 / 搜索 / 改名 / Ctrl 多选） |
+| EDHI02 | 检视器 | 变换、灯光（kind/color/世界坐标）、相机 fovy、碰撞、Sprite 绘制与点选、材质 Combo 来自 Manifest AssetId | 已闭环 |
+| EDHI03 | 创建/删除节点 | Cube/Empty/Ground/Player/Light/Camera/Collider/Sprite | 已闭环 |
+| EDHI04 | 脚本组件字段 | `--@export` 注入 Lua 全局 + persist | 已闭环 |
+| EDHI05 | Prefab 编辑 | Place=`InstantiateNested`；override 覆盖 TRS/visible/material/light/fields；Apply 写回源；Revert 清 override | 已闭环 |
 
 ## 3. 内容与 IO
 
 | ID | 功能 | 说明 | 状态 |
 |---|---|---|---|
-| EDIO01 | 打开/保存场景 | SceneDocument v3 | 已写 |
-| EDIO02 | 内容浏览器 | Manifest/AssetId + 色块缩略图 | 已写 |
-| EDIO03 | 拖拽放置 | Content 拖进视口；Hierarchy DnD | 已写 |
-| EDIO04 | 调用 cook | 保存后可选跑清单刷新 | 已写 |
-| EDIO05 | Undo/Redo | 变换/创建删除/属性/重父级 | 已写 |
+| EDIO01 | 打开/保存场景 | SceneDocument v3；`extensions.editor` 存 heights/tiles/atlas/anim | 已闭环 |
+| EDIO02 | 内容浏览器 | png/jpg 解码预览；json/gltf/lua 固定可辨色（非随机 RGB） | 已闭环 |
+| EDIO03 | 拖拽放置 | Content 拖进视口；Hierarchy DnD | 已闭环 |
+| EDIO04 | 调用 cook | 保存后可选跑清单刷新 | 已闭环 |
+| EDIO05 | Undo/Redo | 变换、创建删除、重父级（NodeId）、灯/碰撞/材质/字段/Sprite、地形、Tile、Anim | 已闭环 |
 
 ## 4. 播放与调试
 
 | ID | 功能 | 说明 | 状态 |
 |---|---|---|---|
-| EDPL01 | Play-in-Editor | 克隆 World；退出不脏编辑场景 | 已写 |
-| EDPL02 | 暂停 | 逻辑暂停 | 已写（含 Step） |
-| EDPL03 | 引擎调试叠加 | Profiler / 碰撞 / 网格 | 已写 |
+| EDPL01 | Play-in-Editor | GUI/MCP 同一 `ApplyOp`；克隆 `play_world`；Stop 映回 edit meta；物理盒每帧跟随节点 | 已闭环 |
+| EDPL02 | 暂停 | Pause/Step 走 `ApplyOp` | 已闭环 |
+| EDPL03 | 引擎调试叠加 | Profiler / 碰撞 / 网格 | 已闭环 |
 
-## 5. 后置（对标主流仍弱的产品切片）
+## 5. 后置（对标主流仍弱、但本层已按中小编辑器闭环）
 
 | 项 | 说明 |
 |---|---|
-| 多视口 | 2×2 活动格；非 GPU RTT 四分屏 |
-| Prefab | 属性 override + Apply 写回；嵌套 catalog |
-| 动画 | 状态机拓扑 + 4 键曲线 |
-| 地形 | 笔刷 + TerrainMesh 上传 |
-| Tilemap | Streamer GID + Sprite 展开 |
-| Bake/Lint | CLI + 依赖图 JSON |
-| 热重载 | AssetHotReload + 脚本 Poll |
+| 多视口 | 同一帧四视口矩形 + 四相机（非 UE5 GPU RTT） |
+| Prefab | schema 字段 override + Apply/Revert + 嵌套 Place |
+| 动画 | 可增删状态/转移；4 键曲线 `SampleCurve` 预览；驱动选中 `AnimPlayer` |
+| 地形 | Raise/Lower/Smooth；Undo；随场景存盘；视口 Upload |
+| Tilemap | 图集路径 + GID；Sprite 绘制与点选 |
+| Bake | 读当前场景灯 CPU 烘 lightmap 并 Upload；失败 isError |
+| Lint | 内置 SceneDocument v3 校验 + manifest 依赖图 |
+| 热重载 | 贴图 UploadLitAlbedoRgba + 地形网格 Upload；脚本 ReloadPath |
 
 ## 6. 明确不做（不要当欠债）
 

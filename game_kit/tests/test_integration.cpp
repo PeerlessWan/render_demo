@@ -1,6 +1,7 @@
 #include "game_kit/runtime.h"
 #include "game_kit/script.h"
 #include "game_kit/script_component.h"
+#include "game_kit/dap.h"
 #include "kit_test.h"
 
 #include "engine/input/input_system.h"
@@ -260,6 +261,53 @@ TEST_CASE("lua debugger breakpoint locals", "[gk-script]") {
   });
   REQUIRE(vm.LoadString("local x = 1\nlocal y = x + 1\n", "bp.lua").ok());
   REQUIRE(hit);
+}
+
+TEST_CASE("lua dap breakpoint variables", "[gk-script]") {
+  game_kit::ScriptVm vm;
+  if (!vm.available()) {
+    return;
+  }
+  vm.set_debug_hooks(true);
+  game_kit::DapSession dap;
+  dap.Attach(&vm.debugger());
+  vm.debugger().set_dap(&dap);
+  (void)dap.Handle(R"({"seq":1,"type":"request","command":"setBreakpoints","arguments":{"source":{"path":"dap.lua"},"breakpoints":[{"line":2}]}})");
+  dap.Queue(R"({"seq":2,"type":"request","command":"continue"})");
+  REQUIRE(vm.LoadString("local x = 7\nlocal y = x + 1\n", "dap.lua").ok());
+  REQUIRE(dap.last_line() == 2);
+  const auto vars = dap.Handle(R"({"seq":3,"type":"request","command":"variables","arguments":{"variablesReference":1}})");
+  REQUIRE(vars.find("x") != std::string::npos);
+  REQUIRE(vars.find("7") != std::string::npos);
+  const auto stack = dap.Handle(R"({"seq":4,"type":"request","command":"stackTrace","arguments":{"threadId":1}})");
+  REQUIRE(stack.find("stackFrames") != std::string::npos);
+}
+
+TEST_CASE("lua ui layout panel toggle", "[gk-script]") {
+  engine::scene::World world;
+  game_kit::GameRuntime rt;
+  rt.set_world(&world);
+  engine::ui::RetainedUi ui;
+  rt.set_ui(&ui);
+  auto* vm = rt.script();
+  if (!vm || !vm->available()) {
+    return;
+  }
+  vm->Attach(&world, &rt);
+  REQUIRE(vm->LoadString("ui_panel('hud', 10, 10, 200, 80)\nui_label('msg', 'hi', 0, 0)\nui_toggle('dbg', 'Debug', 0, 0)\nui_layout('hud', 6)\n",
+                         "lay").ok());
+  REQUIRE(ui.widgets().size() >= 3);
+  float y0 = -1.f;
+  float y1 = -1.f;
+  for (const auto& w : ui.widgets()) {
+    if (w.id == "msg") {
+      y0 = w.y;
+    }
+    if (w.id == "dbg") {
+      y1 = w.y;
+    }
+  }
+  REQUIRE(y1 > y0);
 }
 
 TEST_CASE("lua ui label binding without app", "[gk-script]") {

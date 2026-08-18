@@ -38,6 +38,37 @@ float JsonNum(std::string_view json, std::string_view key, float fallback) {
   return std::strtof(json.data() + i + pat.size(), nullptr);
 }
 
+std::string JsonQuoted(std::string_view json, std::string_view key) {
+  const std::string pat = std::string("\"") + std::string(key) + "\":\"";
+  const auto i = json.find(pat);
+  if (i == std::string_view::npos) {
+    return {};
+  }
+  auto s = json.substr(i + pat.size());
+  const auto e = s.find('"');
+  if (e == std::string_view::npos) {
+    return {};
+  }
+  return std::string(s.substr(0, e));
+}
+
+bool JsonVec3(std::string_view json, std::string_view key, engine::Vec3* out) {
+  const std::string pat = std::string("\"") + std::string(key) + "\":[";
+  const auto i = json.find(pat);
+  if (i == std::string_view::npos || !out) {
+    return false;
+  }
+  char* end = nullptr;
+  out->x = std::strtof(json.data() + i + pat.size(), &end);
+  if (end) {
+    out->y = std::strtof(end + 1, &end);
+  }
+  if (end) {
+    out->z = std::strtof(end + 1, nullptr);
+  }
+  return true;
+}
+
 }  // namespace
 
 engine::Status SavePrefabDocument(const PrefabDocument& doc, const std::filesystem::path& path) {
@@ -167,6 +198,32 @@ void MergeOverrideJson(engine::scene::World& world, engine::scene::NodeId id,
   } else if (JsonHas(override_json, "visible", "true")) {
     world.set_visible(id, true);
   }
+  const auto mat = JsonQuoted(override_json, "material");
+  if (!mat.empty()) {
+    if (const auto* mesh = world.mesh(id)) {
+      auto copy = *mesh;
+      copy.material_id = mat;
+      world.set_mesh(id, copy);
+    }
+  }
+  const bool touch_light = override_json.find("\"range\":") != std::string_view::npos ||
+                           override_json.find("\"intensity\":") != std::string_view::npos ||
+                           override_json.find("\"kind\":") != std::string_view::npos ||
+                           override_json.find("\"color\":") != std::string_view::npos;
+  if (touch_light) {
+    engine::scene::LightComponent L;
+    if (const auto* cur = world.light(id)) {
+      L = *cur;
+    }
+    L.range = JsonNum(override_json, "range", L.range);
+    L.intensity = JsonNum(override_json, "intensity", L.intensity);
+    L.kind = static_cast<int>(JsonNum(override_json, "kind", static_cast<float>(L.kind)));
+    engine::Vec3 col = L.color;
+    if (JsonVec3(override_json, "color", &col)) {
+      L.color = col;
+    }
+    world.set_light(id, L);
+  }
 }
 
 void ApplyInstanceToSource(const engine::scene::World& world, engine::scene::NodeId instance,
@@ -203,7 +260,11 @@ engine::scene::NodeId InstantiateNested(engine::scene::World& world, const Prefa
       continue;
     }
     engine::scene::Transform child_trs = n.transform;
-    (void)Instantiate(world, *it->second, child_trs, rt);
+    const auto child = Instantiate(world, *it->second, child_trs, rt);
+    if (child != engine::scene::kInvalidNode) {
+      (void)world.set_parent(child, root);
+      world.set_local_transform(child, child_trs);
+    }
   }
   return root;
 }

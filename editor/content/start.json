@@ -1,7 +1,8 @@
 {
-  "format_version": 1,
+  "format_version": 3,
   "nodes": [
     {"id":"1","name":"ground","parent":null,"transform":{"t":[0,0,0],"r":[0,0,0,1],"s":[8,1,8]},"visible":true,"components":[{"type":"MeshRenderer","mesh":"ground","materials":[]}]},
-    {"id":"2","name":"player","parent":null,"transform":{"t":[0,0.5,0],"r":[0,0,0,1],"s":[1,1,1]},"visible":true,"components":[{"type":"MeshRenderer","mesh":"cube","materials":[]}]}
+    {"id":"2","name":"player","parent":null,"transform":{"t":[0,0.5,0],"r":[0,0,0,1],"s":[1,1,1]},"visible":true,"components":[{"type":"MeshRenderer","mesh":"cube","materials":[]}]},
+    {"id":"3","name":"key_light","parent":null,"transform":{"t":[2,4,2],"r":[0,0,0,1],"s":[1,1,1]},"visible":true,"components":[{"type":"Light","kind":0,"range":14,"intensity":2,"color":[1,0.95,0.85]}]}
   ]
 }

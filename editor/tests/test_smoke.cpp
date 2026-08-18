@@ -472,6 +472,10 @@ TEST_CASE("node meta extra encodes light", "[io]") {
   REQUIRE(out.has_light);
   REQUIRE(std::fabs(out.light_range - 12.f) < 0.01f);
   REQUIRE(out.material_id == "cube");
+  m.script_fields = "bob_amp=0.05\nname=hero";
+  const auto json2 = editor::EncodeNodeMeta(m);
+  editor::DecodeNodeMetaExtra(json2, &out);
+  REQUIRE(out.script_fields.find("bob_amp") != std::string::npos);
 }
 
 TEST_CASE("mcp lists set_parent bake lint", "[mcp]") {

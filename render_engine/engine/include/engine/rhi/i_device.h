@@ -226,6 +226,11 @@ class IDevice {
   [[nodiscard]] virtual std::uint32_t width() const = 0;
   [[nodiscard]] virtual std::uint32_t height() const = 0;
 
+  // Editor split view: color pass viewport in pixels. w/h <= 0 restores full target.
+  virtual void SetDrawViewport(float /*x*/, float /*y*/, float /*w*/, float /*h*/) {}
+  // When true, lit color draws bind the LDR swapchain (skip HDR/post for extra viewports).
+  virtual void SetPreferLdrTarget(bool /*on*/) {}
+
   virtual Status BeginFrame() = 0;
   virtual Status Clear(const ColorRgba& color) = 0;
   virtual Status DrawSimpleMesh() = 0;

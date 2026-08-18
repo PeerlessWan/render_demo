@@ -1,6 +1,9 @@
 #include "editing/tile_edit.h"
 
+#include "engine/scene/world.h"
+
 #include <algorithm>
+#include <string_view>
 
 namespace editor {
 
@@ -37,14 +40,46 @@ void SyncStreamer(const std::vector<int>& tiles, engine::render2d::TilemapStream
 }
 
 void ExpandTilesToSprites(const engine::render2d::TilemapStreamer& streamer,
-                          std::vector<engine::render2d::Sprite>* out) {
+                          std::vector<engine::render2d::Sprite>* out, std::string_view atlas) {
   if (!out) {
     return;
   }
   engine::render2d::TileExpandDesc desc;
   desc.tile_w = 1.f;
   desc.tile_h = 1.f;
+  desc.atlas_id = std::string(atlas);
   streamer.ExpandResidentToSprites(*out, desc);
+}
+
+void CollectWorldSprites(const engine::scene::World& world, std::vector<engine::render2d::Sprite>* out) {
+  if (!out) {
+    return;
+  }
+  std::vector<engine::scene::NodeId> nodes;
+  std::vector<engine::scene::NodeId> stack = world.roots();
+  while (!stack.empty()) {
+    const auto id = stack.back();
+    stack.pop_back();
+    if (!world.valid(id)) {
+      continue;
+    }
+    for (auto c : world.children(id)) {
+      stack.push_back(c);
+    }
+    const auto* spr = world.sprite(id);
+    if (!spr) {
+      continue;
+    }
+    const auto& m = world.world_matrix(id);
+    engine::render2d::Sprite s;
+    s.atlas_id = spr->atlas_id;
+    s.frame = spr->gid;
+    s.position = {m.m[12], m.m[14]};
+    s.size = {1.f, 1.f};
+    s.sort_layer = spr->sort_layer;
+    s.sort_y = s.position.y;
+    out->push_back(std::move(s));
+  }
 }
 
 }  // namespace editor

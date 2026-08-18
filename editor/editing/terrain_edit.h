@@ -13,6 +13,8 @@ inline constexpr int kSculptRes = 17;
 void EnsureHeights(std::vector<float>* heights);
 
 void RaiseHeight(std::vector<float>* heights, int x, int z, float amount, float radius);
+void LowerHeight(std::vector<float>* heights, int x, int z, float amount, float radius);
+void SmoothHeight(std::vector<float>* heights, int x, int z, float radius);
 
 engine::terrain::Heightmap HeightsToMap(const std::vector<float>& heights, float cell = 1.f);
 

@@ -1,6 +1,7 @@
 #include "undo.h"
 
 #include "editing/ops.h"
+#include "editing/settings.h"
 #include "play/scene_play.h"
 
 namespace editor {
@@ -73,6 +74,31 @@ void UndoStack::PushProps(std::vector<PropSnap> before, std::vector<PropSnap> af
   redo_.clear();
 }
 
+void UndoStack::PushGrid(std::vector<float> heights_before, std::vector<int> tiles_before,
+                         AnimGraphEdit anim_before, std::vector<float> heights_after,
+                         std::vector<int> tiles_after, AnimGraphEdit anim_after) {
+  Cmd c;
+  c.kind = Kind::Grid;
+  c.heights_before = std::move(heights_before);
+  c.tiles_before = std::move(tiles_before);
+  c.anim_before = std::move(anim_before);
+  c.heights_after = std::move(heights_after);
+  c.tiles_after = std::move(tiles_after);
+  c.anim_after = std::move(anim_after);
+  undo_.push_back(std::move(c));
+  redo_.clear();
+}
+
+void ApplyGrid(EditorSettings* settings, const std::vector<float>& heights, const std::vector<int>& tiles,
+               const AnimGraphEdit& anim) {
+  if (!settings) {
+    return;
+  }
+  settings->heights = heights;
+  settings->tiles = tiles;
+  settings->anim = anim;
+}
+
 void UndoStack::ApplySpawn(engine::scene::World& world, Cmd* c,
                            std::unordered_map<engine::scene::NodeId, NodeMeta>* meta) {
   if (!c) {
@@ -102,7 +128,8 @@ void UndoStack::ApplyProps(engine::scene::World& world, const std::vector<PropSn
 }
 
 bool UndoStack::Undo(engine::scene::World& world,
-                     std::unordered_map<engine::scene::NodeId, NodeMeta>* meta) {
+                     std::unordered_map<engine::scene::NodeId, NodeMeta>* meta,
+                     EditorSettings* settings) {
   if (undo_.empty()) {
     return false;
   }
@@ -125,13 +152,17 @@ bool UndoStack::Undo(engine::scene::World& world,
     case Kind::Props:
       ApplyProps(world, c.prop_before, meta);
       break;
+    case Kind::Grid:
+      ApplyGrid(settings, c.heights_before, c.tiles_before, c.anim_before);
+      break;
   }
   redo_.push_back(std::move(c));
   return true;
 }
 
 bool UndoStack::Redo(engine::scene::World& world,
-                     std::unordered_map<engine::scene::NodeId, NodeMeta>* meta) {
+                     std::unordered_map<engine::scene::NodeId, NodeMeta>* meta,
+                     EditorSettings* settings) {
   if (redo_.empty()) {
     return false;
   }
@@ -153,6 +184,9 @@ bool UndoStack::Redo(engine::scene::World& world,
       break;
     case Kind::Props:
       ApplyProps(world, c.prop_after, meta);
+      break;
+    case Kind::Grid:
+      ApplyGrid(settings, c.heights_after, c.tiles_after, c.anim_after);
       break;
   }
   undo_.push_back(std::move(c));

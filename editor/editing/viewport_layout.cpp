@@ -44,17 +44,20 @@ void ApplyPaneCamera(int pane, engine::render::Camera* cam, const engine::render
     cam->position = {0.f, 18.f, 0.01f};
     cam->yaw = 0.f;
     cam->pitch = -1.55f;
+    cam->fovy_rad = 0.6f;
     return;
   }
   if (pane == 2) {
     cam->position = {0.f, 2.f, 16.f};
     cam->yaw = 0.f;
     cam->pitch = 0.f;
+    cam->fovy_rad = 0.7f;
     return;
   }
   cam->position = {16.f, 2.f, 0.f};
   cam->yaw = -1.57f;
   cam->pitch = 0.f;
+  cam->fovy_rad = 0.7f;
 }
 
 float PaneAspect(const ViewportPane& pane) {

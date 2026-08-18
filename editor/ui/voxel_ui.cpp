@@ -11,7 +11,9 @@ void DrawVoxelUi(engine::ui::ImmediateUi& ui, VoxelEdit& edit, mc::World& /*worl
     cmd = &local;
   }
   *cmd = {};
-  if (!ui.BeginWindow("Voxel", 280.f, 12.f, 280.f, 520.f)) {
+  const bool open = ui.BeginWindow("Voxel", 280.f, 12.f, 280.f, 520.f);
+  if (!open) {
+    ui.EndWindow();
     return;
   }
   (void)ui.Checkbox("Voxel mode", &edit.enabled);

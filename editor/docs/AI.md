@@ -22,7 +22,8 @@
 | 重父级 | `editor_set_parent` parent=名或空 |
 | 试玩逻辑 | `editor_play` → `editor_step` / `editor_pause` → `editor_stop` |
 | 热重载 / 烘焙 / 校验 | `editor_hot_reload` / `editor_bake` / `editor_lint` |
+| 截图 | 与 `editor_app` 同进程时 `editor_screenshot` 回读当前帧 PPM；无 GPU 的独立 `editor_mcp` 返回 `isError` |
 
 Play 中禁止 create / destroy / duplicate / open / save / set_name / set_mesh / set_script / set_parent。出错时 `isError: true`。
 
-无渲染、无截图；状态以 `editor_dump` JSON 为准。
+独立 `editor_mcp` 无窗口时无 GPU，截图失败；连上正在跑的 `editor_app` 则走同一 Device 回读。状态以 `editor_dump` JSON 为准。

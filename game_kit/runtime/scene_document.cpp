@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iterator>
 #include <sstream>
+#include <string>
 #include <unordered_map>
 
 namespace game_kit {
@@ -59,6 +60,7 @@ void ApplyNodeComponents(engine::scene::World& world, engine::scene::NodeId id, 
       L.kind = c.kind;
       L.range = c.range;
       L.intensity = c.intensity;
+      L.color = {c.color_r, c.color_g, c.color_b};
       world.set_light(id, L);
     } else if (c.type == "Camera") {
       engine::scene::CameraComponent cam;
@@ -99,6 +101,9 @@ void CaptureNodeComponents(const engine::scene::World& world, engine::scene::Nod
     c.kind = L->kind;
     c.range = L->range;
     c.intensity = L->intensity;
+    c.color_r = L->color.x;
+    c.color_g = L->color.y;
+    c.color_b = L->color.z;
     n->components.push_back(std::move(c));
   }
   if (const auto* cam = world.camera(id)) {
@@ -326,6 +331,15 @@ SceneComponent ParseComponent(Parser& p) {
       c.range = static_cast<float>(p.ParseNumber());
     } else if (key == "intensity") {
       c.intensity = static_cast<float>(p.ParseNumber());
+    } else if (key == "color") {
+      if (p.Expect('[')) {
+        c.color_r = static_cast<float>(p.ParseNumber());
+        p.Consume(',');
+        c.color_g = static_cast<float>(p.ParseNumber());
+        p.Consume(',');
+        c.color_b = static_cast<float>(p.ParseNumber());
+        p.Consume(']');
+      }
     } else if (key == "active") {
       c.active = p.ParseBool();
     } else if (key == "fovy" || key == "fovy_rad") {
@@ -473,7 +487,8 @@ engine::Status SaveSceneDocument(const SceneDocument& doc, const std::filesystem
       }
       if (comp.type == "Light") {
         out << ",\"kind\":" << comp.kind << ",\"range\":" << comp.range
-            << ",\"intensity\":" << comp.intensity;
+            << ",\"intensity\":" << comp.intensity << ",\"color\":[" << comp.color_r << ","
+            << comp.color_g << "," << comp.color_b << "]";
       }
       if (comp.type == "Camera") {
         out << ",\"active\":" << (comp.active ? "true" : "false") << ",\"fovy\":" << comp.fovy;
@@ -702,6 +717,72 @@ void ClearWorld(engine::scene::World& world) {
   for (auto r : roots) {
     (void)world.DestroyNode(r);
   }
+}
+
+engine::Status ValidateSceneDocument(const SceneDocument& doc) {
+  if (doc.format_version < 1 || doc.format_version > kSceneFormatCurrent) {
+    return engine::Status::Fail("unsupported scene format_version");
+  }
+  std::unordered_map<std::string, int> ids;
+  for (const auto& n : doc.nodes) {
+    const std::string key = n.id.empty() ? n.name : n.id;
+    if (key.empty()) {
+      return engine::Status::Fail("scene node missing id and name");
+    }
+    if (ids[key]++ > 0) {
+      return engine::Status::Fail("duplicate scene node id");
+    }
+    for (const auto& c : n.components) {
+      if (c.type.empty()) {
+        return engine::Status::Fail("component missing type");
+      }
+    }
+  }
+  for (const auto& n : doc.nodes) {
+    if (n.parent.empty()) {
+      continue;
+    }
+    if (!ids.count(n.parent)) {
+      return engine::Status::Fail("missing parent " + n.parent);
+    }
+    if ((!n.id.empty() && n.parent == n.id) || (n.id.empty() && n.parent == n.name)) {
+      return engine::Status::Fail("node parent is self");
+    }
+  }
+  std::vector<char> done(doc.nodes.size(), 0);
+  std::size_t placed = 0;
+  while (placed < doc.nodes.size()) {
+    bool progress = false;
+    for (std::size_t i = 0; i < doc.nodes.size(); ++i) {
+      if (done[i]) {
+        continue;
+      }
+      const auto& n = doc.nodes[i];
+      if (!n.parent.empty()) {
+        bool parent_done = false;
+        for (std::size_t j = 0; j < doc.nodes.size(); ++j) {
+          if (!done[j]) {
+            continue;
+          }
+          const auto& p = doc.nodes[j];
+          if (p.id == n.parent || (p.id.empty() && p.name == n.parent)) {
+            parent_done = true;
+            break;
+          }
+        }
+        if (!parent_done) {
+          continue;
+        }
+      }
+      done[i] = 1;
+      ++placed;
+      progress = true;
+    }
+    if (!progress) {
+      return engine::Status::Fail("scene parent cycle");
+    }
+  }
+  return engine::Status::Ok();
 }
 
 }  // namespace game_kit

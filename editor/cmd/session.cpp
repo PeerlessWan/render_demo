@@ -1,19 +1,25 @@
 #include "cmd/session.h"
 
+#include "editing/light_bake.h"
 #include "editing/ops.h"
 #include "editing/snap.h"
 #include "editing/terrain_edit.h"
 #include "editing/tile_edit.h"
 #include "io/dep_graph.h"
+#include "io/scene_ext.h"
 
 #include "game_kit/prefab.h"
 #include "game_kit/scene_document.h"
 
+#include "engine/assets/image_loader.h"
 #include "engine/core/math.h"
+#include "engine/rhi/i_device.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -60,6 +66,40 @@ OpResult Ok(std::string msg = {}) {
   OpResult r;
   r.message = std::move(msg);
   return r;
+}
+
+bool WritePpm(const std::filesystem::path& path, const std::vector<std::uint8_t>& rgba, int w, int h) {
+  if (w <= 2 || h <= 2 || rgba.size() < static_cast<std::size_t>(w * h * 4)) {
+    return false;
+  }
+  std::ofstream out(path);
+  if (!out) {
+    return false;
+  }
+  out << "P3\n" << w << ' ' << h << "\n255\n";
+  for (int i = 0; i < w * h; ++i) {
+    const std::size_t o = static_cast<std::size_t>(i) * 4;
+    out << static_cast<int>(rgba[o]) << ' ' << static_cast<int>(rgba[o + 1]) << ' '
+        << static_cast<int>(rgba[o + 2]) << '\n';
+  }
+  return static_cast<bool>(out);
+}
+
+std::vector<game_kit::PrefabDocument> LoadCatalog(ContentBrowser* content) {
+  std::vector<game_kit::PrefabDocument> cat;
+  if (!content) {
+    return cat;
+  }
+  for (const auto& it : content->items) {
+    if (it.kind != ContentItem::Kind::Prefab) {
+      continue;
+    }
+    auto p = game_kit::LoadPrefabDocument(it.path);
+    if (p) {
+      cat.push_back(std::move(p.value()));
+    }
+  }
+  return cat;
 }
 
 bool Playing(const EditorSession& s) { return s.playing && *s.playing; }
@@ -298,11 +338,13 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
       auto cap = game_kit::CaptureWorld(world);
       RestoreMeta(doc.value(), cap, s.meta);
       SyncWorldToMeta(world, s.meta);
+      UnpackEditorExtensions(doc.value(), s.settings);
       return Ok("loaded " + path.string());
     }
     case EditorOp::Kind::Save: {
       auto doc = game_kit::CaptureWorld(world);
       StampMeta(&doc, *s.meta);
+      PackEditorExtensions(*s.settings, &doc);
       const auto path = op.path.empty() ? *s.scene_path : std::filesystem::path(op.path);
       if (auto st = game_kit::SaveSceneDocument(doc, path); !st) {
         return Fail(st.message());
@@ -556,13 +598,13 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
       return Ok("destroyed");
     }
     case EditorOp::Kind::Undo:
-      if (!s.undo->Undo(world, s.meta)) {
+      if (!s.undo->Undo(world, s.meta, s.settings)) {
         return Fail("nothing to undo");
       }
       s.settings->dirty = true;
       return Ok("undo");
     case EditorOp::Kind::Redo:
-      if (!s.undo->Redo(world, s.meta)) {
+      if (!s.undo->Redo(world, s.meta, s.settings)) {
         return Fail("nothing to redo");
       }
       s.settings->dirty = true;
@@ -622,6 +664,10 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
       }
       if (s.play_world && s.edit_world) {
         game_kit::ClearWorld(*s.play_world);
+        if (s.scene_snap) {
+          auto cap = game_kit::CaptureWorld(*s.edit_world);
+          RestoreMeta(*s.scene_snap, cap, s.meta);
+        }
       } else if (s.scene_snap) {
         game_kit::ClearWorld(world);
         (void)game_kit::ApplyWorld(world, *s.scene_snap);
@@ -671,13 +717,50 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
         (void)s.scripts->ReloadPath(p, true);
         ++n;
       }
+      if (s.device) {
+        if (!s.settings->heights.empty()) {
+          if (!UploadTerrainMesh(*s.device, world, s.settings->heights, 2)) {
+            return Fail("mesh hot reload failed");
+          }
+        }
+        auto loader = engine::assets::CreateDefaultImageLoader();
+        std::error_code ec;
+        const auto root = std::filesystem::path("editor/content");
+        if (loader && std::filesystem::exists(root, ec)) {
+          for (const auto& ent : std::filesystem::directory_iterator(root, ec)) {
+            if (!ent.is_regular_file(ec)) {
+              continue;
+            }
+            const auto ext = ent.path().extension().string();
+            if (ext != ".png" && ext != ".jpg" && ext != ".jpeg") {
+              continue;
+            }
+            auto img = loader->LoadFile(ent.path());
+            if (!img) {
+              return Fail(img.status().message());
+            }
+            if (auto st = s.device->UploadLitAlbedoRgba(img.value().rgba.data(), img.value().width,
+                                                        img.value().height, 0);
+                !st) {
+              return Fail(st.message());
+            }
+            ++n;
+          }
+        }
+      }
       return Ok("reloaded " + std::to_string(n));
     }
     case EditorOp::Kind::Bake: {
-      const bool ok = TryRunTool("lightmap_baker");
-      return ok ? Ok("bake") : Fail("lightmap_baker not found");
+      const auto out = std::filesystem::path("editor/content/lightmap.rgba");
+      if (auto st = BakeSceneLights(world, s.settings->heights, out, s.device); !st) {
+        return Fail(st.message());
+      }
+      return Ok("bake");
     }
     case EditorOp::Kind::Lint: {
+      auto doc = game_kit::CaptureWorld(world);
+      StampMeta(&doc, *s.meta);
+      const auto scene_st = game_kit::ValidateSceneDocument(doc);
       auto graph = BuildDepGraph(std::filesystem::path("editor/content"));
       if (!graph.ok) {
         graph = BuildDepGraph(std::filesystem::path("editor/content/manifest.json"));
@@ -687,6 +770,12 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
         *s.lint_json = json;
       }
       (void)TryRunTool("content_lint");
+      if (!scene_st) {
+        auto r = Fail(scene_st.message());
+        r.json = json;
+        r.message = scene_st.message();
+        return r;
+      }
       auto r = graph.ok ? Ok("lint") : Fail(graph.message);
       r.json = json;
       r.message = json;
@@ -702,7 +791,8 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
       }
       engine::scene::Transform trs;
       trs.position = {op.has_x ? op.x : 0.f, op.has_y ? op.y : 0.5f, op.has_z ? op.z : 0.f};
-      const auto id = game_kit::Instantiate(world, prefab.value(), trs, s.rt);
+      auto catalog = LoadCatalog(s.content);
+      const auto id = game_kit::InstantiateNested(world, prefab.value(), trs, catalog, s.rt);
       if (id == engine::scene::kInvalidNode) {
         return Fail("instantiate failed");
       }
@@ -748,35 +838,73 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
       if (!loaded || loaded.value().scene.nodes.empty()) {
         return Fail("prefab missing");
       }
-      world.set_local_transform(id, loaded.value().scene.nodes[0].transform);
+      const auto& src = loaded.value().scene.nodes[0];
+      world.set_local_transform(id, src.transform);
+      world.set_visible(id, src.visible);
+      game_kit::ApplyNodeComponents(world, id, src);
+      it->second.override_json.clear();
       s.settings->dirty = true;
       return Ok("revert prefab");
     }
     case EditorOp::Kind::Screenshot: {
       const auto path = op.path.empty() ? std::filesystem::temp_directory_path() / "editor_shot.ppm"
                                         : std::filesystem::path(op.path);
-      std::ofstream out(path);
-      if (!out) {
-        return Fail("cannot write screenshot");
+      std::vector<std::uint8_t> rgba;
+      int rw = 0;
+      int rh = 0;
+      if (s.device) {
+        if (auto st = s.device->ReadbackTextureStub(rgba, rw, rh); !st) {
+          return Fail(st.message());
+        }
+      } else {
+        rw = 4;
+        rh = 4;
+        rgba.assign(static_cast<std::size_t>(rw * rh * 4), 180);
+        for (int i = 0; i < rw * rh; ++i) {
+          rgba[static_cast<std::size_t>(i) * 4 + 3] = 255;
+        }
       }
-      out << "P3\n2 2\n255\n255 0 0 0 255 0\n0 0 255 255 255 255\n";
+      if (!WritePpm(path, rgba, rw, rh)) {
+        return Fail("screenshot readback too small or write failed");
+      }
       if (s.screenshot_path) {
-        *s.screenshot_path = path.string();
+        *s.screenshot_path = path.generic_string();
       }
-      auto r = Ok("screenshot " + path.string());
-      r.json = std::string("{\"path\":\"") + Escape(path.string()) + "\"}";
+      auto r = Ok("screenshot " + path.generic_string());
+      r.json = std::string("{\"path\":\"") + Escape(path.generic_string()) + "\"}";
       r.message = r.json;
       return r;
     }
     case EditorOp::Kind::Sculpt: {
-      RaiseHeight(&s.settings->heights, static_cast<int>(op.x), static_cast<int>(op.z),
-                  op.has_y ? op.y : s.settings->sculpt, 2.f);
+      auto h0 = s.settings->heights;
+      auto t0 = s.settings->tiles;
+      auto a0 = s.settings->anim;
+      const float amt = op.has_y ? op.y : s.settings->sculpt;
+      if (s.settings->sculpt_mode == 1) {
+        LowerHeight(&s.settings->heights, static_cast<int>(op.x), static_cast<int>(op.z), amt, 2.f);
+      } else if (s.settings->sculpt_mode == 2) {
+        SmoothHeight(&s.settings->heights, static_cast<int>(op.x), static_cast<int>(op.z), 2.f);
+      } else {
+        RaiseHeight(&s.settings->heights, static_cast<int>(op.x), static_cast<int>(op.z), amt, 2.f);
+      }
+      s.undo->PushGrid(std::move(h0), std::move(t0), std::move(a0), s.settings->heights,
+                       s.settings->tiles, s.settings->anim);
+      if (s.device) {
+        if (!UploadTerrainMesh(*s.device, world, s.settings->heights, 2)) {
+          return Fail("sculpt upload failed");
+        }
+      }
       s.settings->dirty = true;
-      return Ok("sculpt");
+      return s.device ? Ok("sculpt") : Ok("sculpt (cpu only)");
     }
     case EditorOp::Kind::PaintTile: {
+      auto h0 = s.settings->heights;
+      auto t0 = s.settings->tiles;
+      auto a0 = s.settings->anim;
       PaintTile(&s.settings->tiles, nullptr, static_cast<int>(op.x), static_cast<int>(op.z),
                 static_cast<int>(op.sx));
+      s.undo->PushGrid(std::move(h0), std::move(t0), std::move(a0), s.settings->heights,
+                       s.settings->tiles, s.settings->anim);
       s.settings->dirty = true;
       return Ok("tile");
     }

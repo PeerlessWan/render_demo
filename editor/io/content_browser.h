@@ -6,6 +6,7 @@
 #include "engine/core/result.h"
 #include "engine/scene/world.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
@@ -22,6 +23,9 @@ struct ContentItem {
   float thumb_r = 0.35f;
   float thumb_g = 0.55f;
   float thumb_b = 0.85f;
+  int thumb_w = 0;
+  int thumb_h = 0;
+  std::vector<std::uint8_t> thumb_px;
 };
 
 struct ContentBrowser {

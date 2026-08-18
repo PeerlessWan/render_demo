@@ -16,18 +16,28 @@ namespace game_kit {
 
 class GameRuntime;
 
+class DapSession;
+
+struct ScriptStackFrame {
+  std::string name;
+  int line = 0;
+};
+
 class ScriptDebugger {
  public:
   void AddBreakpoint(std::string chunk, int line);
   void Step() { step_ = true; }
   void Continue() { waiting_ = false; }
   void set_on_break(std::function<void(ScriptDebugger&)> cb) { on_break_ = std::move(cb); }
+  void set_dap(DapSession* dap) { dap_ = dap; }
   [[nodiscard]] int line() const { return line_; }
   [[nodiscard]] const std::string& chunk() const { return chunk_; }
   [[nodiscard]] std::string GetLocal(std::string_view name) const;
   [[nodiscard]] const std::vector<std::pair<std::string, std::string>>& locals() const {
     return locals_;
   }
+  [[nodiscard]] const std::vector<ScriptStackFrame>& stack() const { return stack_; }
+  [[nodiscard]] bool waiting() const { return waiting_; }
   void OnLine(void* lua_state, int line, std::string_view src);
 
  private:
@@ -38,10 +48,12 @@ class ScriptDebugger {
   std::vector<Bp> bps_;
   std::function<void(ScriptDebugger&)> on_break_;
   std::vector<std::pair<std::string, std::string>> locals_;
+  std::vector<ScriptStackFrame> stack_;
   std::string chunk_;
   int line_ = 0;
   bool step_ = false;
   bool waiting_ = false;
+  DapSession* dap_ = nullptr;
 };
 
 class ScriptVm {

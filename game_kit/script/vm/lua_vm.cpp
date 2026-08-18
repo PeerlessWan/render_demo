@@ -1,4 +1,5 @@
 #include "game_kit/script.h"
+#include "game_kit/dap.h"
 
 #include "game_kit/runtime.h"
 #include "lua_host.h"
@@ -397,6 +398,7 @@ void ScriptDebugger::OnLine(void* lua_state, int line, std::string_view src) {
     return;
   }
   locals_.clear();
+  stack_.clear();
 #if defined(GAME_KIT_WITH_LUA) && GAME_KIT_WITH_LUA
   auto* L = static_cast<lua_State*>(lua_state);
   if (L) {
@@ -412,15 +414,28 @@ void ScriptDebugger::OnLine(void* lua_state, int line, std::string_view src) {
         lua_pop(L, 1);
       }
     }
+    for (int level = 0;; ++level) {
+      lua_Debug frame{};
+      if (!lua_getstack(L, level, &frame) || !lua_getinfo(L, "nSl", &frame)) {
+        break;
+      }
+      ScriptStackFrame sf;
+      sf.name = frame.name ? frame.name : (frame.short_src ? frame.short_src : "chunk");
+      sf.line = frame.currentline;
+      stack_.push_back(std::move(sf));
+    }
   }
 #else
   (void)lua_state;
 #endif
-  if (on_break_) {
-    waiting_ = true;
-    on_break_(*this);
-    waiting_ = false;
+  waiting_ = true;
+  if (dap_) {
+    dap_->OnStopped(*this);
   }
+  if (on_break_) {
+    on_break_(*this);
+  }
+  waiting_ = false;
 }
 
 }  // namespace game_kit

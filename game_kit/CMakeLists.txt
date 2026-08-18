@@ -46,10 +46,12 @@ endif()
 if(EXISTS "${recastnav_SOURCE_DIR}/Recast/Include/Recast.h" AND EXISTS "${recastnav_SOURCE_DIR}/Detour/Include/DetourNavMesh.h")
   file(GLOB _recast_src CONFIGURE_DEPENDS "${recastnav_SOURCE_DIR}/Recast/Source/*.cpp")
   file(GLOB _detour_src CONFIGURE_DEPENDS "${recastnav_SOURCE_DIR}/Detour/Source/*.cpp")
-  add_library(recast_static STATIC ${_recast_src} ${_detour_src})
+  file(GLOB _crowd_src CONFIGURE_DEPENDS "${recastnav_SOURCE_DIR}/DetourCrowd/Source/*.cpp")
+  add_library(recast_static STATIC ${_recast_src} ${_detour_src} ${_crowd_src})
   target_include_directories(recast_static PUBLIC
     "${recastnav_SOURCE_DIR}/Recast/Include"
     "${recastnav_SOURCE_DIR}/Detour/Include"
+    "${recastnav_SOURCE_DIR}/DetourCrowd/Include"
   )
   if(MSVC)
     target_compile_options(recast_static PRIVATE /W3)
@@ -79,6 +81,7 @@ add_library(game_kit STATIC
   runtime/snapshot.cpp
   runtime/script_fields.cpp
   script/vm/lua_vm.cpp
+  script/dap_session.cpp
   script/bindings/lua_api.cpp
   script/script_hot_reload.cpp
   script/script_component.cpp

@@ -36,6 +36,45 @@ void RaiseHeight(std::vector<float>* heights, int x, int z, float amount, float 
   }
 }
 
+void LowerHeight(std::vector<float>* heights, int x, int z, float amount, float radius) {
+  RaiseHeight(heights, x, z, -amount, radius);
+}
+
+void SmoothHeight(std::vector<float>* heights, int x, int z, float radius) {
+  EnsureHeights(heights);
+  const int n = kSculptRes;
+  x = std::clamp(x, 0, n - 1);
+  z = std::clamp(z, 0, n - 1);
+  const float r = std::max(radius, 0.5f);
+  std::vector<float> next = *heights;
+  for (int zz = 0; zz < n; ++zz) {
+    for (int xx = 0; xx < n; ++xx) {
+      const float dx = static_cast<float>(xx - x);
+      const float dz = static_cast<float>(zz - z);
+      if (std::sqrt(dx * dx + dz * dz) > r) {
+        continue;
+      }
+      float sum = 0.f;
+      int count = 0;
+      for (int oz = -1; oz <= 1; ++oz) {
+        for (int ox = -1; ox <= 1; ++ox) {
+          const int nx = xx + ox;
+          const int nz = zz + oz;
+          if (nx < 0 || nz < 0 || nx >= n || nz >= n) {
+            continue;
+          }
+          sum += (*heights)[static_cast<std::size_t>(nz * n + nx)];
+          ++count;
+        }
+      }
+      if (count > 0) {
+        next[static_cast<std::size_t>(zz * n + xx)] = sum / static_cast<float>(count);
+      }
+    }
+  }
+  *heights = std::move(next);
+}
+
 engine::terrain::Heightmap HeightsToMap(const std::vector<float>& heights, float cell) {
   engine::terrain::Heightmap map;
   map.width = kSculptRes;

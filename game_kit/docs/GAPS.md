@@ -8,11 +8,11 @@
 | GK-G04 | Prefab schema 未实现冻结 | **v3 Frozen**；Capture/Apply 写 Script+GameTag；editor StampMeta 走组件 | GK4 / editor |
 | GK-G05 | 无热重载实现 | **已写**：`ScriptHotReload` + `Reload(preserve_state)` 可保留 `persist` 表 | SCRIPTING |
 | GK-G06 | 无玩法存档格式 | **槽 v1 JSON + WorldSnapshot v1**（rot/scale/tags/script/persist） | GK1 |
-| GK-G07 | 无导航/同步（产品级） | **已写**：Recast 烘焙+FindPath（无源则 Steer）；`ReplicationSession` 进程内插值。无独立服 | POSITIONING |
+| GK-G07 | 无导航/同步（产品级） | **已写**：Physics/World 烘焙 + `moveAlongSurface` 贴路 + DetourCrowd；`ReplicationSession` 含旋转 slerp。无独立服 | POSITIONING |
 | GK-G08 | 绑定生成器 | **已写** `api.json` → `lua_api_reg.inc`（C 实现仍手写） | GK5 |
 | GK-G09 | 无品类 kit | 多类型复用时按 [LAYERS](../../docs/LAYERS.md) 建 `genre_kits/*`；不阻塞本层 | ADR 0028 |
 | GK-G10 | 骨骼动画绑定 | **已写** `AnimPlayer` 包引擎 `AnimationStateMachine`；Notify / 根运动 | SCRIPTING |
-| GK-G11 | 脚本调试器 / Luau | **行断点 + on_break 读 locals 已写**；无 IDE、不换 Luau | SCRIPTING |
+| GK-G11 | 脚本调试器 / Luau | **DAP 子集**（initialize/breakpoints/stackTrace/variables + hook 内阻塞暂停）；无 VS Code 扩展、不换 Luau | SCRIPTING |
 
 ## 相关
 

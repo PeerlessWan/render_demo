@@ -1,4 +1,6 @@
 #include "cmd/session.h"
+#include "editing/light_bake.h"
+#include "editing/terrain_edit.h"
 #include "editing/undo.h"
 #include "io/content_browser.h"
 #include "play/scene_play.h"
@@ -60,6 +62,11 @@ TEST_CASE("prefab override merge and apply to source", "[integration]") {
   REQUIRE(world.valid(id));
   game_kit::MergeOverrideJson(world, id, R"({"x":5,"y":1,"z":0,"visible":true})");
   REQUIRE(std::fabs(world.local_transform(id).position.x - 5.f) < 0.01f);
+  game_kit::MergeOverrideJson(world, id, R"({"material":"ground","range":9,"intensity":3,"color":[0.2,0.4,0.6]})");
+  REQUIRE(world.mesh(id) != nullptr);
+  REQUIRE(world.mesh(id)->material_id == "ground");
+  REQUIRE(world.light(id) != nullptr);
+  REQUIRE(std::fabs(world.light(id)->range - 9.f) < 0.01f);
   game_kit::ApplyInstanceToSource(world, id, &prefab);
   REQUIRE(std::fabs(prefab.scene.nodes[0].transform.position.x - 5.f) < 0.01f);
 }
@@ -88,6 +95,34 @@ TEST_CASE("play clone does not dirty edit world", "[integration]") {
   REQUIRE(editor::ApplyOp(host.Bind(), stop).ok);
   REQUIRE(!host.playing);
   REQUIRE(std::fabs(host.world.local_transform(edit_id).position.x - x0) < 0.01f);
+}
+
+TEST_CASE("play light edit does not leak into edit world", "[integration]") {
+  editor::EditorHost host;
+  editor::EditorOp create;
+  create.kind = editor::EditorOp::Kind::Create;
+  create.create_kind = "light";
+  REQUIRE(editor::ApplyOp(host.Bind(), create).ok);
+  const auto edit_id = host.sel.node;
+  REQUIRE(host.world.light(edit_id) != nullptr);
+  const float r0 = host.world.light(edit_id)->range;
+  editor::EditorOp play;
+  play.kind = editor::EditorOp::Kind::Play;
+  REQUIRE(editor::ApplyOp(host.Bind(), play).ok);
+  auto live = host.Bind();
+  REQUIRE(live.world == &host.play_world);
+  for (auto id : live.world->roots()) {
+    if (live.world->light(id)) {
+      auto L = *live.world->light(id);
+      L.range = 99.f;
+      live.world->set_light(id, L);
+    }
+  }
+  editor::EditorOp stop;
+  stop.kind = editor::EditorOp::Kind::Stop;
+  REQUIRE(editor::ApplyOp(host.Bind(), stop).ok);
+  REQUIRE(host.world.light(edit_id) != nullptr);
+  REQUIRE(std::fabs(host.world.light(edit_id)->range - r0) < 0.01f);
 }
 
 TEST_CASE("set parent undo restores parent", "[integration]") {
@@ -134,3 +169,76 @@ TEST_CASE("content browser assigns asset id", "[integration]") {
   }
   REQUIRE(has_id);
 }
+
+TEST_CASE("nested prefab instantiate creates child instance", "[integration]") {
+  auto tree = game_kit::MakeTreePrefab();
+  game_kit::PrefabDocument forest;
+  forest.prefab_id = "forest";
+  game_kit::SceneNode root;
+  root.id = "root";
+  root.name = "forest";
+  root.prefab_id = "forest";
+  game_kit::SceneNode child;
+  child.id = "t";
+  child.name = "nested_tree";
+  child.parent = "root";
+  child.prefab_id = "tree";
+  forest.scene.nodes.push_back(root);
+  forest.scene.nodes.push_back(child);
+  engine::scene::World world;
+  engine::scene::Transform trs;
+  const auto id = game_kit::InstantiateNested(world, forest, trs, {tree});
+  REQUIRE(world.valid(id));
+  bool found = false;
+  std::vector<engine::scene::NodeId> stack = world.roots();
+  while (!stack.empty()) {
+    auto n = stack.back();
+    stack.pop_back();
+    if (world.name(n) == "tree" || world.name(n) == "nested_tree") {
+      found = true;
+    }
+    for (auto c : world.children(n)) {
+      stack.push_back(c);
+    }
+  }
+  REQUIRE(found);
+}
+
+TEST_CASE("terrain heights round trip via scene extensions", "[integration]") {
+  editor::EditorHost host;
+  editor::RaiseHeight(&host.settings.heights, 8, 8, 1.5f, 2.f);
+  const float peak = host.settings.heights[static_cast<std::size_t>(8 * 17 + 8)];
+  const auto path = std::filesystem::temp_directory_path() / "editor_terrain_rt.json";
+  editor::EditorOp save;
+  save.kind = editor::EditorOp::Kind::Save;
+  save.path = path.string();
+  REQUIRE(editor::ApplyOp(host.Bind(), save).ok);
+  editor::EditorHost host2;
+  editor::EditorOp open;
+  open.kind = editor::EditorOp::Kind::Open;
+  open.path = path.string();
+  REQUIRE(editor::ApplyOp(host2.Bind(), open).ok);
+  REQUIRE(host2.settings.heights.size() == host.settings.heights.size());
+  REQUIRE(std::fabs(host2.settings.heights[static_cast<std::size_t>(8 * 17 + 8)] - peak) < 0.05f);
+}
+
+TEST_CASE("cpu bake writes lightmap from scene lights", "[integration]") {
+  editor::EditorHost host;
+  editor::EditorOp create;
+  create.kind = editor::EditorOp::Kind::Create;
+  create.create_kind = "light";
+  REQUIRE(editor::ApplyOp(host.Bind(), create).ok);
+  const auto path = std::filesystem::temp_directory_path() / "editor_bake.rgba";
+  REQUIRE(editor::BakeSceneLights(host.world, host.settings.heights, path, nullptr).ok());
+  REQUIRE(std::filesystem::file_size(path) > 16);
+}
+
+TEST_CASE("screenshot without device is error", "[integration]") {
+  editor::EditorHost host;
+  editor::EditorOp shot;
+  shot.kind = editor::EditorOp::Kind::Screenshot;
+  const auto r = editor::ApplyOp(host.Bind(), shot);
+  REQUIRE(r.is_error);
+  REQUIRE(r.message.find("gpu") != std::string::npos);
+}
+

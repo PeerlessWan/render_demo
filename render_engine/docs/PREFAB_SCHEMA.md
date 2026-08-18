@@ -37,14 +37,14 @@ SceneDocument
 | `script_path` | v1 别名；v3 以 Script 组件为准 |
 | `components` | 见下 |
 | `extra` | 编辑器旁路（须保留） |
-| `override` | 实例属性覆盖（t/x/y/z/sx/visible/fields） |
+| `override` | 实例属性覆盖（t/x/y/z/sx/visible/fields/material/light） |
 
 ### 组件
 
 | type | 载荷 |
 |---|---|
 | `MeshRenderer` | `mesh`, `material` / `materials[]` |
-| `Light` | `kind` (0 point / 1 spot / 2 dir), `range`, `intensity` |
+| `Light` | `kind` (0 point / 1 spot / 2 dir), `range`, `intensity`, `color` `[r,g,b]` |
 | `Camera` | `active`, `fovy` |
 | `Collider` | `hx`, `hy`, `hz` |
 | `Sprite` / `Tilemap` | `atlas`, `gid` |

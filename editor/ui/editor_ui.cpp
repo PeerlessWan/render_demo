@@ -1,13 +1,19 @@
 #include "editor_ui.h"
 
+#include "editing/anim_edit.h"
 #include "editing/ops.h"
 #include "editing/snap.h"
 
 #include "engine/core/math.h"
 
+#include "game_kit/script_fields.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -171,8 +177,8 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
     if (ui.Button(playing ? "Stop Play" : "Play scene", 220.f, 24.f)) {
       cmd->play = true;
     }
-    ui.EndWindow();
   }
+  ui.EndWindow();
 
   if (ui.BeginWindow("Inspector", 12.f, 340.f, 260.f, 420.f)) {
     if (!world.valid(sel.node)) {
@@ -225,7 +231,12 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
         }
         if (!pitems.empty() &&
             ui.Combo("Parent", &psel, pitems.data(), static_cast<int>(pitems.size()))) {
+          const auto empty_meta = std::unordered_map<engine::scene::NodeId, NodeMeta>{};
+          const auto& mm = meta ? *meta : empty_meta;
+          auto before = CaptureProp(world, sel.node, mm);
           (void)world.set_parent(sel.node, pids[static_cast<std::size_t>(psel)]);
+          auto after = CaptureProp(world, sel.node, mm);
+          undo.PushProps({std::move(before)}, {std::move(after)});
           settings.dirty = true;
         }
       }
@@ -280,6 +291,11 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
         }
         undo.PushBatch(ids, befores, afters);
         settings.dirty = true;
+        if (meta) {
+          for (auto id : ids) {
+            WriteInstanceOverride(world, id, &(*meta)[id]);
+          }
+        }
       }
       int mesh_i = 0;
       if (const auto* mesh = world.mesh(sel.node)) {
@@ -327,71 +343,187 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
       }
       if (meta) {
         auto& mm = (*meta)[sel.node];
-        int mat_i = 0;
-        if (mm.material_id == "cube") {
-          mat_i = 1;
-        } else if (mm.material_id == "ground") {
-          mat_i = 2;
+        std::vector<std::string> mat_names{"(default)"};
+        if (content) {
+          for (const auto& it : content->items) {
+            if (it.asset_id.empty()) {
+              continue;
+            }
+            bool dup = false;
+            for (const auto& n : mat_names) {
+              if (n == it.asset_id) {
+                dup = true;
+                break;
+              }
+            }
+            if (!dup) {
+              mat_names.push_back(it.asset_id);
+            }
+          }
         }
-        const char* mats[] = {"(default)", "cube", "ground"};
-        if (ui.Combo("Material", &mat_i, mats, 3)) {
-          mm.material_id = mat_i == 0 ? "" : mats[mat_i];
+        if (mat_names.size() == 1) {
+          mat_names.emplace_back("cube");
+          mat_names.emplace_back("ground");
+        }
+        int mat_i = 0;
+        for (int i = 1; i < static_cast<int>(mat_names.size()); ++i) {
+          if (mm.material_id == mat_names[static_cast<std::size_t>(i)]) {
+            mat_i = i;
+          }
+        }
+        std::vector<const char*> mat_items;
+        mat_items.reserve(mat_names.size());
+        for (const auto& n : mat_names) {
+          mat_items.push_back(n.c_str());
+        }
+        if (ui.Combo("Material", &mat_i, mat_items.data(), static_cast<int>(mat_items.size()))) {
+          mm.material_id = mat_i == 0 ? "" : mat_names[static_cast<std::size_t>(mat_i)];
           settings.dirty = true;
+          SyncMetaToWorld(world, *meta);
+          WriteInstanceOverride(world, sel.node, &mm);
         }
         if (ui.Checkbox("Light", &mm.has_light)) {
           settings.dirty = true;
           SyncMetaToWorld(world, *meta);
+          WriteInstanceOverride(world, sel.node, &mm);
         }
         if (mm.has_light) {
-          (void)ui.SliderFloat("Range", &mm.light_range, 1.f, 32.f);
-          (void)ui.SliderFloat("Intensity", &mm.light_intensity, 0.f, 8.f);
-          SyncMetaToWorld(world, *meta);
+          bool light_ch = false;
+          light_ch = ui.SliderInt("Kind", &mm.light_kind, 0, 2) || light_ch;
+          light_ch = ui.SliderFloat("Range", &mm.light_range, 1.f, 32.f) || light_ch;
+          light_ch = ui.SliderFloat("Intensity", &mm.light_intensity, 0.f, 8.f) || light_ch;
+          light_ch = ui.SliderFloat("LcR", &mm.light_r, 0.f, 1.f) || light_ch;
+          light_ch = ui.SliderFloat("LcG", &mm.light_g, 0.f, 1.f) || light_ch;
+          light_ch = ui.SliderFloat("LcB", &mm.light_b, 0.f, 1.f) || light_ch;
+          if (light_ch) {
+            settings.dirty = true;
+            SyncMetaToWorld(world, *meta);
+            WriteInstanceOverride(world, sel.node, &mm);
+          }
         }
         if (ui.Checkbox("Camera", &mm.has_camera)) {
           settings.dirty = true;
           SyncMetaToWorld(world, *meta);
         }
-        if (mm.has_camera && ui.Checkbox("Active cam", &mm.active_camera)) {
-          if (mm.active_camera) {
-            for (auto& kv : *meta) {
-              if (kv.first != sel.node) {
-                kv.second.active_camera = false;
+        if (mm.has_camera) {
+          if (ui.Checkbox("Active cam", &mm.active_camera)) {
+            if (mm.active_camera) {
+              for (auto& kv : *meta) {
+                if (kv.first != sel.node) {
+                  kv.second.active_camera = false;
+                }
               }
             }
+            settings.dirty = true;
+            SyncMetaToWorld(world, *meta);
           }
-          settings.dirty = true;
-          SyncMetaToWorld(world, *meta);
+          if (ui.SliderFloat("fovy", &mm.camera_fovy, 0.3f, 1.8f)) {
+            settings.dirty = true;
+            SyncMetaToWorld(world, *meta);
+          }
         }
         if (ui.Checkbox("Collider", &mm.has_collider)) {
           settings.dirty = true;
           SyncMetaToWorld(world, *meta);
         }
         if (mm.has_collider) {
-          (void)ui.SliderFloat("hx", &mm.collider_hx, 0.1f, 4.f);
-          (void)ui.SliderFloat("hy", &mm.collider_hy, 0.1f, 4.f);
-          (void)ui.SliderFloat("hz", &mm.collider_hz, 0.1f, 4.f);
+          bool col_ch = false;
+          col_ch = ui.SliderFloat("hx", &mm.collider_hx, 0.1f, 4.f) || col_ch;
+          col_ch = ui.SliderFloat("hy", &mm.collider_hy, 0.1f, 4.f) || col_ch;
+          col_ch = ui.SliderFloat("hz", &mm.collider_hz, 0.1f, 4.f) || col_ch;
+          if (col_ch) {
+            settings.dirty = true;
+            SyncMetaToWorld(world, *meta);
+          }
         }
-        static char fields_buf[256]{};
-        static engine::scene::NodeId fields_id = engine::scene::kInvalidNode;
-        if (fields_id != sel.node) {
-          fields_id = sel.node;
-          std::memset(fields_buf, 0, sizeof(fields_buf));
-          std::memcpy(fields_buf, mm.script_fields.c_str(),
-                      std::min(mm.script_fields.size(), sizeof(fields_buf) - 1));
-        }
-        if (ui.InputText("Fields", fields_buf, sizeof(fields_buf))) {
-          mm.script_fields = fields_buf;
+        bool has_spr = world.sprite(sel.node) != nullptr;
+        if (ui.Checkbox("Sprite", &has_spr)) {
+          if (has_spr) {
+            engine::scene::SpriteComponent spr;
+            world.set_sprite(sel.node, spr);
+          } else {
+            world.clear_sprite(sel.node);
+          }
           settings.dirty = true;
         }
-        int anim_i = 0;
-        if (mm.anim_state == "walk") {
-          anim_i = 1;
-        } else if (mm.anim_state == "run") {
-          anim_i = 2;
+        if (const auto* spr = world.sprite(sel.node)) {
+          auto copy = *spr;
+          if (ui.SliderInt("gid", &copy.gid, 0, 16)) {
+            world.set_sprite(sel.node, copy);
+            settings.dirty = true;
+          }
         }
-        const char* anims[] = {"(none)", "walk", "run"};
-        if (ui.Combo("Anim", &anim_i, anims, 3)) {
-          mm.anim_state = anim_i == 0 ? "" : anims[anim_i];
+        {
+          std::string src;
+          const auto& sp = mm.script_path.empty() && script_path ? *script_path : mm.script_path;
+          if (!sp.empty()) {
+            std::ifstream in(sp, std::ios::binary);
+            if (in) {
+              src.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            }
+          }
+          auto fields = game_kit::ParseScriptExports(src);
+          game_kit::OverlayPersistBlob(&fields, mm.script_fields);
+          if (!fields.empty() && src.find("--@export") != std::string::npos) {
+            bool fchg = false;
+            for (auto& f : fields) {
+              if (f.type == "number") {
+                float v = std::strtof(f.value.c_str(), nullptr);
+                if (ui.SliderFloat(f.name.c_str(), &v, -32.f, 32.f)) {
+                  std::ostringstream oss;
+                  oss << v;
+                  f.value = oss.str();
+                  fchg = true;
+                }
+              } else if (f.type == "bool") {
+                bool b = f.value == "true" || f.value == "1";
+                if (ui.Checkbox(f.name.c_str(), &b)) {
+                  f.value = b ? "true" : "false";
+                  fchg = true;
+                }
+              } else {
+                char buf[128]{};
+                std::memcpy(buf, f.value.c_str(), std::min(f.value.size(), sizeof(buf) - 1));
+                if (ui.InputText(f.name.c_str(), buf, sizeof(buf))) {
+                  f.value = buf;
+                  fchg = true;
+                }
+              }
+            }
+            if (fchg) {
+              mm.script_fields = game_kit::FieldsToPersist(fields);
+              settings.dirty = true;
+              WriteInstanceOverride(world, sel.node, &mm);
+            }
+          } else {
+            static char fields_buf[256]{};
+            static engine::scene::NodeId fields_id = engine::scene::kInvalidNode;
+            if (fields_id != sel.node) {
+              fields_id = sel.node;
+              std::memset(fields_buf, 0, sizeof(fields_buf));
+              std::memcpy(fields_buf, mm.script_fields.c_str(),
+                          std::min(mm.script_fields.size(), sizeof(fields_buf) - 1));
+            }
+            if (ui.InputText("Fields", fields_buf, sizeof(fields_buf))) {
+              mm.script_fields = fields_buf;
+              settings.dirty = true;
+            }
+          }
+        }
+        int anim_i = 0;
+        for (int i = 0; i < static_cast<int>(settings.anim.states.size()); ++i) {
+          if (mm.anim_state == settings.anim.states[static_cast<std::size_t>(i)]) {
+            anim_i = i + 1;
+          }
+        }
+        std::vector<std::string> anim_names{"(none)"};
+        anim_names.insert(anim_names.end(), settings.anim.states.begin(), settings.anim.states.end());
+        std::vector<const char*> anim_items;
+        for (const auto& n : anim_names) {
+          anim_items.push_back(n.c_str());
+        }
+        if (ui.Combo("Anim", &anim_i, anim_items.data(), static_cast<int>(anim_items.size()))) {
+          mm.anim_state = anim_i == 0 ? "" : anim_names[static_cast<std::size_t>(anim_i)];
           settings.dirty = true;
         }
         if (!mm.prefab_id.empty() || !mm.source_prefab.empty()) {
@@ -465,8 +597,8 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
         }
       }
     }
-    ui.EndWindow();
   }
+  ui.EndWindow();
 
   if (ui.BeginWindow("Content", 12.f, 648.f, 260.f, 220.f)) {
     ui.Text(scene_path.string().c_str());
@@ -495,24 +627,39 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
     }
     ui.Separator();
     ui.Text("Project (drag prefab to viewport)");
-    if (content && ui.BeginChild("content_list", 240.f, 120.f)) {
-      for (int i = 0; i < static_cast<int>(content->items.size()); ++i) {
-        const auto& it = content->items[static_cast<std::size_t>(i)];
-        ui.ColorBox(it.thumb_r, it.thumb_g, it.thumb_b, 1.f, 16.f, 16.f);
-        ui.SameLine();
-        const std::string lab = (it.kind == ContentItem::Kind::Scene ? "S " : "P ") + it.label +
-                                (it.asset_id.empty() ? "" : " [" + it.asset_id + "]");
-        if (it.kind == ContentItem::Kind::Scene) {
-          if (ui.Selectable(lab.c_str(), false)) {
-            cmd->open_scene = i;
+    if (content) {
+      const bool list_open = ui.BeginChild("content_list", 240.f, 120.f);
+      if (list_open) {
+        for (int i = 0; i < static_cast<int>(content->items.size()); ++i) {
+          const auto& it = content->items[static_cast<std::size_t>(i)];
+          ui.ColorBox(it.thumb_r, it.thumb_g, it.thumb_b, 1.f, 16.f, 16.f);
+          if (!it.thumb_px.empty()) {
+            const int tw = std::max(1, it.thumb_w);
+            const int n = std::min(4, tw);
+            for (int px = 0; px < n; ++px) {
+              const std::size_t o = static_cast<std::size_t>(px) * 4;
+              if (o + 2 < it.thumb_px.size()) {
+                ui.SameLine();
+                ui.ColorBox(it.thumb_px[o] / 255.f, it.thumb_px[o + 1] / 255.f,
+                            it.thumb_px[o + 2] / 255.f, 1.f, 4.f, 16.f);
+              }
+            }
           }
-        } else {
-          if (ui.Selectable(lab.c_str(), content->pending == i)) {
-            cmd->place_content = i;
-          }
-          if (ui.BeginDragDropSource()) {
-            ui.SetDragDropPayload("content", std::to_string(i));
-            ui.EndDragDropSource();
+          ui.SameLine();
+          const std::string lab = (it.kind == ContentItem::Kind::Scene ? "S " : "P ") + it.label +
+                                  (it.asset_id.empty() ? "" : " [" + it.asset_id + "]");
+          if (it.kind == ContentItem::Kind::Scene) {
+            if (ui.Selectable(lab.c_str(), false)) {
+              cmd->open_scene = i;
+            }
+          } else {
+            if (ui.Selectable(lab.c_str(), content->pending == i)) {
+              cmd->place_content = i;
+            }
+            if (ui.BeginDragDropSource()) {
+              ui.SetDragDropPayload("content", std::to_string(i));
+              ui.EndDragDropSource();
+            }
           }
         }
       }
@@ -533,8 +680,8 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
     if (ui.Button("Lint (C20)", 220.f, 22.f)) {
       cmd->lint = true;
     }
-    ui.EndWindow();
   }
+  ui.EndWindow();
 
   if (ui.BeginWindow("Settings", 280.f, 540.f, 280.f, 380.f)) {
     const char* modes[] = {"Move", "Rotate", "Scale"};
@@ -552,9 +699,22 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
     (void)ui.Combo("Viewport", &settings.viewport, views, 5);
     ui.Checkbox("Split 2x2", &settings.split_view);
     (void)ui.SliderInt("Pane", &settings.active_pane, 0, 3);
+    const char* brushes[] = {"Raise", "Lower", "Smooth"};
+    (void)ui.Combo("Brush", &settings.sculpt_mode, brushes, 3);
     (void)ui.SliderFloat("Sculpt", &settings.sculpt, 0.05f, 1.f);
-    if (ui.Button("Sculpt raise", 220.f, 22.f)) {
+    if (ui.Button("Sculpt apply", 220.f, 22.f)) {
       cmd->sculpt = true;
+    }
+    static char atlas_buf[64]{};
+    static bool atlas_init = false;
+    if (!atlas_init) {
+      std::memcpy(atlas_buf, settings.tile_atlas.c_str(),
+                  std::min(settings.tile_atlas.size(), sizeof(atlas_buf) - 1));
+      atlas_init = true;
+    }
+    if (ui.InputText("Atlas", atlas_buf, sizeof(atlas_buf))) {
+      settings.tile_atlas = atlas_buf;
+      settings.dirty = true;
     }
     (void)ui.SliderInt("Tile X", &settings.tile_x, 0, 15);
     (void)ui.SliderInt("Tile Y", &settings.tile_y, 0, 15);
@@ -569,23 +729,58 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
       cmd->step = true;
     }
     ui.Text("1/2/3 gizmo  Ctrl+Z/Y undo  Ctrl+D dup  Del  F");
-    ui.EndWindow();
   }
+  ui.EndWindow();
 
-  if (ui.BeginWindow("Anim / Bake", 580.f, 540.f, 280.f, 220.f)) {
+  if (ui.BeginWindow("Anim / Bake", 580.f, 540.f, 280.f, 260.f)) {
     ui.Text("State graph");
-    const char* anims[] = {"idle", "walk", "run"};
-    static int anim_i = 0;
-    if (ui.Combo("State", &anim_i, anims, 3)) {
-      cmd->anim_state = anim_i;
+    std::vector<const char*> anims;
+    for (const auto& s : settings.anim.states) {
+      anims.push_back(s.c_str());
+    }
+    if (!anims.empty()) {
+      if (ui.Combo("State", &settings.anim.current, anims.data(), static_cast<int>(anims.size()))) {
+        cmd->anim_state = settings.anim.current;
+      }
+    }
+    static char new_state[32]{"jump"};
+    if (ui.InputText("New state", new_state, sizeof(new_state))) {
+    }
+    if (ui.Button("Add state", 105.f, 22.f)) {
+      auto a0 = settings.anim;
+      AddState(&settings.anim, new_state);
+      undo.PushGrid(settings.heights, settings.tiles, a0, settings.heights, settings.tiles,
+                    settings.anim);
+      settings.dirty = true;
+    }
+    if (ui.Button("Remove state", 105.f, 22.f)) {
+      auto a0 = settings.anim;
+      RemoveState(&settings.anim, settings.anim.current);
+      undo.PushGrid(settings.heights, settings.tiles, a0, settings.heights, settings.tiles,
+                    settings.anim);
+      settings.dirty = true;
+    }
+    static char from_st[32]{"idle"};
+    static char to_st[32]{"walk"};
+    (void)ui.InputText("From", from_st, sizeof(from_st));
+    (void)ui.InputText("To", to_st, sizeof(to_st));
+    if (ui.Button("Add transition", 220.f, 22.f)) {
+      auto a0 = settings.anim;
+      AddTransition(&settings.anim, from_st, to_st);
+      undo.PushGrid(settings.heights, settings.tiles, a0, settings.heights, settings.tiles,
+                    settings.anim);
+      settings.dirty = true;
     }
     ui.Text("Curve keys 0..1");
-    (void)ui.SliderFloat("k0", &settings.sculpt, 0.05f, 1.f);
+    (void)ui.SliderFloat("k0", &settings.anim.keys[0], 0.f, 1.f);
+    (void)ui.SliderFloat("k1", &settings.anim.keys[1], 0.f, 1.f);
+    (void)ui.SliderFloat("k2", &settings.anim.keys[2], 0.f, 1.f);
+    (void)ui.SliderFloat("k3", &settings.anim.keys[3], 0.f, 1.f);
     if (ui.Button("Lint graph", 220.f, 22.f)) {
       cmd->lint = true;
     }
-    ui.EndWindow();
   }
+  ui.EndWindow();
 
   if (ui.BeginWindow("Debug", 280.f, 790.f, 280.f, 120.f)) {
     const std::string n = "nodes " + std::to_string(world.roots().size());
@@ -598,8 +793,8 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
     ui.Text(playing ? (paused ? "Play PAUSED" : "Play RUN") : "Edit");
     const std::string fps_s = "fps " + std::to_string(static_cast<int>(fps + 0.5f));
     ui.Text(fps_s.c_str());
-    ui.EndWindow();
   }
+  ui.EndWindow();
 }
 
 }  // namespace editor

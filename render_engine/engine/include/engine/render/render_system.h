@@ -99,10 +99,20 @@ struct EffectTuning {
 class RenderSystem {
  public:
   Status Init(rhi::IDevice& device, const RenderSystemDesc& desc);
+  struct ColorViewport {
+    float x = 0.f;
+    float y = 0.f;
+    float w = 0.f;
+    float h = 0.f;
+    bool enabled = false;
+    bool skip_post = false;
+  };
+
   Status DrawFrame(rhi::IDevice& device, const RenderScene& scene, const Environment& env,
                    float aspect, const std::vector<render2d::Sprite>* sprites = nullptr,
                    const std::vector<rhi::ScreenQuad>* ui_quads = nullptr,
-                   const debug::DebugDraw* debug_draw = nullptr);
+                   const debug::DebugDraw* debug_draw = nullptr,
+                   const ColorViewport* color_vp = nullptr);
 
   [[nodiscard]] const FrameGraph& frame_graph() const { return graph_; }
   [[nodiscard]] std::uint32_t last_draw_count() const { return last_draw_count_; }

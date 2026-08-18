@@ -96,12 +96,19 @@ TEST_CASE("DDGI-lite BlendNeighborhood and CascadeRefine", "[m35][w10][gi]") {
   vol.Configure({0, 0, 0}, {1, 1, 1}, 3, 3, 3);
   REQUIRE(vol.probes().size() == 27);
 
-  // Configure seeds spatially varying irradiance; neighborhood blend smooths the field.
-  const float mid_before = vol.probes()[13].irradiance.r;
+  auto& probes = vol.probes();
+  for (auto& p : probes) {
+    p.irradiance = {0.f, 0.f, 0.f, 1.f};
+  }
+  // Spike a neighbor of the center probe (index 13 in 3x3x3).
+  REQUIRE(probes.size() > 14);
+  probes[14].irradiance = {1.f, 0.f, 0.f, 1.f};
+  const float mid_before = probes[13].irradiance.r;
+  REQUIRE(mid_before == 0.f);
   vol.BlendNeighborhood(1.f);
   const float mid_after = vol.probes()[13].irradiance.r;
   REQUIRE(std::isfinite(mid_after));
-  REQUIRE(std::fabs(mid_after - mid_before) > 1e-6f);
+  REQUIRE(mid_after > mid_before);
 
   const int nx0 = vol.grid_nx();
   vol.CascadeRefine({1.f, 1.f, 1.f}, 1);

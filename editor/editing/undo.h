@@ -1,5 +1,8 @@
 #pragma once
 
+#include "editing/anim_edit.h"
+#include "play/scene_play.h"
+
 #include "engine/scene/world.h"
 
 #include <string>
@@ -8,7 +11,7 @@
 
 namespace editor {
 
-struct NodeMeta;
+struct EditorSettings;
 
 struct NodeSnap {
   engine::scene::NodeId live = engine::scene::kInvalidNode;
@@ -32,6 +35,10 @@ struct PropSnap {
   std::string prefab_id;
   std::string script_path;
   std::string parent_name;
+  engine::scene::NodeId parent_id = engine::scene::kInvalidNode;
+  NodeMeta meta{};
+  bool has_sprite = false;
+  engine::scene::SpriteComponent sprite{};
 };
 
 class UndoStack {
@@ -44,16 +51,21 @@ class UndoStack {
   void PushSpawn(std::vector<NodeSnap> snaps);
   void PushKill(std::vector<NodeSnap> snaps);
   void PushProps(std::vector<PropSnap> before, std::vector<PropSnap> after);
+  void PushGrid(std::vector<float> heights_before, std::vector<int> tiles_before,
+                AnimGraphEdit anim_before, std::vector<float> heights_after,
+                std::vector<int> tiles_after, AnimGraphEdit anim_after);
 
   bool Undo(engine::scene::World& world,
-            std::unordered_map<engine::scene::NodeId, NodeMeta>* meta = nullptr);
+            std::unordered_map<engine::scene::NodeId, NodeMeta>* meta = nullptr,
+            EditorSettings* settings = nullptr);
   bool Redo(engine::scene::World& world,
-            std::unordered_map<engine::scene::NodeId, NodeMeta>* meta = nullptr);
+            std::unordered_map<engine::scene::NodeId, NodeMeta>* meta = nullptr,
+            EditorSettings* settings = nullptr);
   void Clear();
   [[nodiscard]] bool empty() const { return undo_.empty(); }
 
  private:
-  enum class Kind { Transform, Spawn, Kill, Props };
+  enum class Kind { Transform, Spawn, Kill, Props, Grid };
   struct Cmd {
     Kind kind = Kind::Transform;
     std::vector<engine::scene::NodeId> nodes;
@@ -62,6 +74,12 @@ class UndoStack {
     std::vector<NodeSnap> snaps;
     std::vector<PropSnap> prop_before;
     std::vector<PropSnap> prop_after;
+    std::vector<float> heights_before;
+    std::vector<float> heights_after;
+    std::vector<int> tiles_before;
+    std::vector<int> tiles_after;
+    AnimGraphEdit anim_before{};
+    AnimGraphEdit anim_after{};
   };
 
   void ApplySpawn(engine::scene::World& world, Cmd* c,
