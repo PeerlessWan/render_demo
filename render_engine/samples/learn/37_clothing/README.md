@@ -13,7 +13,10 @@ cmake --build build --config Debug --target sample_37_clothing
 build\samples\learn\37_clothing\Debug\sample_37_clothing.exe --headless --headless_frames=2
 ```
 
-CMake target：**`sample_37_clothing`**。链接 `engine_clothing` + `engine_physics`。  
+CMake target：**`sample_37_clothing`**。链接 `engine_clothing` + `engine_gameplay` +
+`engine_physics`（`ENGINE_CONTENT_DIR_A`）。启动时
+`CharacterAsset::TryLoadFromCharactersDirOrCapsule` 优先加载
+`content/characters/*.glb`，失败回退胶囊。  
 builtin 物理下 SoftBody 为 SKIP，仍用 Verlet，exit 0。
 
 | 参数 | 作用 |

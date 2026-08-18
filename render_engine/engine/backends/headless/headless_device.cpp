@@ -17,6 +17,7 @@ class HeadlessDevice final : public IDevice {
   }
 
   [[nodiscard]] bool is_headless() const override { return true; }
+  [[nodiscard]] DeviceApiKind api_kind() const override { return DeviceApiKind::Headless; }
   [[nodiscard]] std::uint32_t width() const override { return width_; }
   [[nodiscard]] std::uint32_t height() const override { return height_; }
 

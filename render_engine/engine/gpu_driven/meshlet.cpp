@@ -440,10 +440,24 @@ Status TryMeshShaderPath() {
                         "Mesh Shader path SKIP: Feature meshlet/mesh_shader=false (C08)");
   }
 #if defined(_WIN32)
-  return TryMeshShaderPathD3d12();
+  const Status d3d = TryMeshShaderPathD3d12();
+  if (d3d) {
+    return d3d;
+  }
+#endif
+  // Mega-W11: Feature on + VK_EXT_mesh_shader → minimal Ok; else honest SKIP.
+  const Status vk = ProbeMeshShaderSupportVk();
+  if (vk) {
+    LogInfo("TryMeshShaderPath: VK_EXT_mesh_shader present (minimal Ok)");
+    return Status::Ok("vk-mesh-shader-ext");
+  }
+#if defined(_WIN32)
+  return Status::Fail(ErrorCode::Unavailable,
+                      std::string("Mesh Shader path SKIP: D3D12=") + d3d.message() +
+                          "; VK=" + vk.message());
 #else
-  // No D3D12 — Feature forced ⇒ ready (matches path.cpp Feature override pattern).
-  return Status::Ok();
+  return Status::Fail(ErrorCode::Unavailable,
+                      std::string("Mesh Shader path SKIP: ") + vk.message());
 #endif
 }
 

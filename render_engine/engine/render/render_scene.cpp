@@ -48,6 +48,9 @@ void Visit(const scene::World& world, scene::NodeId id, const Frustum& frustum, 
   } else if (world.light(id) || world.camera(id) || world.collider(id) || world.sprite(id)) {
     const Mat4& wm = world.world_matrix(id);
     Aabb local{{-0.25f, -0.25f, -0.25f}, {0.25f, 0.25f, 0.25f}};
+    if (world.sprite(id)) {
+      local = {{-0.5f, -0.05f, -0.5f}, {0.5f, 0.15f, 0.5f}};
+    }
     if (const auto* col = world.collider(id)) {
       local.min = {-col->hx, -col->hy, -col->hz};
       local.max = {col->hx, col->hy, col->hz};

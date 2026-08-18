@@ -6,14 +6,28 @@
 #include "engine/debug/console.h"
 #include "engine/net/net_system.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <string>
 
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
+#else
+// Match Win32 VK_* indices used by WindowInputSnapshot.keys / MapVk.
+#ifndef VK_SPACE
+#define VK_SPACE 0x20
+#endif
+#ifndef VK_ESCAPE
+#define VK_ESCAPE 0x1B
+#endif
+#ifndef VK_SHIFT
+#define VK_SHIFT 0x10
+#endif
+#endif
 
 namespace engine {
 namespace {
@@ -149,10 +163,13 @@ Status Application::Run(FrameCallback on_frame) {
       window_->RequestClose();
     }
 
-    const float sprint =
-        (GetAsyncKeyState(VK_SHIFT) & 0x8000) ? 2.4f : 1.f;
-    const float move_speed = move_speed_ * sprint * dt_;
     const auto& snap = window_->input_snapshot();
+#if defined(_WIN32)
+    const float sprint = (GetAsyncKeyState(VK_SHIFT) & 0x8000) ? 2.4f : 1.f;
+#else
+    const float sprint = (VK_SHIFT < snap.keys.size() && snap.keys[VK_SHIFT]) ? 2.4f : 1.f;
+#endif
+    const float move_speed = move_speed_ * sprint * dt_;
     const bool lmb = snap.mouse_left;
     const bool rmb = snap.mouse_right;
     const bool mmb = snap.mouse_middle;
@@ -174,15 +191,21 @@ Status Application::Run(FrameCallback on_frame) {
     was_looking_ = want_look || want_pan;
 
     if (!ui_want_capture_) {
-      if (fly_locomotion_enabled_) {
-        camera_.MoveLocal(input_.axis("MoveZ") * move_speed_, input_.axis("MoveX") * move_speed_,
-                          input_.axis("MoveY") * move_speed_);
+      if (fly_locomotion_enabled_ && (!fly_requires_look_ || want_look)) {
+        camera_.MoveLocal(input_.axis("MoveZ") * move_speed, input_.axis("MoveX") * move_speed,
+                          input_.axis("MoveY") * move_speed);
       }
       if (want_pan) {
-        // Middle-drag pans in view plane (screen X → right, screen Y → up).
-        camera_.MoveLocal(0.f, -input_.axis("LookX") * pan_sensitivity_,
-                          input_.axis("LookY") * pan_sensitivity_);
-      } else if (want_look) {
+        if (camera_.ortho) {
+          const float s = camera_.ortho_height * pan_sensitivity_;
+          camera_.position.x -= input_.axis("LookX") * s;
+          camera_.position.z += input_.axis("LookY") * s;
+        } else {
+          // Middle-drag pans in view plane (screen X → right, screen Y → up).
+          camera_.MoveLocal(0.f, -input_.axis("LookX") * pan_sensitivity_,
+                            input_.axis("LookY") * pan_sensitivity_);
+        }
+      } else if (want_look && !camera_.ortho) {
         camera_.AddYawPitch(-input_.axis("LookX") * look_sensitivity_,
                             -input_.axis("LookY") * look_sensitivity_);
       }
@@ -225,7 +248,13 @@ Status Application::Run(FrameCallback on_frame) {
     }
     // Apply wheel after UI has updated WantCapture for this hover frame.
     if (!ui_want_capture_ && std::fabs(input_.mouse_wheel()) > 1e-6f) {
-      camera_.MoveLocal(input_.mouse_wheel() * zoom_sensitivity_, 0.f, 0.f);
+      if (camera_.ortho) {
+        float f = 1.f - input_.mouse_wheel() * 0.12f;
+        f = std::clamp(f, 0.5f, 1.6f);
+        camera_.ortho_height = std::clamp(camera_.ortho_height * f, 0.5f, 256.f);
+      } else {
+        camera_.MoveLocal(input_.mouse_wheel() * zoom_sensitivity_, 0.f, 0.f);
+      }
     }
     if (auto st = device_->Present(); !st) {
       LogError(st.message());

@@ -11,6 +11,8 @@ struct Camera {
   float fovy_rad = 1.04719755f;  // 60 deg
   float z_near = 0.1f;
   float z_far = 500.f;
+  bool ortho = false;
+  float ortho_height = 16.f;
 
   void AddYawPitch(float dyaw, float dpitch);
   void MoveLocal(float forward, float right, float up);

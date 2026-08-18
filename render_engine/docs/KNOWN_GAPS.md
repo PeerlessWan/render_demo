@@ -19,8 +19,8 @@
 | ID | 缺口 | 状态 | 里程碑 |
 |---|---|---|---|
 | G01 | 跨后端（VK） | **Win 双后端 100% 收口**（见 [VULKAN_PARITY.md](VULKAN_PARITY.md)）：全栈 post、GPU 实例/Cull/Indirect、探针/IBL 分槽；Linux 仍外置 | M17 |
-| G18 | Mesh Shader / GPU Driven | **Cull/Indirect 两端可用**；Bindless 热路径 Feature `bindless_hot_path`（默认 OFF 保黄金图）；VK bindless SKIP | M24 |
-| G19 | Linux | **文档+构建说明加深**（[LINUX.md](LINUX.md)、`ENGINE_LINUX_VK`）；X11 窗口/运行时冒烟视 CI；**Wayland 文档钉死后置**（W10） | M18 / W10 |
+| G18 | Mesh Shader / GPU Driven | **Cull/Indirect 两端可用**；Bindless D3D12 Feature（默认 OFF）；**VK bindless W11 钉死 SKIP**；VK MS/RT 有扩展则示范否则 SKIP（ADR 0038） | M24 / W11 |
+| G19 | Linux | **W11**：UNIX 跳过 D3D12；X11 `Window::Create` + `VK_KHR_xlib_surface`；实机 xvfb smoke OK（[LINUX.md](LINUX.md)）；Wayland 仍后置；全量引擎树同步另议 | M18 / W11 |
 | G02–G04、G11 | 混合打磨 / 拣选 / 多 DPI | **可用加深** | M20 |
 | G05–G10、G12 | 2D 深度 | **已加深**：chunk→Sprite 展开；SkeletonClip2D；雾 tint / BMFont JSON / 震屏 | M21 |
 | G14 | 动态 GI | **Mega-W10 DDGI-lite**：`BlendNeighborhood` / `CascadeRefine`（CPU，**非** NVIDIA DDGI）；W6 `RefineDensity`；ProbeVolume + Lightmap | M22 / W6 / W10 |

@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
 
 add_executable(sample_01_clear main.cpp)
-target_link_libraries(sample_01_clear PRIVATE engine_app engine_d3d12)
+target_link_libraries(sample_01_clear PRIVATE engine_app)
+if(WIN32 AND TARGET engine_d3d12)
+  target_link_libraries(sample_01_clear PRIVATE engine_d3d12)
+endif()
 target_compile_features(sample_01_clear PRIVATE cxx_std_20)
 
 if(MSVC)

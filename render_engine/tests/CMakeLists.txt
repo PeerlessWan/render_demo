@@ -19,6 +19,7 @@ add_executable(engine_unit_tests
   unit/test_m33.cpp
   unit/test_m34.cpp
   unit/test_m35.cpp
+  unit/test_m36.cpp
   unit/test_product_wave_stubs.cpp
   unit/test_headless_integration.cpp
   unit/test_usable.cpp

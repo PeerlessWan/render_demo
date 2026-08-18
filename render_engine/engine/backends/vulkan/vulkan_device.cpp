@@ -4,12 +4,19 @@
 #include "engine/core/log.h"
 #include "engine/render/local_lights.h"
 
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
-
 #define VK_USE_PLATFORM_WIN32_KHR
+#elif defined(__linux__)
+#define VK_USE_PLATFORM_XLIB_KHR
+#if defined(ENGINE_HAS_X11)
+#include <X11/Xlib.h>
+#endif
+#include "engine/platform/linux/window_x11.h"
+#endif
 #include <vulkan/vulkan.h>
 
 #include <algorithm>
@@ -222,7 +229,17 @@ class VulkanDevice final : public IDevice {
     if (!desc.native_window || desc.width == 0 || desc.height == 0) {
       return Status::Fail(ErrorCode::InvalidArgument, "Invalid DeviceDesc for Vulkan");
     }
+#if defined(_WIN32)
     hwnd_ = static_cast<HWND>(desc.native_window);
+#elif defined(__linux__)
+    x11_ = static_cast<const platform::linux_x11::X11Native*>(desc.native_window);
+    if (!x11_ || !x11_->display || !x11_->window) {
+      return Status::Fail(ErrorCode::InvalidArgument,
+                          "Invalid DeviceDesc for Vulkan (need X11Native* with display+window)");
+    }
+#else
+    return Status::Fail(ErrorCode::Unavailable, "Vulkan surface platform unsupported");
+#endif
     width_ = desc.width;
     height_ = desc.height;
     adapter_index_ = desc.adapter_index;
@@ -251,10 +268,16 @@ class VulkanDevice final : public IDevice {
       return st;
     }
 
-    // No descriptor-indexing / bindless albedo path on VK yet — do not fake Feature.
-    // Capability "bindless" and optional "bindless_hot_path" stay unset; Probe fails.
-    LogInfo("Vulkan bindless SKIP (no descriptor-indexing albedo path; classic descriptors only)");
+    // Mega-W11: descriptor-indexing may be present, but albedo bindless hot path is not
+    // wired — do not set Feature "bindless" / "bindless_hot_path" (honest SKIP).
+    LogInfo(descriptor_indexing_available_
+                ? "Vulkan bindless SKIP W11 (descriptor-indexing present; no albedo path)"
+                : "Vulkan bindless SKIP W11 (no descriptor-indexing; classic descriptors only)");
+#if defined(_WIN32)
     LogInfo("Vulkan device ready (Win32 surface + swapchain clear)");
+#elif defined(__linux__)
+    LogInfo("Vulkan device ready (Xlib surface + swapchain clear)");
+#endif
     return Status::Ok();
   }
 
@@ -297,6 +320,7 @@ class VulkanDevice final : public IDevice {
     }
   }
 
+  [[nodiscard]] DeviceApiKind api_kind() const override { return DeviceApiKind::Vulkan; }
   [[nodiscard]] std::uint32_t width() const override { return width_; }
   [[nodiscard]] std::uint32_t height() const override { return height_; }
 
@@ -1302,19 +1326,29 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
 
-  // Mega-W9 C02: SPIR-V presence enables Feature path; Dispatch uses CPU Simulate fallback.
+  // Mega-W11 C02: SPIR-V required (else Unavailable SKIP). Validates module; Dispatch fills
+  // out_* via SimulateLightTileCullCs (same math as light_tile_cull_cs_vk / Assign).
   Status SetupLightTileCullCompute(const std::filesystem::path& cs_spirv) override {
+    tile_cull_ready_ = false;
     if (device_ == VK_NULL_HANDLE || cs_spirv.empty()) {
-      return Status::Fail(ErrorCode::Unavailable, "SetupLightTileCullCompute: invalid");
-    }
-    std::ifstream in(cs_spirv, std::ios::binary);
-    if (!in) {
-      tile_cull_ready_ = false;
       return Status::Fail(ErrorCode::Unavailable,
-                          "Light tile CS missing: " + cs_spirv.string());
+                          "SetupLightTileCullCompute SKIP: invalid device/path");
     }
+    auto bytes = ReadFileBytes(cs_spirv);
+    if (!bytes || bytes.value().empty() || (bytes.value().size() % 4) != 0) {
+      return Status::Fail(ErrorCode::Unavailable,
+                          "SetupLightTileCullCompute SKIP: no/invalid SPIR-V " +
+                              cs_spirv.string());
+    }
+    VkShaderModule mod = VK_NULL_HANDLE;
+    if (auto st = CreateShaderModule(bytes.value(), mod); !st) {
+      return Status::Fail(ErrorCode::Unavailable,
+                          "SetupLightTileCullCompute SKIP: SPIR-V module failed " +
+                              cs_spirv.string());
+    }
+    vkDestroyShaderModule(device_, mod, nullptr);
     tile_cull_ready_ = true;
-    LogInfo("Vulkan light tile cull ready (CPU SimulateLightTileCullCs fallback)");
+    LogInfo("Vulkan light tile cull ready (SPIR-V Ok; Dispatch fills via SimulateLightTileCullCs)");
     return Status::Ok();
   }
 
@@ -1325,8 +1359,10 @@ class VulkanDevice final : public IDevice {
     if (!tile_cull_ready_) {
       out_counts.fill(0);
       out_indices.fill(-1);
-      return Status::Fail(ErrorCode::Unavailable, "DispatchLightTileCull: not set up");
+      return Status::Fail(ErrorCode::Unavailable,
+                          "DispatchLightTileCull SKIP: not set up (no SPIR-V)");
     }
+    // Equivalent buffer fill to CS UAV outputs (parity with D3D12 Simulate path).
     engine::render::SimulateLightTileCullCs(view_proj, positions, ranges, out_counts, out_indices,
                                             eye, cam_forward);
     return Status::Ok();
@@ -1740,10 +1776,14 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
 
-  // Explicit SKIP — do not report bindless capability on Vulkan.
+  // Mega-W11: descriptor-indexing may exist, but albedo bindless path is not implemented —
+  // honest SKIP (do not set Feature bindless / bindless_hot_path). See VULKAN_PARITY.md.
   Status ProbeBindlessMinimalPath(std::uint32_t /*srv_heap_slot*/) override {
     return Status::Fail(
-        "ProbeBindlessMinimalPath: Vulkan bindless SKIP (no descriptor-indexing path)");
+        ErrorCode::Unavailable,
+        descriptor_indexing_available_
+            ? "ProbeBindlessMinimalPath: Vulkan bindless SKIP W11 (indexing present; no albedo path)"
+            : "ProbeBindlessMinimalPath: Vulkan bindless SKIP W11 (no descriptor-indexing)");
   }
 
   Status DrawLitCube(const LitDrawItem& item) override {
@@ -3707,7 +3747,13 @@ class VulkanDevice final : public IDevice {
     app.engineVersion = VK_MAKE_VERSION(0, 1, 0);
     app.apiVersion = VK_API_VERSION_1_1;
 
+#if defined(_WIN32)
     const char* exts[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
+#elif defined(__linux__)
+    const char* exts[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_XLIB_SURFACE_EXTENSION_NAME};
+#else
+    const char* exts[] = {VK_KHR_SURFACE_EXTENSION_NAME};
+#endif
     const char* layers[] = {"VK_LAYER_KHRONOS_validation"};
 
     VkInstanceCreateInfo ci{};
@@ -3722,7 +3768,7 @@ class VulkanDevice final : public IDevice {
 
     VkResult r = vkCreateInstance(&ci, nullptr, &instance_);
     if (r != VK_SUCCESS && enable_validation_) {
-      LogWarn("Vulkan validation layers unavailable �?retry without");
+      LogWarn("Vulkan validation layers unavailable — retry without");
       ci.enabledLayerCount = 0;
       ci.ppEnabledLayerNames = nullptr;
       r = vkCreateInstance(&ci, nullptr, &instance_);
@@ -3733,7 +3779,36 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
 
+#if defined(__linux__)
+  // Mega-W11: VK_KHR_xlib_surface helper (callable from CreateSurface / tests).
+  static Status TryCreateXlibSurface(VkInstance instance, void* display, void* window_xid,
+                                     VkSurfaceKHR* out_surface) {
+    if (!instance || !display || !window_xid || !out_surface) {
+      return Status::Fail(ErrorCode::InvalidArgument, "TryCreateXlibSurface: null arg");
+    }
+#if defined(ENGINE_HAS_X11)
+    VkXlibSurfaceCreateInfoKHR ci{};
+    ci.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
+    ci.dpy = static_cast<::Display*>(display);
+    ci.window = static_cast<::Window>(reinterpret_cast<std::uintptr_t>(window_xid));
+    const VkResult r = vkCreateXlibSurfaceKHR(instance, &ci, nullptr, out_surface);
+    if (r != VK_SUCCESS) {
+      return Status::Fail("vkCreateXlibSurfaceKHR failed: " + VkErr(r));
+    }
+    return Status::Ok("xlib-surface");
+#else
+    (void)instance;
+    (void)display;
+    (void)window_xid;
+    (void)out_surface;
+    return Status::Fail(ErrorCode::Unavailable,
+                        "TryCreateXlibSurface Unavailable: ENGINE_HAS_X11 off");
+#endif
+  }
+#endif
+
   Status CreateSurface() {
+#if defined(_WIN32)
     VkWin32SurfaceCreateInfoKHR ci{};
     ci.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
     ci.hinstance = GetModuleHandleW(nullptr);
@@ -3743,6 +3818,11 @@ class VulkanDevice final : public IDevice {
       return Status::Fail("vkCreateWin32SurfaceKHR failed: " + VkErr(r));
     }
     return Status::Ok();
+#elif defined(__linux__)
+    return TryCreateXlibSurface(instance_, x11_->display, x11_->window, &surface_);
+#else
+    return Status::Fail(ErrorCode::Unavailable, "CreateSurface: unsupported platform");
+#endif
   }
 
   Status PickPhysicalDevice() {
@@ -3887,6 +3967,22 @@ class VulkanDevice final : public IDevice {
       qci.queueCount = 1;
       qci.pQueuePriorities = &priority;
       qcis.push_back(qci);
+    }
+
+    // Probe descriptor-indexing (capability doc only; Feature bindless stays unset / SKIP).
+    descriptor_indexing_available_ = false;
+    {
+      uint32_t ext_count = 0;
+      vkEnumerateDeviceExtensionProperties(physical_, nullptr, &ext_count, nullptr);
+      std::vector<VkExtensionProperties> dexts(ext_count);
+      vkEnumerateDeviceExtensionProperties(physical_, nullptr, &ext_count, dexts.data());
+      for (const auto& e : dexts) {
+        if (std::strcmp(e.extensionName, "VK_EXT_descriptor_indexing") == 0 ||
+            std::strcmp(e.extensionName, VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME) == 0) {
+          descriptor_indexing_available_ = true;
+          break;
+        }
+      }
     }
 
     const char* exts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
@@ -6367,7 +6463,11 @@ class VulkanDevice final : public IDevice {
     DestroyPresentRenderPasses();
   }
 
+#if defined(_WIN32)
   HWND hwnd_ = nullptr;
+#elif defined(__linux__)
+  const platform::linux_x11::X11Native* x11_ = nullptr;
+#endif
   std::uint32_t width_ = 0;
   std::uint32_t height_ = 0;
 
@@ -6430,6 +6530,7 @@ class VulkanDevice final : public IDevice {
 
   bool cull_ready_ = false;
   bool tile_cull_ready_ = false;
+  bool descriptor_indexing_available_ = false;
   VkDescriptorSetLayout cull_set_layout_ = VK_NULL_HANDLE;
   VkPipelineLayout cull_pipeline_layout_ = VK_NULL_HANDLE;
   VkPipeline cull_pipeline_ = VK_NULL_HANDLE;

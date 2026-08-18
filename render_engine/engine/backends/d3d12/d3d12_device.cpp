@@ -244,6 +244,7 @@ class D3D12Device final : public IDevice {
   }
 
   [[nodiscard]] bool is_headless() const override { return gpu_headless_; }
+  [[nodiscard]] DeviceApiKind api_kind() const override { return DeviceApiKind::D3D12; }
 
   void SetVSync(bool enabled) override { vsync_ = enabled; }
   [[nodiscard]] bool vsync() const override { return vsync_; }

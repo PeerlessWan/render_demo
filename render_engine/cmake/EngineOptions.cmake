@@ -81,33 +81,85 @@ if(ENGINE_WITH_JOLT AND NOT EXISTS "${ENGINE_JOLT_DIR}/Jolt/Jolt.h")
   message(FATAL_ERROR "ENGINE_WITH_JOLT=ON but Jolt not found at ${ENGINE_JOLT_DIR} (see third_party/JoltPhysics/README.engine.md)")
 endif()
 
-# Vulkan (Windows): default ON when VULKAN_SDK is present.
+# Vulkan: Win32 SDK layout (Include/ + Lib/vulkan-1.lib) or Linux system / SDK.
 set(ENGINE_VULKAN_SDK "$ENV{VULKAN_SDK}" CACHE PATH "Vulkan SDK root (from VULKAN_SDK env)")
+set(ENGINE_VULKAN_INCLUDE_DIR "" CACHE PATH "Vulkan include dir (vulkan/vulkan.h parent)")
+set(ENGINE_VULKAN_LIBRARY "" CACHE FILEPATH "Vulkan link library (vulkan-1.lib or libvulkan)")
+
+set(_engine_vk_header "")
 if(ENGINE_VULKAN_SDK AND EXISTS "${ENGINE_VULKAN_SDK}/Include/vulkan/vulkan.h")
+  set(_engine_vk_header "${ENGINE_VULKAN_SDK}/Include/vulkan/vulkan.h")
+  if(NOT ENGINE_VULKAN_INCLUDE_DIR)
+    set(ENGINE_VULKAN_INCLUDE_DIR "${ENGINE_VULKAN_SDK}/Include" CACHE PATH "Vulkan include dir" FORCE)
+  endif()
+elseif(ENGINE_VULKAN_SDK AND EXISTS "${ENGINE_VULKAN_SDK}/include/vulkan/vulkan.h")
+  set(_engine_vk_header "${ENGINE_VULKAN_SDK}/include/vulkan/vulkan.h")
+  if(NOT ENGINE_VULKAN_INCLUDE_DIR)
+    set(ENGINE_VULKAN_INCLUDE_DIR "${ENGINE_VULKAN_SDK}/include" CACHE PATH "Vulkan include dir" FORCE)
+  endif()
+elseif(EXISTS "/usr/include/vulkan/vulkan.h")
+  set(_engine_vk_header "/usr/include/vulkan/vulkan.h")
+  if(NOT ENGINE_VULKAN_INCLUDE_DIR)
+    set(ENGINE_VULKAN_INCLUDE_DIR "/usr/include" CACHE PATH "Vulkan include dir" FORCE)
+  endif()
+  if(NOT ENGINE_VULKAN_SDK)
+    set(ENGINE_VULKAN_SDK "/usr" CACHE PATH "Vulkan SDK root (system)" FORCE)
+  endif()
+endif()
+
+if(_engine_vk_header)
   set(ENGINE_WITH_VULKAN_DEFAULT ON)
 else()
   set(ENGINE_WITH_VULKAN_DEFAULT OFF)
 endif()
-option(ENGINE_WITH_VULKAN "Build real Vulkan IDevice (Win32 clear + lit cube)" ${ENGINE_WITH_VULKAN_DEFAULT})
+# Mega-W11: on Linux prefer Vulkan when headers are present (D3D12 is skipped).
+if(UNIX AND NOT APPLE AND _engine_vk_header)
+  set(ENGINE_WITH_VULKAN_DEFAULT ON)
+endif()
+option(ENGINE_WITH_VULKAN "Build real Vulkan IDevice (Win32/X11 clear + lit cube)" ${ENGINE_WITH_VULKAN_DEFAULT})
 if(ENGINE_WITH_VULKAN)
-  if(NOT ENGINE_VULKAN_SDK OR NOT EXISTS "${ENGINE_VULKAN_SDK}/Include/vulkan/vulkan.h")
-    message(FATAL_ERROR "ENGINE_WITH_VULKAN=ON but Vulkan headers not found (set VULKAN_SDK / ENGINE_VULKAN_SDK)")
+  if(NOT _engine_vk_header)
+    message(FATAL_ERROR "ENGINE_WITH_VULKAN=ON but Vulkan headers not found "
+                        "(set VULKAN_SDK / ENGINE_VULKAN_SDK, or install libvulkan-dev)")
   endif()
-  message(STATUS "Vulkan enabled: ${ENGINE_VULKAN_SDK}")
+  if(NOT ENGINE_VULKAN_LIBRARY)
+    if(WIN32)
+      set(ENGINE_VULKAN_LIBRARY "${ENGINE_VULKAN_SDK}/Lib/vulkan-1.lib" CACHE FILEPATH "Vulkan link library" FORCE)
+    else()
+      find_library(ENGINE_VULKAN_LIBRARY NAMES vulkan
+        PATHS
+          "${ENGINE_VULKAN_SDK}/Lib"
+          "${ENGINE_VULKAN_SDK}/lib"
+          /usr/lib
+          /usr/lib/x86_64-linux-gnu
+        NO_DEFAULT_PATH)
+      if(NOT ENGINE_VULKAN_LIBRARY)
+        find_library(ENGINE_VULKAN_LIBRARY NAMES vulkan)
+      endif()
+      if(NOT ENGINE_VULKAN_LIBRARY)
+        message(FATAL_ERROR "ENGINE_WITH_VULKAN=ON but libvulkan not found")
+      endif()
+      set(ENGINE_VULKAN_LIBRARY "${ENGINE_VULKAN_LIBRARY}" CACHE FILEPATH "Vulkan link library" FORCE)
+    endif()
+  endif()
+  message(STATUS "Vulkan enabled: include=${ENGINE_VULKAN_INCLUDE_DIR} lib=${ENGINE_VULKAN_LIBRARY}")
 endif()
 
-# M18 / W5: opt-in flag documenting Linux Vulkan intent. Does not install SDKs or
-# implement X11; full Linux compile still needs platform/linux + surface work.
-option(ENGINE_LINUX_VK "Declare Linux+Vulkan (X11) build intent; see docs/LINUX.md" OFF)
+# Mega-W11 / M18: Linux+Vulkan+X11 intent. Wayland remains postponed (docs/LINUX.md).
+if(UNIX AND NOT APPLE)
+  set(ENGINE_LINUX_VK_DEFAULT ON)
+else()
+  set(ENGINE_LINUX_VK_DEFAULT OFF)
+endif()
+option(ENGINE_LINUX_VK "Linux+Vulkan (X11) build path; see docs/LINUX.md" ${ENGINE_LINUX_VK_DEFAULT})
 if(ENGINE_LINUX_VK)
   message(STATUS "ENGINE_LINUX_VK=ON: Linux Vulkan path (docs/LINUX.md). "
-                 "X11 window path in platform/linux (ENGINE_HAS_X11); Wayland postponed. "
-                 "Windows-only tree may not compile on Linux until D3D12/Win32 are gated.")
+                 "X11 window path (ENGINE_HAS_X11); skip D3D12; Wayland postponed.")
   if(NOT UNIX OR APPLE)
     message(STATUS "ENGINE_LINUX_VK: host is not Linux; flag is documentation/preview only")
   endif()
   if(NOT ENGINE_WITH_VULKAN)
-    message(WARNING "ENGINE_LINUX_VK=ON but ENGINE_WITH_VULKAN=OFF; enable Vulkan SDK for a real VK device")
+    message(WARNING "ENGINE_LINUX_VK=ON but ENGINE_WITH_VULKAN=OFF; enable Vulkan for a real VK device")
   endif()
 endif()
 

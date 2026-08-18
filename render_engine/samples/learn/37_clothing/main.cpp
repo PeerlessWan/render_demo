@@ -1,10 +1,17 @@
+#include "engine/assets/character_asset.h"
+#include "engine/assets/image_loader.h"
 #include "engine/clothing/garment_cloth.h"
 #include "engine/core/log.h"
 #include "engine/physics/i_physics_world.h"
 
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <vector>
+
+#ifndef ENGINE_CONTENT_DIR_A
+#error "ENGINE_CONTENT_DIR_A must be set by CMake"
+#endif
 
 namespace {
 
@@ -34,7 +41,17 @@ int main(int argc, char** argv) {
   int headless_frames = 0;
   ParseHeadless(argc, argv, headless_frames);
 
-  engine::LogInfo("Learn 37 — clothing / demo garment SoftBody (ADR 0037)");
+  engine::LogInfo("Learn 37 — clothing / demo garment SoftBody (ADR 0037 / W11 character)");
+
+  auto images = engine::assets::CreateDefaultImageLoader();
+  const auto characters_dir =
+      std::filesystem::path(ENGINE_CONTENT_DIR_A) / "characters";
+  const auto character = engine::assets::CharacterAsset::TryLoadFromCharactersDirOrCapsule(
+      characters_dir, *images);
+  engine::LogInfo(std::string("CharacterAsset: ") + character.note +
+                  " verts=" + std::to_string(character.mesh.vertices.size()) +
+                  " fallback=" + (character.used_capsule_fallback ? "true" : "false") +
+                  " skin=" + (character.has_skin ? "true" : "false"));
 
   engine::clothing::GarmentMeshDesc cape_desc;
   cape_desc.kind = engine::clothing::GarmentKind::Cape;

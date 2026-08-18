@@ -24,7 +24,13 @@ Mat4 Camera::view_matrix() const {
 }
 
 Mat4 Camera::proj_matrix(float aspect) const {
-  return Mat4::Perspective(fovy_rad, aspect <= 0.f ? 1.f : aspect, z_near, z_far);
+  const float a = aspect <= 0.f ? 1.f : aspect;
+  if (ortho) {
+    const float hh = std::max(ortho_height, 0.25f) * 0.5f;
+    const float hw = hh * a;
+    return Mat4::Orthographic(-hw, hw, -hh, hh, z_near, z_far);
+  }
+  return Mat4::Perspective(fovy_rad, a, z_near, z_far);
 }
 
 Mat4 Camera::view_proj_matrix(float aspect) const { return proj_matrix(aspect) * view_matrix(); }

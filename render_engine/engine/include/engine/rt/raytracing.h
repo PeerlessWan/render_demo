@@ -65,8 +65,9 @@ Status TryBuildCubeBlasTlasAndDispatchRays(
 // (not fullscreen production RT). Ok when demo/AS path ran; factor in (0,1].
 [[nodiscard]] Status TryComposeDxrShadowOverlay(float& out_shadow_factor);
 
-// Mega-W9: VK_KHR_ray_tracing_pipeline / ray_query probe stub (no fullscreen TraceRays).
-// Ok when extension present; else Unavailable SKIP.
+// Mega-W9/W11: when VK_KHR_ray_tracing_pipeline is present, resolve vkCmdTraceRaysKHR
+// (real TraceRays entrypoint). Ok when entrypoint ready; else Unavailable SKIP.
+// Does not run a fullscreen production RT frame (no SBT/raygen product path).
 [[nodiscard]] Status TryVkTraceRaysDemoStub();
 
 // Mega-W10: half-resolution soft-shadow Feature stub (compose factor only; not production RT).

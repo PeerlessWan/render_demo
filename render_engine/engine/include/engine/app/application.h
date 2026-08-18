@@ -70,6 +70,8 @@ class Application {
   // When false, skip WASD/QE fly move (possess character mode); look/zoom still apply.
   void set_fly_locomotion_enabled(bool v) { fly_locomotion_enabled_ = v; }
   [[nodiscard]] bool fly_locomotion_enabled() const { return fly_locomotion_enabled_; }
+  // When true, WASD fly only while look-drag (RMB/LMB) is held — editor-style.
+  void set_fly_requires_look(bool v) { fly_requires_look_ = v; }
   void set_look_sensitivity(float rad_per_pixel) { look_sensitivity_ = rad_per_pixel; }
   void set_zoom_sensitivity(float units_per_notch) { zoom_sensitivity_ = units_per_notch; }
   void set_pan_sensitivity(float units_per_pixel) { pan_sensitivity_ = units_per_pixel; }
@@ -121,6 +123,7 @@ class Application {
   bool ui_want_capture_ = false;
   float move_speed_ = 5.5f;
   bool fly_locomotion_enabled_ = true;
+  bool fly_requires_look_ = false;
   float look_sensitivity_ = 0.0024f;
   float zoom_sensitivity_ = 0.55f;
   float pan_sensitivity_ = 0.0045f;

@@ -218,11 +218,15 @@ struct DebugLineVertex {
   float r = 1, g = 1, b = 1, a = 1;
 };
 
+// Mega-W11: SkinOnDevice / backend-specific Feature paths route by live device kind.
+enum class DeviceApiKind { Headless, D3D12, Vulkan };
+
 class IDevice {
  public:
   virtual ~IDevice() = default;
 
   [[nodiscard]] virtual bool is_headless() const { return false; }
+  [[nodiscard]] virtual DeviceApiKind api_kind() const { return DeviceApiKind::Headless; }
   [[nodiscard]] virtual std::uint32_t width() const = 0;
   [[nodiscard]] virtual std::uint32_t height() const = 0;
 
@@ -366,9 +370,9 @@ class IDevice {
     return Status::Ok();
   }
 
-  // Mega-W10 C02: light → tile×Z cull CS (8×4×4, ≤8/cluster). Default Unavailable until Setup.
-  // D3D12/VK: Setup succeeds when CS bytecode exists; Dispatch may fill via CPU
-  // SimulateLightTileCullCs fallback (same math as AssignLightsToTiles) until full UAV path.
+  // Mega-W10/W11 C02: light → tile×Z cull CS (8×4×4, ≤8/cluster). Default Unavailable until Setup.
+  // D3D12/VK: Setup succeeds when CS bytecode/SPIR-V exists (else Unavailable SKIP);
+  // Dispatch fills out_* via CS and/or CPU SimulateLightTileCullCs (same math as Assign).
   virtual Status SetupLightTileCullCompute(const std::filesystem::path& /*cs_path*/) {
     return Status::Fail(ErrorCode::Unavailable, "SetupLightTileCullCompute not available");
   }
@@ -404,7 +408,7 @@ class IDevice {
 Result<std::unique_ptr<IDevice>> CreateD3D12Device(const DeviceDesc& desc);
 Result<std::unique_ptr<IDevice>> CreateHeadlessDevice(const DeviceDesc& desc);
 std::vector<GpuAdapterInfo> EnumerateD3D12Adapters();
-// Real Vulkan path when ENGINE_WITH_VULKAN=1 (Win32 clear + optional lit cube SPIR-V).
+// Real Vulkan path when ENGINE_WITH_VULKAN=1 (Win32 / Xlib clear + optional lit cube SPIR-V).
 Result<std::unique_ptr<IDevice>> CreateVulkanDevice(const DeviceDesc& desc);
 #if defined(ENGINE_WITH_VULKAN) && ENGINE_WITH_VULKAN
 std::vector<GpuAdapterInfo> EnumerateVulkanAdapters();

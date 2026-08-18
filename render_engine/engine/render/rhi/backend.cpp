@@ -2,9 +2,19 @@
 
 namespace engine::rhi {
 
+#if !defined(_WIN32)
+Result<std::unique_ptr<IDevice>> CreateD3D12Device(const DeviceDesc&) {
+  return Result<std::unique_ptr<IDevice>>::Fail(
+      Status::Fail(ErrorCode::Unavailable, "D3D12 unavailable on non-Windows (use --backend=vulkan)"));
+}
+
+std::vector<GpuAdapterInfo> EnumerateD3D12Adapters() { return {}; }
+#endif
+
 Result<std::unique_ptr<IDevice>> CreateDevice(Backend backend, const DeviceDesc& desc) {
   switch (backend) {
     case Backend::D3D12:
+#if defined(_WIN32)
       // Prefer real GPU offscreen when requested (CI regression / automated readback).
       if (desc.gpu_headless) {
         return CreateD3D12Device(desc);
@@ -13,8 +23,14 @@ Result<std::unique_ptr<IDevice>> CreateDevice(Backend backend, const DeviceDesc&
         return CreateHeadlessDevice(desc);
       }
       return CreateD3D12Device(desc);
+#else
+      (void)desc;
+      return Result<std::unique_ptr<IDevice>>::Fail(
+          Status::Fail(ErrorCode::Unavailable,
+                       "D3D12 backend not available on this platform (use --backend=vulkan)"));
+#endif
     case Backend::Vulkan:
-      // CPU stub: unit tests / --headless without GPU. gpu_headless wants real Vk + HWND.
+      // CPU stub: unit tests / --headless without GPU. gpu_headless wants real Vk + HWND/X11.
       if (desc.headless && !desc.gpu_headless) {
         return CreateHeadlessDevice(desc);
       }

@@ -1,6 +1,7 @@
 #include "engine/app/application.h"
 
 #include "engine/animation/skeleton.h"
+#include "engine/assets/character_asset.h"
 #include "engine/assets/gltf_loader.h"
 #include "engine/assets/image_loader.h"
 #include "engine/assets/asset_hot_reload.h"
@@ -313,9 +314,9 @@ int main(int argc, char** argv) {
   {
     auto helmet = a.world().CreateNode("helmet");
     engine::scene::Transform t;
+    // Mesh already includes glTF node world xform (see LoadGltfMeshFile).
     t.position = {0.f, 1.05f, 0.4f};
-    t.scale = {1.15f, 1.15f, 1.15f};
-    // Slight turn for a better default silhouette.
+    t.scale = {1.f, 1.f, 1.f};
     t.rotation = engine::Quat::FromEulerYxz(0.35f, 0.f, 0.f);
     a.world().set_local_transform(helmet, t);
     engine::scene::MeshRenderer mesh;
@@ -698,7 +699,9 @@ int main(int argc, char** argv) {
           0.35f * std::sin(nx * 2.1f) * std::cos(nz * 1.7f);
     }
   }
-  const engine::Vec3 terrain_origin{-22.f, -0.35f, -22.f};
+  // Keep the demo heightmap clear of the ±12 brick ground so vegetation does not
+  // pile onto the main plate (reads as a broken/messy D3D12 scene).
+  const engine::Vec3 terrain_origin{-40.f, -0.35f, -40.f};
   const auto terrain_mesh = engine::terrain::BuildTerrainMesh(heightmap, terrain_origin);
   if (!terrain_mesh.indices.empty()) {
     std::vector<engine::rhi::LitVertex> tverts(terrain_mesh.positions.size() / 3);
@@ -717,7 +720,9 @@ int main(int argc, char** argv) {
       tm.mesh_id = "terrain";
       tm.never_cull = true;
       // Keep terrain patch away from the main ±12 ground plane to avoid dual-floor confusion.
-      tm.local_bounds = {{-22.f, -1.5f, -22.f}, {-22.f + 16.f * 0.75f, 2.f, -22.f + 16.f * 0.75f}};
+      tm.local_bounds = {{terrain_origin.x, -1.5f, terrain_origin.z},
+                         {terrain_origin.x + 16.f * 0.75f, 2.f,
+                          terrain_origin.z + 16.f * 0.75f}};
       a.world().set_mesh(terrain_node, tm);
       engine::LogInfo("Terrain heightmap mesh uploaded (slot2)");
     }
@@ -749,6 +754,7 @@ int main(int argc, char** argv) {
     }
   }
   // Scatter at High density; QualityTier caps how many stay visible.
+  // Default density is Low so the main plate stays readable; raise via F1 quality.
   const auto veg = engine::terrain::ScatterVegetation(heightmap, kWaterLevel, 2);
   std::vector<engine::scene::NodeId> veg_nodes;
   constexpr std::size_t kVegCapHigh = 48;
@@ -776,7 +782,7 @@ int main(int argc, char** argv) {
         return 24;
     }
   };
-  std::size_t veg_density_cap = veg_cap_for_tier(engine::render::QualityTier::Medium);
+  std::size_t veg_density_cap = veg_cap_for_tier(engine::render::QualityTier::Low);
   engine::LogInfo("Vegetation instances=" + std::to_string(veg_nodes.size()) +
                   " density_cap=" + std::to_string(veg_density_cap));
 
@@ -864,10 +870,12 @@ int main(int argc, char** argv) {
   for (int i = 0; i < kScaleInstances; ++i) {
     const int x = i % 32;
     const int z = i / 32;
+    // Keep the stress grid off the ±12 brick plate so the default view stays readable.
     scale_worlds[static_cast<std::size_t>(i)] = engine::Mat4::TRS(
-        {static_cast<float>(x) * 0.85f - 13.f, 0.35f, static_cast<float>(z) * 0.85f - 13.f}, {},
+        {static_cast<float>(x) * 0.85f - 13.f, 0.35f, static_cast<float>(z) * 0.85f - 40.f}, {},
         {0.25f, 0.7f, 0.25f});
   }
+  bool show_scale_instances = false;
   engine::render::OcclusionBuffer scale_occ;
   scale_occ.Configure(64, 64);
   // Soft HiZ: far-plane default (no occluders) so frustum cull still runs.
@@ -948,10 +956,24 @@ int main(int argc, char** argv) {
 
   bool panel_open = true;
   // Mega-W10: default free fly; F toggles possess walk/jump.
+  // Mega-W11: prefer content/characters/*.glb, else capsule mesh.
   engine::gameplay::PossessController possess;
   possess.possess_character = false;
   possess.position = {0.f, 0.f, 0.f};
   possess.SetSampleHeight([](float /*x*/, float /*z*/) { return 0.f; });
+  engine::assets::CharacterLoadResult possess_character_mesh;
+  {
+    auto char_images = engine::assets::CreateDefaultImageLoader();
+    const auto characters_dir =
+        std::filesystem::path(ENGINE_CONTENT_DIR_A) / "characters";
+    possess_character_mesh = engine::assets::CharacterAsset::TryLoadFromCharactersDirOrCapsule(
+        characters_dir, *char_images, possess.params.capsule_radius,
+        possess.params.capsule_height);
+    engine::LogInfo(std::string("Possess CharacterAsset: ") + possess_character_mesh.note +
+                    " verts=" + std::to_string(possess_character_mesh.mesh.vertices.size()) +
+                    " fallback=" +
+                    (possess_character_mesh.used_capsule_fallback ? "true" : "false"));
+  }
   engine::clothing::GarmentCloth cape;
   {
     engine::clothing::GarmentMeshDesc cape_desc;
@@ -971,8 +993,10 @@ int main(int argc, char** argv) {
   if (PRIMARYLANGID(LANGIDFROMLCID(GetUserDefaultLCID())) == LANG_ENGLISH) {
     ui_lang_i = static_cast<int>(SandboxUiLang::En);
   }
-  bool show_grid = true;
-  bool show_axes = true;
+  bool show_grid = false;
+  bool show_axes = false;
+  bool show_physics_debug = false;
+  bool show_world_text_debug = false;
   bool f1_was_down = false;
   bool f2_was_down = false;
   bool f3_was_down = false;
@@ -1152,6 +1176,34 @@ int main(int argc, char** argv) {
         app_ref.debug_draw().AddLine(cape.positions[i - 1], cape.positions[i],
                                      {0.85f, 0.55f, 0.2f, 1.f});
       }
+      // Mega-W11: preview loaded glTF / capsule character at possess feet.
+      {
+        const auto& cm = possess_character_mesh.mesh;
+        const engine::Vec3 origin = possess.position;
+        const std::size_t tri_budget =
+            (std::min)(cm.indices.size() / 3, static_cast<std::size_t>(48));
+        for (std::size_t t = 0; t < tri_budget; ++t) {
+          const auto i0 = cm.indices[t * 3 + 0];
+          const auto i1 = cm.indices[t * 3 + 1];
+          const auto i2 = cm.indices[t * 3 + 2];
+          if (i0 >= cm.vertices.size() || i1 >= cm.vertices.size() ||
+              i2 >= cm.vertices.size()) {
+            continue;
+          }
+          const engine::Vec3 a{cm.vertices[i0].px + origin.x, cm.vertices[i0].py + origin.y,
+                               cm.vertices[i0].pz + origin.z};
+          const engine::Vec3 b{cm.vertices[i1].px + origin.x, cm.vertices[i1].py + origin.y,
+                               cm.vertices[i1].pz + origin.z};
+          const engine::Vec3 c{cm.vertices[i2].px + origin.x, cm.vertices[i2].py + origin.y,
+                               cm.vertices[i2].pz + origin.z};
+          const engine::ColorRgba tint = possess_character_mesh.used_capsule_fallback
+                                            ? engine::ColorRgba{0.45f, 0.75f, 0.95f, 1.f}
+                                            : engine::ColorRgba{0.55f, 0.9f, 0.55f, 1.f};
+          app_ref.debug_draw().AddLine(a, b, tint);
+          app_ref.debug_draw().AddLine(b, c, tint);
+          app_ref.debug_draw().AddLine(c, a, tint);
+        }
+      }
     } else {
       app_ref.set_fly_locomotion_enabled(true);
     }
@@ -1217,7 +1269,7 @@ int main(int argc, char** argv) {
       dbg.AddAxes(2.5f, 0.05f);
     }
     // C14/W7: world BMFont billboard wireframe (atlas glyph boxes facing camera).
-    {
+    if (show_world_text_debug) {
       engine::render2d::BmFontAtlas atlas;
       atlas.line_height = 16;
       atlas.glyphs['W'] = {0, 0, 10, 14, 11};
@@ -1240,33 +1292,35 @@ int main(int argc, char** argv) {
         dbg.AddLine(v3, v0, tc);
       }
     }
-    for (int bi = 0; bi < physics->body_count(); ++bi) {
-      const auto p = physics->body_position(bi);
-      const auto he = physics->body_half_extents(bi);
-      engine::Aabb box;
-      box.min = {p.x - he.x, p.y - he.y, p.z - he.z};
-      box.max = {p.x + he.x, p.y + he.y, p.z + he.z};
-      dbg.AddAabb(box, {0.2f, 0.95f, 0.35f, 1.f});
-    }
-    // SoftBody wireframe: read vertices from physics, draw face edges (interactive only).
-    if (!gpu_headless_assert && soft_id >= 0 &&
-        physics->SoftBodyGetVertices(soft_id, soft_verts)) {
-      const engine::ColorRgba soft_color{0.95f, 0.45f, 0.2f, 1.f};
-      if (!soft_indices.empty()) {
-        for (std::size_t i = 0; i + 2 < soft_indices.size(); i += 3) {
-          const auto i0 = soft_indices[i];
-          const auto i1 = soft_indices[i + 1];
-          const auto i2 = soft_indices[i + 2];
-          if (i0 >= soft_verts.size() || i1 >= soft_verts.size() || i2 >= soft_verts.size()) {
-            continue;
+    if (show_physics_debug) {
+      for (int bi = 0; bi < physics->body_count(); ++bi) {
+        const auto p = physics->body_position(bi);
+        const auto he = physics->body_half_extents(bi);
+        engine::Aabb box;
+        box.min = {p.x - he.x, p.y - he.y, p.z - he.z};
+        box.max = {p.x + he.x, p.y + he.y, p.z + he.z};
+        dbg.AddAabb(box, {0.2f, 0.95f, 0.35f, 1.f});
+      }
+      // SoftBody wireframe: read vertices from physics, draw face edges (interactive only).
+      if (!gpu_headless_assert && soft_id >= 0 &&
+          physics->SoftBodyGetVertices(soft_id, soft_verts)) {
+        const engine::ColorRgba soft_color{0.95f, 0.45f, 0.2f, 1.f};
+        if (!soft_indices.empty()) {
+          for (std::size_t i = 0; i + 2 < soft_indices.size(); i += 3) {
+            const auto i0 = soft_indices[i];
+            const auto i1 = soft_indices[i + 1];
+            const auto i2 = soft_indices[i + 2];
+            if (i0 >= soft_verts.size() || i1 >= soft_verts.size() || i2 >= soft_verts.size()) {
+              continue;
+            }
+            dbg.AddLine(soft_verts[i0], soft_verts[i1], soft_color);
+            dbg.AddLine(soft_verts[i1], soft_verts[i2], soft_color);
+            dbg.AddLine(soft_verts[i2], soft_verts[i0], soft_color);
           }
-          dbg.AddLine(soft_verts[i0], soft_verts[i1], soft_color);
-          dbg.AddLine(soft_verts[i1], soft_verts[i2], soft_color);
-          dbg.AddLine(soft_verts[i2], soft_verts[i0], soft_color);
-        }
-      } else {
-        for (std::size_t i = 0; i + 1 < soft_verts.size(); ++i) {
-          dbg.AddLine(soft_verts[i], soft_verts[i + 1], soft_color);
+        } else {
+          for (std::size_t i = 0; i + 1 < soft_verts.size(); ++i) {
+            dbg.AddLine(soft_verts[i], soft_verts[i + 1], soft_color);
+          }
         }
       }
     }
@@ -1337,6 +1391,9 @@ int main(int argc, char** argv) {
           imgui.Separator();
           imgui.Checkbox(Su.show_grid, &show_grid);
           imgui.Checkbox(Su.show_axes, &show_axes);
+          imgui.Checkbox("Physics debug (AABB/SoftBody)", &show_physics_debug);
+          imgui.Checkbox("World text debug (W7)", &show_world_text_debug);
+          imgui.Checkbox("Scale instances (1024)", &show_scale_instances);
           if (imgui.Checkbox("Possess character (F)", &possess.possess_character)) {
             app_ref.set_fly_locomotion_enabled(!possess.possess_character);
           }
@@ -1699,7 +1756,7 @@ int main(int argc, char** argv) {
 
     profiler.Begin("DrawFrame");
     // Scale path BEFORE DrawFrame so instancing runs in OpaqueLit (pre-post).
-    if (!gpu_headless_assert) {
+    if (!gpu_headless_assert && show_scale_instances) {
       std::vector<engine::Mat4> visible;
       engine::gpu_driven::IndirectDrawArgs iargs{};
       const auto scale_vp = scene.camera.view_proj_matrix(aspect);

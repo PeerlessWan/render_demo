@@ -5,7 +5,7 @@
 > 定位：**Windows（D3D12 + Vulkan）/ Linux（Vulkan）通用 2D·3D 渲染引擎**  
 > 范围分段：M1–M16（既有能力）+ M17–M19（后端/Linux/网络）+ **M20–M25 引擎缺口补齐（P2）**。  
 > **当前迭代看板**（Doing / Undo / Todo）：[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)  
-> **引擎状态：Mega-W10 已收口**（[ADR 0037](learn/adr/0037-mega-w10-deepen.md)）。Mega-W9 tip `5752a0e`。  
+> **引擎状态：Mega-W11 已收口**（拉齐各端 / 引擎 only；[ADR 0038](learn/adr/0038-mega-w11-parity.md)；**未改** game_kit/editor）。Mega-W10 见 [ADR 0037](learn/adr/0037-mega-w10-deepen.md)。  
 > **游戏可用 ≠ 渲染可用**：工作区可玩产品水位见 **§1.9**（主缺口 `game_kit` GK0–GK3）。
 
 ## 1. 总验收目标

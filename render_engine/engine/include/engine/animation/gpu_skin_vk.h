@@ -8,8 +8,9 @@
 
 namespace engine::animation {
 
-// Mega-W8 / C12: ephemeral Vulkan device + skin_cs_vk.spv compute.
-// Feature-gated ("gpu_skinning"). When ENGINE_WITH_VULKAN=0 → Unavailable (SKIP).
+// Mega-W8/W11 / C12: ephemeral Vulkan device + skin_cs_vk.cs.spv compute.
+// Feature-gated ("gpu_skinning"). ENGINE_WITH_VULKAN=0 / 无 SPIR-V → Unavailable (SKIP).
+// Used by SkinOnDevice when IDevice::api_kind() == Vulkan (or Headless fallback).
 // cs_spirv empty → resolve ENGINE_SHADER_DIR_A / skin_cs_vk.cs.spv when defined.
 [[nodiscard]] bool TryDispatchGpuSkinVk(const std::vector<Vec3>& bind_positions,
                                         const SkinPose& pose, const std::vector<int>& bones4,

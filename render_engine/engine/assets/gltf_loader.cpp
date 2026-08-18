@@ -88,6 +88,19 @@ Result<GltfMeshAsset> LoadWithCgltf(const std::filesystem::path& path, const IIm
     return Result<GltfMeshAsset>::Fail("gltf has no mesh primitives");
   }
 
+  // Apply the first node that references meshes[0] (DamagedHelmet etc. store upright
+  // orientation on the node, not in POSITION). Falls back to identity.
+  cgltf_float node_world[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  bool have_node_xform = false;
+  for (cgltf_size ni = 0; ni < data->nodes_count; ++ni) {
+    const cgltf_node& node = data->nodes[ni];
+    if (node.mesh == &data->meshes[0]) {
+      cgltf_node_transform_world(&node, node_world);
+      have_node_xform = true;
+      break;
+    }
+  }
+
   const cgltf_primitive& prim = data->meshes[0].primitives[0];
   const cgltf_accessor* pos = nullptr;
   const cgltf_accessor* nrm = nullptr;
@@ -129,15 +142,26 @@ Result<GltfMeshAsset> LoadWithCgltf(const std::filesystem::path& path, const IIm
 
   GltfMeshAsset out;
   out.vertices.resize(static_cast<std::size_t>(pos->count));
+  // cgltf_node_transform_world is column-major, matching engine::Mat4.
+  Mat4 xform = Mat4::Identity();
+  if (have_node_xform) {
+    for (int i = 0; i < 16; ++i) {
+      xform.m[static_cast<std::size_t>(i)] = static_cast<float>(node_world[i]);
+    }
+  }
   for (std::size_t i = 0; i < out.vertices.size(); ++i) {
     MeshVertex v;
-    v.px = positions[i * 3 + 0];
-    v.py = positions[i * 3 + 1];
-    v.pz = positions[i * 3 + 2];
+    const Vec3 p = xform.TransformPoint(
+        Vec3{positions[i * 3 + 0], positions[i * 3 + 1], positions[i * 3 + 2]});
+    v.px = p.x;
+    v.py = p.y;
+    v.pz = p.z;
     if (i * 3 + 2 < normals.size()) {
-      v.nx = normals[i * 3 + 0];
-      v.ny = normals[i * 3 + 1];
-      v.nz = normals[i * 3 + 2];
+      const Vec3 n = Normalize(xform.TransformVector(
+          Vec3{normals[i * 3 + 0], normals[i * 3 + 1], normals[i * 3 + 2]}));
+      v.nx = n.x;
+      v.ny = n.y;
+      v.nz = n.z;
     }
     if (i * 2 + 1 < uvs.size()) {
       v.u = uvs[i * 2 + 0];
@@ -237,6 +261,7 @@ Result<GltfMeshAsset> LoadWithCgltf(const std::filesystem::path& path, const IIm
   cgltf_free(data);
   LogInfo("gltf mesh loaded: " + std::to_string(out.vertices.size()) + " verts, " +
           std::to_string(out.indices.size()) + " indices" +
+          (have_node_xform ? " (node world xform)" : " (raw mesh)") +
           (out.has_skin ? (", skin joints=" + std::to_string(out.skin.joints.size())) : ""));
   return Result<GltfMeshAsset>::Ok(std::move(out));
 }

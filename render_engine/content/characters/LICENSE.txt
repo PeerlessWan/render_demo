@@ -1,0 +1,14 @@
+CC0 1.0 Universal (CC0 1.0) Public Domain Dedication
+
+Bundled file: kenney_blocky_character.glb
+Source pack: Kenney — Blocky Characters 2.0
+Upstream: https://kenney.nl/assets/blocky-characters
+Also mirrored on OpenGameArt: https://opengameart.org/content/blocky-characters
+
+Kenney assets are released under Creative Commons CC0. Credit "Kenney.nl"
+is appreciated but not required.
+
+Full legal text: https://creativecommons.org/publicdomain/zero/1.0/
+
+To refresh or fetch additional skins from the upstream zip, run:
+  powershell -ExecutionPolicy Bypass -File content/characters/download_characters.ps1

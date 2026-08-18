@@ -61,24 +61,26 @@ else()
 endif()
 
 add_library(engine_platform STATIC
-  platform/win32/window_win32.cpp
   platform/linux/window_x11.cpp
 )
+if(WIN32)
+  target_sources(engine_platform PRIVATE platform/win32/window_win32.cpp)
+endif()
 target_include_directories(engine_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_platform PUBLIC engine_core)
 if(WIN32)
   target_link_libraries(engine_platform PRIVATE user32 gdi32 imm32)
 endif()
-# Mega-W10: real Xlib path when building on Linux with libX11 (Windows keeps stubs).
+# Mega-W11: real Xlib path when building on Linux with libX11 (Windows keeps stubs).
 if(UNIX AND NOT APPLE)
   find_package(X11)
   if(X11_FOUND)
     target_include_directories(engine_platform PRIVATE ${X11_INCLUDE_DIR})
     target_link_libraries(engine_platform PRIVATE ${X11_LIBRARIES})
     target_compile_definitions(engine_platform PRIVATE ENGINE_HAS_X11=1)
-    message(STATUS "engine_platform: X11 enabled (ENGINE_HAS_X11)")
+    message(STATUS "engine_platform: X11 enabled (ENGINE_HAS_X11); Window::Create → window_x11")
   else()
-    message(STATUS "engine_platform: X11 not found; CreateX11WindowStub stays stub/Unavailable")
+    message(STATUS "engine_platform: X11 not found; CreateX11WindowStub / Window::Create non-headless Unavailable")
   endif()
 endif()
 
@@ -120,8 +122,8 @@ if(WIN32)
   target_link_libraries(engine_animation PRIVATE d3d12 dxgi)
 endif()
 if(ENGINE_WITH_VULKAN)
-  target_include_directories(engine_animation PRIVATE "${ENGINE_VULKAN_SDK}/Include")
-  target_link_libraries(engine_animation PRIVATE "${ENGINE_VULKAN_SDK}/Lib/vulkan-1.lib")
+  target_include_directories(engine_animation PRIVATE "${ENGINE_VULKAN_INCLUDE_DIR}")
+  target_link_libraries(engine_animation PRIVATE "${ENGINE_VULKAN_LIBRARY}")
 endif()
 # Resolve skin_cs.cso / skin_cs_vk.cs.spv next to Sandbox shader outputs.
 file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/samples/Sandbox/shaders" _anim_shader_dir)
@@ -164,15 +166,23 @@ if(ENGINE_WITH_VULKAN)
   target_include_directories(engine_vulkan
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
-      "${ENGINE_VULKAN_SDK}/Include"
+      "${ENGINE_VULKAN_INCLUDE_DIR}"
       ${CMAKE_CURRENT_SOURCE_DIR}/backends/vulkan
   )
   target_link_libraries(engine_vulkan
     PUBLIC engine_rhi engine_platform
-    PRIVATE "${ENGINE_VULKAN_SDK}/Lib/vulkan-1.lib"
+    PRIVATE "${ENGINE_VULKAN_LIBRARY}"
   )
   if(WIN32)
     target_link_libraries(engine_vulkan PRIVATE user32)
+  endif()
+  if(UNIX AND NOT APPLE)
+    find_package(X11)
+    if(X11_FOUND)
+      target_include_directories(engine_vulkan PRIVATE ${X11_INCLUDE_DIR})
+      target_link_libraries(engine_vulkan PRIVATE ${X11_LIBRARIES})
+      target_compile_definitions(engine_vulkan PRIVATE ENGINE_HAS_X11=1)
+    endif()
   endif()
 endif()
 
@@ -309,11 +319,13 @@ target_include_directories(engine_clothing PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/in
 target_link_libraries(engine_clothing PUBLIC engine_core engine_physics)
 
 # Mega-W10: possess walk/jump + third-person camera helper.
+# Mega-W11: CharacterAsset glTF-or-capsule (ADR 0038).
 add_library(engine_gameplay STATIC
   gameplay/possess_controller.cpp
+  gameplay/character_asset.cpp
 )
 target_include_directories(engine_gameplay PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(engine_gameplay PUBLIC engine_core)
+target_link_libraries(engine_gameplay PUBLIC engine_core engine_assets)
 
 add_library(engine_vfx STATIC
   vfx/particles.cpp
@@ -335,8 +347,8 @@ if(WIN32)
   target_link_libraries(engine_gpu_driven PRIVATE d3d12 dxgi)
 endif()
 if(ENGINE_WITH_VULKAN)
-  target_include_directories(engine_gpu_driven PRIVATE "${ENGINE_VULKAN_SDK}/Include")
-  target_link_libraries(engine_gpu_driven PRIVATE "${ENGINE_VULKAN_SDK}/Lib/vulkan-1.lib")
+  target_include_directories(engine_gpu_driven PRIVATE "${ENGINE_VULKAN_INCLUDE_DIR}")
+  target_link_libraries(engine_gpu_driven PRIVATE "${ENGINE_VULKAN_LIBRARY}")
 endif()
 # Resolve meshlet_ms.*.cso next to Sandbox shader outputs (Mega-W9 C08).
 file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/samples/Sandbox/shaders" _meshlet_shader_dir)
@@ -364,8 +376,8 @@ if(WIN32)
   target_link_libraries(engine_rt PRIVATE d3d12 dxgi)
 endif()
 if(ENGINE_WITH_VULKAN)
-  target_include_directories(engine_rt PRIVATE "${ENGINE_VULKAN_SDK}/Include")
-  target_link_libraries(engine_rt PRIVATE "${ENGINE_VULKAN_SDK}/Lib/vulkan-1.lib")
+  target_include_directories(engine_rt PRIVATE "${ENGINE_VULKAN_INCLUDE_DIR}")
+  target_link_libraries(engine_rt PRIVATE "${ENGINE_VULKAN_LIBRARY}")
 endif()
 file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/samples/Sandbox/shaders" _rt_shader_dir)
 string(REPLACE "\\" "/" _rt_shader_dir "${_rt_shader_dir}")
@@ -419,17 +431,20 @@ else()
   target_compile_definitions(engine_net PUBLIC ENGINE_WITH_MSQUIC=0)
 endif()
 
-add_library(engine_d3d12 STATIC
-  backends/d3d12/d3d12_device.cpp
-)
-target_include_directories(engine_d3d12
-  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/backends/d3d12
-)
-target_link_libraries(engine_d3d12
-  PUBLIC engine_rhi engine_platform
-  PRIVATE d3d12 dxgi dxguid d3dcompiler
-)
+# Mega-W11: D3D12 is Windows-only; Linux builds Vulkan + X11 instead.
+if(WIN32)
+  add_library(engine_d3d12 STATIC
+    backends/d3d12/d3d12_device.cpp
+  )
+  target_include_directories(engine_d3d12
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/backends/d3d12
+  )
+  target_link_libraries(engine_d3d12
+    PUBLIC engine_rhi engine_platform
+    PRIVATE d3d12 dxgi dxguid d3dcompiler
+  )
+endif()
 
 add_library(engine_app STATIC
   app/application.cpp
@@ -447,9 +462,11 @@ target_link_libraries(engine_app
     engine_scene
     engine_debug
     engine_net
-    engine_d3d12
     engine_post
 )
+if(WIN32 AND TARGET engine_d3d12)
+  target_link_libraries(engine_app PUBLIC engine_d3d12)
+endif()
 if(ENGINE_WITH_VULKAN)
   target_link_libraries(engine_app PUBLIC engine_vulkan)
 endif()

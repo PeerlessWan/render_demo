@@ -50,6 +50,7 @@ ADR 记录 **为什么这样设计**，是学习封装的核心（比 API 列表
 | 0035 | Mega-W8 加深与尾巴完善（tile 灯/meshlet/VT/MsQuic/天气海浮力/动画2D/GK·ED） | [0035-…](adr/0035-mega-w8-deepen.md) | — | Accepted（MS stub 等见 **0036** 加深） |
 | 0036 | Mega-W9 全主题加深、尾巴、学习轨与文档审计 | [0036-…](adr/0036-mega-w9-deepen.md) | CH36 | Accepted |
 | 0037 | Mega-W10 半成品收紧、尾巴、大场景、人物、学习轨 | [0037-…](adr/0037-mega-w10-deepen.md) | CH37–CH39 | Accepted |
+| 0038 | Mega-W11 拉齐各端（引擎 only；不含 kit/editor） | [0038-…](adr/0038-mega-w11-parity.md) | — | Accepted |
 
 ## 模板
 
