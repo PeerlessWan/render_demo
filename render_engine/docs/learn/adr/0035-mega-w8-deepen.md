@@ -1,9 +1,10 @@
 # ADR 0035: Mega-W8 加深与尾巴完善边界
 
-- 状态: Accepted
+- 状态: Accepted（MS stub 等 → **[ADR 0036](0036-mega-w9-deepen.md)** 加深）
 - 日期: 2026-08-17
-- 关联: PLAN M27+ / Mega-W8、KNOWN_GAPS、ADR 0031（MsQuic）、ADR 0034
+- 关联: PLAN M27+ / Mega-W8、KNOWN_GAPS、ADR 0031（MsQuic）、ADR 0034、ADR 0036
 
+> **修订注记（Mega-W9）：** 「MS 真 PSO 本波为 Feature stub」以 [ADR 0036](0036-mega-w9-deepen.md) 为准（D3D12 真 MS / VK 探测）。
 ## 背景
 
 W7 后一次收口剩余可加深项、A 段尾巴、天气/无限海/浮力，并按旨并入 **C06 最小 VT** 与 **MsQuic 可选启用**。明确不加 HLOD/XR/材质节点图/蓝图。
@@ -11,7 +12,7 @@ W7 后一次收口剩余可加深项、A 段尾巴、天气/无限海/浮力，�
 ## 决策（已落地口径）
 
 1. **C02**：CPU `PackTileLightLists` → FrameCB；lit 按屏幕 tile 累加；`enable_tiled_lights`。
-2. **C08**：meshlet cook + `CullMeshletsToIndirect`；MS 真 PSO 为 Feature stub（无硬件/未建 PSO → Unavailable）。
+2. **C08**：meshlet cook + `CullMeshletsToIndirect`；MS 真 PSO 本波为 Feature stub（**Mega-W9 / ADR 0036 加深为真 MS**）。
 3. **C06**：最小 VT 页表/物理缓存/请求/Sample stub（非 Nanite）。
 4. **MsQuic**：探测存在则 Feature 可开；**不静默安装**；缺库 SKIP（ADR 0031 修订）。
 5. **天气 / FFT 海 / 浮力**：WeatherSystem + 无限平铺 FFT + 探针浮力（thrust/flood）。

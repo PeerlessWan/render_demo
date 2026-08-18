@@ -32,6 +32,11 @@ struct MeshletCookResult {
                                                    std::span<const std::uint32_t> indices,
                                                    int grid_div);
 
+// Prefer meshoptimizer when third_party/meshoptimizer is present; otherwise AABB fallback.
+[[nodiscard]] MeshletCookResult MeshletizePreferMeshoptimizer(std::span<const Vec3> positions,
+                                                              std::span<const std::uint32_t> indices,
+                                                              int grid_div);
+
 // CPU cull → compact visible meshlet ids + one IndirectDrawArgs per survivor.
 // Stand-in for a future mesh-shader / amplification cull CS (C08).
 std::uint32_t CullMeshletsToIndirect(std::span<const Meshlet> meshlets, const Mat4& world,
@@ -39,8 +44,15 @@ std::uint32_t CullMeshletsToIndirect(std::span<const Meshlet> meshlets, const Ma
                                      std::vector<std::uint32_t>& out_visible_ids,
                                      std::vector<IndirectDrawArgs>& out_args);
 
-// Optional D3D12 mesh-shader stub. Without Feature "meshlet" → Unavailable SKIP.
-// Even when Feature is on, this wave only reports readiness (no real MS PSO).
-[[nodiscard]] Status TryMeshShaderPathStub();
+// Mega-W9 C08: Feature "meshlet"/"mesh_shader" off → Unavailable SKIP.
+// D3D12: probe MeshShaderTier + attempt real MS PSO (meshlet_ms.cso); optional DispatchMesh.
+// No D3D12 in unit-test context with Feature forced → Ok (ready) or Unavailable.
+[[nodiscard]] Status TryMeshShaderPath();
+
+// Alias kept for W8 call sites / tests.
+[[nodiscard]] inline Status TryMeshShaderPathStub() { return TryMeshShaderPath(); }
+
+// VK_EXT_mesh_shader device-extension probe (no draw). Ok = Supported; else Unavailable.
+[[nodiscard]] Status ProbeMeshShaderSupportVk();
 
 }  // namespace engine::gpu_driven

@@ -1,7 +1,8 @@
 # Prefab / 场景共享 Schema 草案
 
 > 跨 `render_engine`（序列化/加载）、`game_kit`（脚本挂点）、`editor`（编辑存盘）的 **同一套数据约定**。  
-> 状态：草案；随引擎 M8、game_kit GK4、editor ED2–ED5 冻结。字节级字段名以实现为准，语义不得分叉。
+> **状态：文档草案（D10）** — Mega-W9 **不冻结** Schema；字节级字段名以实现为准，语义不得分叉。  
+> 目标：随引擎 M8、game_kit GK4、editor ED2–ED5 再冻结；本波仅保持跨层约定可读。
 
 ## 1. 所有权
 

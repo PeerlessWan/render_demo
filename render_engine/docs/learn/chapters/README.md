@@ -1,12 +1,16 @@
 # 学习章节（chapters）
 
-章节正文随实现进度补齐，命名：`CHXX_short_title.md`。
-
-结构模板见 [PATH.md](../PATH.md)「每章固定结构」。  
-实现前先读 [PATH.md](../PATH.md) 与 [SAMPLES.md](../SAMPLES.md)；产品代码以 [ARCHITECTURE.md](../../ARCHITECTURE.md) / [PLAN.md](../../PLAN.md) 为准。
+命名：`CHXX_short_title.md`。结构模板见 [PATH.md](../PATH.md)。
 
 | 状态 | 说明 |
 |---|---|
-| 当前 | 仅占位目录；无章节正文 |
-| M1 后 | 优先补 CH00、CH01 |
-| 之后 | 按 PATH 与里程碑同步 |
+| **当前（Mega-W9）** | **CH00–CH11 全文模板已填**；**CH12–CH36 选修短章已填** |
+| Sample | 与 [PATH.md](../PATH.md) / [SAMPLES.md](../SAMPLES.md) 对齐 |
+| 深化 | 随产品里程碑继续加厚原理与 PIX 指引 |
+
+| 章 | 文件 | 篇幅 |
+|---|---|---|
+| CH00–CH11 | `CH00_repo_map.md` … `CH11_frame_graph.md` | 完整模板 |
+| CH07b | `CH07b_input_actions.md` | 完整模板（随必修） |
+| CH12–CH35 | 各 `CHXX_*.md` | 选修短章 |
+| CH36 | `CH36_w9_deepen.md` | 选修短章（W9） |

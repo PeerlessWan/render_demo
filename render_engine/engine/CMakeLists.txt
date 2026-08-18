@@ -61,6 +61,7 @@ endif()
 
 add_library(engine_platform STATIC
   platform/win32/window_win32.cpp
+  platform/linux/window_x11.cpp
 )
 target_include_directories(engine_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_platform PUBLIC engine_core)
@@ -97,6 +98,8 @@ add_library(engine_animation STATIC
   animation/two_bone_ik.cpp
   animation/gpu_skin_d3d12.cpp
   animation/gpu_skin_vk.cpp
+  animation/gpu_skin_main.cpp
+  animation/anim_serialize.cpp
 )
 target_include_directories(engine_animation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_animation PUBLIC engine_core)
@@ -128,6 +131,7 @@ add_library(engine_rhi STATIC
   render/shadow_csm.cpp
   render/shadow_atlas.cpp
   render/local_lights.cpp
+  render/light_function.cpp
   render/atmosphere.cpp
   render/weather.cpp
   render/ies_profile.cpp
@@ -272,9 +276,10 @@ target_link_libraries(engine_gi PUBLIC engine_core)
 
 add_library(engine_terrain STATIC
   terrain/heightmap.cpp
+  terrain/chunk_stream.cpp
 )
 target_include_directories(engine_terrain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(engine_terrain PUBLIC engine_core)
+target_link_libraries(engine_terrain PUBLIC engine_core engine_assets)
 
 add_library(engine_ocean STATIC
   ocean/fft_ocean.cpp
@@ -299,12 +304,29 @@ add_library(engine_gpu_driven STATIC
 )
 target_include_directories(engine_gpu_driven PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_gpu_driven PUBLIC engine_core engine_rhi)
+if(WIN32)
+  target_link_libraries(engine_gpu_driven PRIVATE d3d12 dxgi)
+endif()
+if(ENGINE_WITH_VULKAN)
+  target_include_directories(engine_gpu_driven PRIVATE "${ENGINE_VULKAN_SDK}/Include")
+  target_link_libraries(engine_gpu_driven PRIVATE "${ENGINE_VULKAN_SDK}/Lib/vulkan-1.lib")
+endif()
+# Resolve meshlet_ms.*.cso next to Sandbox shader outputs (Mega-W9 C08).
+file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/samples/Sandbox/shaders" _meshlet_shader_dir)
+string(REPLACE "\\" "/" _meshlet_shader_dir "${_meshlet_shader_dir}")
+target_compile_definitions(engine_gpu_driven PRIVATE ENGINE_SHADER_DIR_A="${_meshlet_shader_dir}")
 
 add_library(engine_vt STATIC
   vt/virtual_texture.cpp
 )
 target_include_directories(engine_vt PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_vt PUBLIC engine_core)
+
+add_library(engine_hlod STATIC
+  hlod/billboard_impostor.cpp
+)
+target_include_directories(engine_hlod PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(engine_hlod PUBLIC engine_core)
 
 add_library(engine_rt STATIC
   rt/raytracing.cpp
@@ -313,6 +335,10 @@ target_include_directories(engine_rt PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_rt PUBLIC engine_core engine_rhi)
 if(WIN32)
   target_link_libraries(engine_rt PRIVATE d3d12 dxgi)
+endif()
+if(ENGINE_WITH_VULKAN)
+  target_include_directories(engine_rt PRIVATE "${ENGINE_VULKAN_SDK}/Include")
+  target_link_libraries(engine_rt PRIVATE "${ENGINE_VULKAN_SDK}/Lib/vulkan-1.lib")
 endif()
 file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/samples/Sandbox/shaders" _rt_shader_dir)
 string(REPLACE "\\" "/" _rt_shader_dir "${_rt_shader_dir}")

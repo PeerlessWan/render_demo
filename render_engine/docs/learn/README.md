@@ -38,7 +38,7 @@
 | [../TESTING.md](../TESTING.md) | **单测 / 集成 / 自动化**；§8 自动化·人工·工具 |
 | [../DEBUG_TUNE_TROUBLESHOOT.md](../DEBUG_TUNE_TROUBLESHOOT.md) | 调试 / 调优 / 排错方法 |
 
-章节正文随实现进度逐步补齐（`chapters/CHXX_*.md`），本阶段先定 **封装结构与路径**。
+章节正文已按 PATH 补齐：见 [chapters/README.md](chapters/README.md)（**CH00–CH11 完整模板**；**CH12–CH36 选修短章**；含 **CH36 Mega-W9**）。阶梯 Sample 规范见 [SAMPLES.md](SAMPLES.md)；缺章 Sample 已在 Mega-W9 补齐（见 [PATH.md](PATH.md)「本波新增」）。
 
 ## 代码侧教学挂钩（实现约定）
 

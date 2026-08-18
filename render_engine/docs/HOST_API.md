@@ -2,7 +2,8 @@
 
 > 供 `game_kit` / `editor` / 外部游戏工程依赖。  
 > **权威帧序：** [HOSTING.md](HOSTING.md) §4、[ARCHITECTURE.md](ARCHITECTURE.md) §4.1。  
-> 状态：文档草案；随 M4–M9 实现冻结为 v0，破坏性变更走 semver / ADR。
+> **状态：文档草案（D10）** — Mega-W9 **不冻结** Host API；字段/签名以实现为准，破坏性变更仍走 semver / ADR。  
+> 目标：随实现成熟冻结为 v0 Stable（见 §6）；本波仅对齐能力边界叙述。
 
 ## 1. 目标与稳定级别
 

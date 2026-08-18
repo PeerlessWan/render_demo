@@ -5,6 +5,7 @@
 #include "engine/render/shadow_atlas.h"
 
 #include <array>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,6 +38,8 @@ struct LocalLight {
   float spot_inner_deg = 160.f;
   // C03/W7: 0=off, 1=narrow, 2=wide, 3=batwing (analytic IES factor in lit shader).
   int ies_profile = 0;
+  // Mega-W9 C03: optional Light Function id ("soft_disk" / "radial" / "angle_cos" / empty=off).
+  std::string light_function_id;
   bool cast_shadows = true;
   int shadow_resolution = 512;  // atlas tile extent
 };
@@ -45,17 +48,31 @@ struct LocalLight {
   return light.spot_angle_deg < 179.f;
 }
 
-// Forward+ tile list (CPU): bin light indices into a coarse screen grid by projecting
-// each light's world position with view_proj. Not a full GPU clustered-lighting path —
-// intended for unit tests and optional Sandbox / debug tooling.
+// Forward+ tile list (CPU reference matching light_tile_cull_cs): bin each light into
+// all screen tiles overlapped by its projected range sphere (axis-offset AABB approx).
+// Not a Z-sliced cluster path — unit tests / RenderSystem CPU fallback / CS parity.
 void AssignLightsToTiles(const std::vector<LocalLight>& lights, const Mat4& view_proj,
                          int grid_w, int grid_h,
                          std::vector<std::vector<int>>& out_tiles);
+
+// Alias: AssignLightsToTiles IS the CPU reference for the tile CS contract.
+inline void CullLightsToTilesCpuReference(const std::vector<LocalLight>& lights,
+                                          const Mat4& view_proj, int grid_w, int grid_h,
+                                          std::vector<std::vector<int>>& out_tiles) {
+  AssignLightsToTiles(lights, view_proj, grid_w, grid_h, out_tiles);
+}
 
 // Flatten AssignLightsToTiles output into fixed FrameCB arrays (≤kMaxLightsPerTile each).
 void PackTileLightLists(const std::vector<std::vector<int>>& tiles,
                         std::array<int, kLightTileCount>& out_counts,
                         std::array<int, kTileLightIndexCount>& out_indices);
+
+// CPU stand-in for light_tile_cull_cs: same range-bin + pack as AssignLightsToTiles /
+// PackTileLightLists. Device Dispatch may call this when GPU UAV path is stubbed.
+void SimulateLightTileCullCs(const Mat4& view_proj, std::span<const Vec3> positions,
+                             std::span<const float> ranges,
+                             std::array<int, kLightTileCount>& out_counts,
+                             std::array<int, kTileLightIndexCount>& out_indices);
 
 // CPU eval path matching lit PS tile pick from screen UV in [0,1] (NDC mapped).
 void EvalTiledLightList(const std::array<int, kLightTileCount>& counts,

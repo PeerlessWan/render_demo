@@ -44,6 +44,12 @@ class ProbeVolume {
   [[nodiscard]] int grid_ny() const { return ny_; }
   [[nodiscard]] int grid_nz() const { return nz_; }
 
+  // Mega-W9: flatten probe irradiance RGB into a CPU atlas (3 floats per probe, x-y-z order).
+  [[nodiscard]] std::vector<float> BuildIrradianceAtlasCpu() const;
+  // Sample flattened atlas with the same trilinear scheme as Sample (non-DDGI deepen).
+  [[nodiscard]] ColorRgba SampleAtlasCpu(const std::vector<float>& atlas,
+                                         const Vec3& world_pos) const;
+
  private:
   bool enabled_ = true;
   Vec3 origin_{};

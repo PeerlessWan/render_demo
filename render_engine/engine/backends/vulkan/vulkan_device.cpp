@@ -2,6 +2,7 @@
 
 #include "engine/core/feature.h"
 #include "engine/core/log.h"
+#include "engine/render/local_lights.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -1291,6 +1292,34 @@ class VulkanDevice final : public IDevice {
     engine::SetFeatureOverride("hiz", true);
     engine::SetFeatureOverride("execute_indirect", true);
     engine::SetFeatureOverride("gpu_cull_compact", true);
+    return Status::Ok();
+  }
+
+  // Mega-W9 C02: SPIR-V presence enables Feature path; Dispatch uses CPU Simulate fallback.
+  Status SetupLightTileCullCompute(const std::filesystem::path& cs_spirv) override {
+    if (device_ == VK_NULL_HANDLE || cs_spirv.empty()) {
+      return Status::Fail(ErrorCode::Unavailable, "SetupLightTileCullCompute: invalid");
+    }
+    std::ifstream in(cs_spirv, std::ios::binary);
+    if (!in) {
+      tile_cull_ready_ = false;
+      return Status::Fail(ErrorCode::Unavailable,
+                          "Light tile CS missing: " + cs_spirv.string());
+    }
+    tile_cull_ready_ = true;
+    LogInfo("Vulkan light tile cull ready (CPU SimulateLightTileCullCs fallback)");
+    return Status::Ok();
+  }
+
+  Status DispatchLightTileCull(const Mat4& view_proj, std::span<const Vec3> positions,
+                               std::span<const float> ranges, std::array<int, 32>& out_counts,
+                               std::array<int, 256>& out_indices) override {
+    if (!tile_cull_ready_) {
+      out_counts.fill(0);
+      out_indices.fill(-1);
+      return Status::Fail(ErrorCode::Unavailable, "DispatchLightTileCull: not set up");
+    }
+    engine::render::SimulateLightTileCullCs(view_proj, positions, ranges, out_counts, out_indices);
     return Status::Ok();
   }
 
@@ -6391,6 +6420,7 @@ class VulkanDevice final : public IDevice {
   VkDeviceMemory indirect_zero_upload_mem_ = VK_NULL_HANDLE;
 
   bool cull_ready_ = false;
+  bool tile_cull_ready_ = false;
   VkDescriptorSetLayout cull_set_layout_ = VK_NULL_HANDLE;
   VkPipelineLayout cull_pipeline_layout_ = VK_NULL_HANDLE;
   VkPipeline cull_pipeline_ = VK_NULL_HANDLE;

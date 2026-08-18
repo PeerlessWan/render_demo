@@ -1,5 +1,6 @@
 #include "engine/rt/raytracing.h"
 
+#include "engine/core/feature.h"
 #include "engine/core/log.h"
 
 #include <array>
@@ -18,6 +19,10 @@
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <wrl/client.h>
+#endif
+
+#if ENGINE_WITH_VULKAN
+#include <vulkan/vulkan.h>
 #endif
 
 namespace engine::rt {
@@ -620,6 +625,93 @@ Status TryBuildCubeBlasTlasAndDispatchRays(const std::filesystem::path& dxr_lib_
   (void)dxr_lib_dxil;
   return Status::Fail(ErrorCode::Unavailable,
                       "TryBuildCubeBlasTlasAndDispatchRays: DXR requires Windows/D3D12");
+#endif
+}
+
+Status TryComposeDxrShadowOverlay(float& out_shadow_factor) {
+  out_shadow_factor = 1.f;
+  FeatureSet features = QueryFeatures();
+  if (!features.raytracing && ProbeDxrHardwareSupport()) {
+    SetFeatureOverride("raytracing", true);
+    features = QueryFeatures();
+  }
+
+  DxrDemoConfig demo;
+  demo.enable_shadows = true;
+  const DxrShadowDemoResult demo_result = DxrShadowDemo(features, demo);
+  if (demo_result.would_run) {
+    // Small-resolution demo ran (or attempted real AS/DispatchRays): darken factor.
+    out_shadow_factor = 0.35f;
+    LogInfo("TryComposeDxrShadowOverlay: composed factor=" + std::to_string(out_shadow_factor));
+    return Status::Ok("dxr-shadow-overlay");
+  }
+
+  const Status built = TryBuildCubeBlasTlasAndDispatchRays();
+  if (built) {
+    out_shadow_factor = 0.5f;
+    LogInfo("TryComposeDxrShadowOverlay: AS/DispatchRays Ok, factor=" +
+            std::to_string(out_shadow_factor));
+    return Status::Ok("dxr-compose-after-demo");
+  }
+
+  const Status tlas = TryEmptyTlasPrebuild();
+  if (tlas) {
+    out_shadow_factor = 0.85f;
+    return Status::Ok("dxr-compose-empty-tlas");
+  }
+
+  return Status::Fail(ErrorCode::Unavailable,
+                      "TryComposeDxrShadowOverlay Unavailable SKIP: no DXR demo path");
+}
+
+Status TryVkTraceRaysDemoStub() {
+#if ENGINE_WITH_VULKAN
+  VkApplicationInfo app{};
+  app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+  app.pApplicationName = "engine_vk_tracerays_probe";
+  app.apiVersion = VK_API_VERSION_1_1;
+  VkInstanceCreateInfo ici{};
+  ici.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+  ici.pApplicationInfo = &app;
+  VkInstance instance = VK_NULL_HANDLE;
+  if (vkCreateInstance(&ici, nullptr, &instance) != VK_SUCCESS || !instance) {
+    return Status::Fail(ErrorCode::Unavailable,
+                        "TryVkTraceRaysDemoStub: vkCreateInstance failed SKIP");
+  }
+
+  uint32_t phys_count = 0;
+  vkEnumeratePhysicalDevices(instance, &phys_count, nullptr);
+  bool found = false;
+  if (phys_count > 0) {
+    std::vector<VkPhysicalDevice> phys_list(phys_count);
+    vkEnumeratePhysicalDevices(instance, &phys_count, phys_list.data());
+    for (VkPhysicalDevice pd : phys_list) {
+      uint32_t ext_count = 0;
+      vkEnumerateDeviceExtensionProperties(pd, nullptr, &ext_count, nullptr);
+      std::vector<VkExtensionProperties> exts(ext_count);
+      vkEnumerateDeviceExtensionProperties(pd, nullptr, &ext_count, exts.data());
+      for (const auto& e : exts) {
+        if (std::strcmp(e.extensionName, "VK_KHR_ray_tracing_pipeline") == 0 ||
+            std::strcmp(e.extensionName, "VK_KHR_ray_query") == 0) {
+          found = true;
+          break;
+        }
+      }
+      if (found) {
+        break;
+      }
+    }
+  }
+  vkDestroyInstance(instance, nullptr);
+  if (found) {
+    LogInfo("TryVkTraceRaysDemoStub: ray tracing extension present (demo stub Ok)");
+    return Status::Ok("vk-tracerays-ext");
+  }
+  return Status::Fail(ErrorCode::Unavailable,
+                      "TryVkTraceRaysDemoStub Unavailable SKIP: no VK_KHR_ray_tracing_pipeline");
+#else
+  return Status::Fail(ErrorCode::Unavailable,
+                      "TryVkTraceRaysDemoStub Unavailable SKIP: ENGINE_WITH_VULKAN=0");
 #endif
 }
 

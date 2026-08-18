@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -358,17 +359,29 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   lighting.enable_ibl = effect_.enable_ibl && env.has_ibl();
   lighting.ibl_intensity = effect_.ibl_intensity;
 
-  // Mega-W8 C02: CPU-pack AssignLightsToTiles → FrameCB for lit PS hot path.
+  // Mega-W8 C02: prefer GPU Feature path (DispatchLightTileCull / Simulate) else CPU Assign.
   lighting.enable_tiled_lights = effect_.enable_tiled_lights;
   lighting.tile_light_count.fill(0);
   lighting.tile_light_index.fill(-1);
   if (lighting.enable_tiled_lights && lighting.local_light_count > 0) {
-    std::vector<std::vector<int>> tiles;
-    AssignLightsToTiles(packed_lights, lighting.view_proj, kLightTileGridW, kLightTileGridH,
-                        tiles);
     std::array<int, kLightTileCount> counts{};
     std::array<int, kTileLightIndexCount> indices{};
-    PackTileLightLists(tiles, counts, indices);
+    const std::span<const Vec3> positions(lighting.local_pos.data(),
+                                          static_cast<std::size_t>(lighting.local_light_count));
+    const std::span<const float> ranges(lighting.local_range.data(),
+                                        static_cast<std::size_t>(lighting.local_light_count));
+    bool filled = false;
+    if (auto st = device.DispatchLightTileCull(lighting.view_proj, positions, ranges, counts,
+                                               indices);
+        st) {
+      filled = true;
+    }
+    if (!filled) {
+      std::vector<std::vector<int>> tiles;
+      AssignLightsToTiles(packed_lights, lighting.view_proj, kLightTileGridW, kLightTileGridH,
+                          tiles);
+      PackTileLightLists(tiles, counts, indices);
+    }
     for (int t = 0; t < kLightTileCount; ++t) {
       lighting.tile_light_count[static_cast<std::size_t>(t)] = counts[static_cast<std::size_t>(t)];
     }

@@ -5,8 +5,8 @@
 > 定位：**Windows（D3D12 + Vulkan）/ Linux（Vulkan）通用 2D·3D 渲染引擎**  
 > 范围分段：M1–M16（既有能力）+ M17–M19（后端/Linux/网络）+ **M20–M25 引擎缺口补齐（P2）**。  
 > **当前迭代看板**（Doing / Undo / Todo）：[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)  
-> **引擎状态：Mega-W8 已收口**（尾巴完善 + VT + MsQuic + 天气/海/浮力 + game_kit/editor 冒烟；封板基线见 `99542b6` 前推）。  
-> 详见 [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)、[ADR 0035](learn/adr/0035-mega-w8-deepen.md)。  
+> **引擎状态：Mega-W9 已收口**（五主题+尾巴+学习轨+DOC_AUDIT；[ADR 0036](learn/adr/0036-mega-w9-deepen.md)）。  
+> Mega-W8 tip `0942719`（[ADR 0035](learn/adr/0035-mega-w8-deepen.md)）。看板：[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)、[DOC_AUDIT](learn/DOC_AUDIT.md)。  
 > **游戏可用 ≠ 渲染可用**：工作区可玩产品水位见 **§1.9**（主缺口 `game_kit` GK0–GK3）。
 
 ## 1. 总验收目标

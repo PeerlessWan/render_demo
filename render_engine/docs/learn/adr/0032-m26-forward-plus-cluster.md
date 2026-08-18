@@ -1,8 +1,11 @@
 # ADR 0032: M26 / P3 加深簇 — Forward+ 钉死与候选开工
 
-- 状态: Accepted
+- 状态: Accepted（**C02 tile CS / C08 MS 加深部分 superseded → [ADR 0036](0036-mega-w9-deepen.md)**）
 - 日期: 2026-08-15
-- 关联: KNOWN_GAPS §4（C01/C02/C10/C08/C04/C16/C20）、[FORWARD_PLUS.md](../../FORWARD_PLUS.md)、ADR 0023
+- 更新: 2026-08-17（W9：见 0036）
+- 关联: KNOWN_GAPS §4（C01/C02/C10/C08/C04/C16/C20）、[FORWARD_PLUS.md](../../FORWARD_PLUS.md)、ADR 0023、ADR 0036
+
+> **修订注记（Mega-W9）：** 「完整屏幕分块/集群光剔除后置」「Mesh Shader Feature SKIP / 无 MS PSO」以 [ADR 0036](0036-mega-w9-deepen.md) 为准：`light_tile_cull_cs` + range 扩格；D3D12 真 MS PSO / `DispatchMesh`，VK `VK_EXT_mesh_shader` 探测或 SKIP。Forward+ 钉死与 Pass 名冻结仍以本 ADR + FORWARD_PLUS 为准。
 
 ## 背景
 

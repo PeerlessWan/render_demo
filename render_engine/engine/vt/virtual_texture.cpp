@@ -87,6 +87,18 @@ void VirtualTexture::RequestPage(PageCoord page) {
   requests_.push_back(page);
 }
 
+void VirtualTexture::ProcessGpuFeedback(std::span<const VtFeedbackRequest> feedback) {
+  // Higher importance first so budgeted uploads prefer hot pages.
+  std::vector<VtFeedbackRequest> ordered(feedback.begin(), feedback.end());
+  std::sort(ordered.begin(), ordered.end(),
+            [](const VtFeedbackRequest& a, const VtFeedbackRequest& b) {
+              return a.importance > b.importance;
+            });
+  for (const auto& req : ordered) {
+    RequestPage(req.page);
+  }
+}
+
 bool VirtualTexture::EvictOne() {
   for (std::uint32_t slot = 0; slot < cache_.size(); ++slot) {
     auto& phys = cache_[slot];
@@ -148,6 +160,10 @@ std::uint32_t VirtualTexture::ProcessRequests(std::uint32_t max_uploads) {
     ++clock_;
   }
   return done;
+}
+
+std::uint32_t VirtualTexture::UploadPendingPages(std::uint32_t max_uploads) {
+  return ProcessRequests(max_uploads);
 }
 
 ColorRgba VirtualTexture::Sample(float u, float v, std::uint32_t mip) {

@@ -61,4 +61,12 @@ Status TryEmptyTlasPrebuild();
 Status TryBuildCubeBlasTlasAndDispatchRays(
     const std::filesystem::path& dxr_lib_dxil = {});
 
+// Mega-W9: compose a small DXR shadow demo result into a float overlay factor
+// (not fullscreen production RT). Ok when demo/AS path ran; factor in (0,1].
+[[nodiscard]] Status TryComposeDxrShadowOverlay(float& out_shadow_factor);
+
+// Mega-W9: VK_KHR_ray_tracing_pipeline / ray_query probe stub (no fullscreen TraceRays).
+// Ok when extension present; else Unavailable SKIP.
+[[nodiscard]] Status TryVkTraceRaysDemoStub();
+
 }  // namespace engine::rt

@@ -5,6 +5,55 @@
 #include <cmath>
 
 namespace engine::render {
+namespace {
+
+// Project world point to UV in [0,1] (NDC xy * 0.5 + 0.5). Rejects behind-camera / non-finite.
+bool ProjectWorldToUv(const Mat4& view_proj, const Vec3& p, float& out_u, float& out_v) {
+  const float x = view_proj.m[0] * p.x + view_proj.m[4] * p.y + view_proj.m[8] * p.z + view_proj.m[12];
+  const float y = view_proj.m[1] * p.x + view_proj.m[5] * p.y + view_proj.m[9] * p.z + view_proj.m[13];
+  const float w = view_proj.m[3] * p.x + view_proj.m[7] * p.y + view_proj.m[11] * p.z + view_proj.m[15];
+  if (!(w > 1e-5f)) {
+    return false;
+  }
+  const float ndc_x = x / w;
+  const float ndc_y = y / w;
+  if (!std::isfinite(ndc_x) || !std::isfinite(ndc_y)) {
+    return false;
+  }
+  out_u = ndc_x * 0.5f + 0.5f;
+  out_v = ndc_y * 0.5f + 0.5f;
+  return std::isfinite(out_u) && std::isfinite(out_v);
+}
+
+// Sphere → screen AABB via center + ±range on XYZ (matches light_tile_cull_cs.hlsl).
+bool LightProjectedUvAabb(const Vec3& position, float range, const Mat4& view_proj, float& u0,
+                          float& u1, float& v0, float& v1) {
+  const float r = std::max(range, 0.f);
+  const Vec3 offsets[7] = {
+      {0.f, 0.f, 0.f}, {r, 0.f, 0.f}, {-r, 0.f, 0.f}, {0.f, r, 0.f},
+      {0.f, -r, 0.f},  {0.f, 0.f, r}, {0.f, 0.f, -r},
+  };
+  u0 = 1e9f;
+  u1 = -1e9f;
+  v0 = 1e9f;
+  v1 = -1e9f;
+  int accepted = 0;
+  for (const Vec3& o : offsets) {
+    float u = 0.f;
+    float v = 0.f;
+    if (!ProjectWorldToUv(view_proj, position + o, u, v)) {
+      continue;
+    }
+    u0 = (std::min)(u0, u);
+    u1 = (std::max)(u1, u);
+    v0 = (std::min)(v0, v);
+    v1 = (std::max)(v1, v);
+    ++accepted;
+  }
+  return accepted > 0;
+}
+
+}  // namespace
 
 void AssignLightsToTiles(const std::vector<LocalLight>& lights, const Mat4& view_proj,
                          int grid_w, int grid_h,
@@ -14,17 +63,30 @@ void AssignLightsToTiles(const std::vector<LocalLight>& lights, const Mat4& view
   const int tile_count = gw * gh;
   out_tiles.assign(static_cast<std::size_t>(tile_count), {});
   for (std::size_t i = 0; i < lights.size(); ++i) {
-    const Vec3 ndc = view_proj.TransformPoint(lights[i].position);
-    // Behind / degenerate: skip (not expanded by range — simple center bin).
-    if (!std::isfinite(ndc.x) || !std::isfinite(ndc.y) || !std::isfinite(ndc.z)) {
+    float u0 = 0.f;
+    float u1 = 0.f;
+    float v0 = 0.f;
+    float v1 = 0.f;
+    if (!LightProjectedUvAabb(lights[i].position, lights[i].range, view_proj, u0, u1, v0, v1)) {
       continue;
     }
-    // NDC xy in [-1,1] → tile; clamp so near-edge lights still land in a cell.
-    const float u = std::clamp(ndc.x * 0.5f + 0.5f, 0.f, 0.999f);
-    const float v = std::clamp(ndc.y * 0.5f + 0.5f, 0.f, 0.999f);
-    const int tx = std::min(static_cast<int>(u * static_cast<float>(gw)), gw - 1);
-    const int ty = std::min(static_cast<int>(v * static_cast<float>(gh)), gh - 1);
-    out_tiles[static_cast<std::size_t>(ty * gw + tx)].push_back(static_cast<int>(i));
+    // Fully off-screen AABB → skip.
+    if (u1 < 0.f || u0 > 1.f || v1 < 0.f || v0 > 1.f) {
+      continue;
+    }
+    const float cu0 = std::clamp(u0, 0.f, 0.999f);
+    const float cu1 = std::clamp(u1, 0.f, 0.999f);
+    const float cv0 = std::clamp(v0, 0.f, 0.999f);
+    const float cv1 = std::clamp(v1, 0.f, 0.999f);
+    const int tx0 = std::min(static_cast<int>(cu0 * static_cast<float>(gw)), gw - 1);
+    const int tx1 = std::min(static_cast<int>(cu1 * static_cast<float>(gw)), gw - 1);
+    const int ty0 = std::min(static_cast<int>(cv0 * static_cast<float>(gh)), gh - 1);
+    const int ty1 = std::min(static_cast<int>(cv1 * static_cast<float>(gh)), gh - 1);
+    for (int ty = ty0; ty <= ty1; ++ty) {
+      for (int tx = tx0; tx <= tx1; ++tx) {
+        out_tiles[static_cast<std::size_t>(ty * gw + tx)].push_back(static_cast<int>(i));
+      }
+    }
   }
 }
 
@@ -44,6 +106,23 @@ void PackTileLightLists(const std::vector<std::vector<int>>& tiles,
           list[static_cast<std::size_t>(s)];
     }
   }
+}
+
+void SimulateLightTileCullCs(const Mat4& view_proj, std::span<const Vec3> positions,
+                             std::span<const float> ranges,
+                             std::array<int, kLightTileCount>& out_counts,
+                             std::array<int, kTileLightIndexCount>& out_indices) {
+  const std::size_t n =
+      (std::min)((std::min)(positions.size(), ranges.size()),
+                 static_cast<std::size_t>(kMaxLocalLightsGpu));
+  std::vector<LocalLight> lights(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    lights[i].position = positions[i];
+    lights[i].range = ranges[i];
+  }
+  std::vector<std::vector<int>> tiles;
+  AssignLightsToTiles(lights, view_proj, kLightTileGridW, kLightTileGridH, tiles);
+  PackTileLightLists(tiles, out_counts, out_indices);
 }
 
 void EvalTiledLightList(const std::array<int, kLightTileCount>& counts,

@@ -33,6 +33,7 @@ FeatureSet QueryFeatures() {
   f.gpu_instancing = false;
   f.execute_indirect = false;
   f.hiz = false;
+  f.virtual_texture = true;
 
   std::lock_guard lock(g_feature_mu);
   auto apply = [&](const char* name, bool& dst) {
@@ -50,6 +51,7 @@ FeatureSet QueryFeatures() {
   apply("gpu_instancing", f.gpu_instancing);
   apply("execute_indirect", f.execute_indirect);
   apply("hiz", f.hiz);
+  apply("virtual_texture", f.virtual_texture);
   return f;
 }
 
@@ -73,6 +75,7 @@ bool QueryFeature(std::string_view name) {
   if (name == "gpu_instancing") return f.gpu_instancing;
   if (name == "execute_indirect") return f.execute_indirect;
   if (name == "hiz") return f.hiz;
+  if (name == "virtual_texture") return f.virtual_texture;
   return false;
 }
 

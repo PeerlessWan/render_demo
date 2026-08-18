@@ -23,6 +23,8 @@ struct FeatureSet {
   bool gpu_instancing = false;
   bool execute_indirect = false;
   bool hiz = false;
+  // Mega-W9 C06: CPU VT path available (Sample stub + feedback/upload helpers).
+  bool virtual_texture = true;
   FeatureLevel level = FeatureLevel::L0;
 };
 

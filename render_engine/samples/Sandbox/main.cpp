@@ -380,6 +380,13 @@ int main(int argc, char** argv) {
       engine::LogWarn(std::string("Cull CS optional: ") + st.message());
     }
   }
+  {
+    const auto tile_cs = use_vulkan ? (shader_dir / "light_tile_cull_cs_vk.cs.spv")
+                                    : (shader_dir / "light_tile_cull_cs.cso");
+    if (auto st = a.device().SetupLightTileCullCompute(tile_cs); !st) {
+      engine::LogWarn(std::string("Light tile cull CS optional: ") + st.message());
+    }
+  }
   if (!use_vulkan) {
     if (auto st = a.device().ProbeBindlessMinimalPath(0); !st) {
       engine::LogWarn(std::string("Bindless Feature path: ") + st.message());
@@ -972,7 +979,7 @@ int main(int argc, char** argv) {
   engine::LogInfo(std::string("Audio backend: ") + audio->backend_name());
   engine::LogInfo("Sandbox: LMB/RMB look | Wheel zoom | MMB pan | F1 FX | F3 grid | F4 axes | F5 record BMP");
 
-  // C16 / Mega-W8: optional hot-reload poll (host Consume logs; full PSO rebuild left to host).
+  // C16 / Mega-W9: hot-reload poll → rebuild lit PSO / reload albedo (not log-only).
   engine::assets::ShaderHotReload shader_hot;
   shader_hot.SetShaderDir(shader_dir);
   engine::assets::AssetHotReload asset_hot;
@@ -980,14 +987,75 @@ int main(int argc, char** argv) {
   (void)shader_hot.Poll();
   (void)asset_hot.Poll();
 
+  auto RebuildLitPsoIfPossible = [&]() -> bool {
+    if (auto st = render.Init(a.device(), rdesc); !st) {
+      engine::LogWarn(std::string("ShaderHotReload: RebuildLitPsoIfPossible failed: ") +
+                      st.message());
+      return false;
+    }
+    // Re-bind optional CS after lit PSO rebuild (Init only sets lit/post/sky).
+    {
+      const auto cull_cs = use_vulkan ? (shader_dir / "instance_cull_vk.cs.spv")
+                                      : (shader_dir / "instance_cull_cs.cso");
+      (void)a.device().SetupInstanceCullCompute(cull_cs);
+    }
+    {
+      const auto tile_cs = use_vulkan ? (shader_dir / "light_tile_cull_cs_vk.cs.spv")
+                                      : (shader_dir / "light_tile_cull_cs.cso");
+      (void)a.device().SetupLightTileCullCompute(tile_cs);
+    }
+    engine::LogInfo("ShaderHotReload: RebuildLitPsoIfPossible Ok");
+    return true;
+  };
+
+  auto ReloadTextureIfPossible = [&]() -> bool {
+    const auto content = std::filesystem::path(ENGINE_CONTENT_DIR_A);
+    auto loader = engine::assets::CreateDefaultImageLoader();
+    const auto brick_diff = content / "textures" / "ph" / "brick_diff.jpg";
+    const auto fallback = content / "textures" / "albedo_brick.png";
+    if (auto alb = loader->LoadFile(brick_diff)) {
+      base_albedo_rgba = alb->rgba;
+      base_albedo_w = alb->width;
+      base_albedo_h = alb->height;
+      if (auto st = a.device().UploadLitAlbedoRgba(alb->rgba.data(), alb->width, alb->height, 0);
+          !st) {
+        engine::LogWarn(std::string("AssetHotReload: ReloadTexture failed: ") + st.message());
+        return false;
+      }
+      lightmap_applied = false;
+      engine::LogInfo("AssetHotReload: ReloadTexture Ok (brick_diff)");
+      return true;
+    }
+    if (auto alb = loader->LoadFile(fallback)) {
+      base_albedo_rgba = alb->rgba;
+      base_albedo_w = alb->width;
+      base_albedo_h = alb->height;
+      if (auto st = a.device().UploadLitAlbedoRgba(alb->rgba.data(), alb->width, alb->height, 0);
+          !st) {
+        engine::LogWarn(std::string("AssetHotReload: ReloadTexture failed: ") + st.message());
+        return false;
+      }
+      lightmap_applied = false;
+      engine::LogInfo("AssetHotReload: ReloadTexture Ok (albedo_brick fallback)");
+      return true;
+    }
+    // Clear CPU cache so next lightmap sync does not stale-upload.
+    base_albedo_rgba.clear();
+    base_albedo_w = 0;
+    base_albedo_h = 0;
+    lightmap_applied = false;
+    engine::LogWarn("AssetHotReload: ReloadTexture — source missing; cleared albedo cache");
+    return false;
+  };
+
   bool headless_assert_failed = false;
   const auto status = a.Run([&](engine::Application& app_ref) {
     profiler.Begin("Frame");
     if (shader_hot.Poll() && shader_hot.ConsumePsoRebuildRequest()) {
-      engine::LogInfo("ShaderHotReload: PSO rebuild requested (host may reload shaders)");
+      (void)RebuildLitPsoIfPossible();
     }
     if (asset_hot.Poll() && asset_hot.ConsumeInvalidateRequest()) {
-      engine::LogInfo("AssetHotReload: texture/mesh change detected (host may invalidate)");
+      (void)ReloadTextureIfPossible();
     }
     // Q1 golden/deterministic: freeze physics + particles under gpu-headless assert.
     if (!gpu_headless_assert) {

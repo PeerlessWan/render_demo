@@ -2,6 +2,7 @@
 
 #include "engine/core/feature.h"
 #include "engine/core/log.h"
+#include "engine/render/local_lights.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -527,6 +528,35 @@ class D3D12Device final : public IDevice {
     engine::SetFeatureOverride("hiz", true);
     engine::SetFeatureOverride("execute_indirect", true);
     engine::SetFeatureOverride("gpu_cull_compact", true);
+    return Status::Ok();
+  }
+
+  // Mega-W9 C02: CS bytecode presence enables Feature path; Dispatch fills FrameCB-shaped
+  // arrays via SimulateLightTileCullCs (CPU stand-in matching light_tile_cull_cs.hlsl).
+  Status SetupLightTileCullCompute(const std::filesystem::path& cs_dxil) override {
+    if (!device_ || cs_dxil.empty()) {
+      return Status::Fail(ErrorCode::Unavailable, "SetupLightTileCullCompute: invalid");
+    }
+    std::ifstream in(cs_dxil, std::ios::binary);
+    if (!in) {
+      tile_cull_ready_ = false;
+      return Status::Fail(ErrorCode::Unavailable,
+                          "Light tile CS missing: " + cs_dxil.string());
+    }
+    tile_cull_ready_ = true;
+    LogInfo("D3D12 light tile cull ready (CPU SimulateLightTileCullCs fallback)");
+    return Status::Ok();
+  }
+
+  Status DispatchLightTileCull(const Mat4& view_proj, std::span<const Vec3> positions,
+                               std::span<const float> ranges, std::array<int, 32>& out_counts,
+                               std::array<int, 256>& out_indices) override {
+    if (!tile_cull_ready_) {
+      out_counts.fill(0);
+      out_indices.fill(-1);
+      return Status::Fail(ErrorCode::Unavailable, "DispatchLightTileCull: not set up");
+    }
+    engine::render::SimulateLightTileCullCs(view_proj, positions, ranges, out_counts, out_indices);
     return Status::Ok();
   }
 
@@ -4710,6 +4740,7 @@ class D3D12Device final : public IDevice {
   int bound_shadow_slot_ = 0;
   std::uint32_t compute_dispatches_ = 0;
   bool cull_ready_ = false;
+  bool tile_cull_ready_ = false;
   ComPtr<ID3D12RootSignature> cull_root_;
   ComPtr<ID3D12PipelineState> cull_pso_;
   ComPtr<ID3D12Resource> cull_compact_buf_;

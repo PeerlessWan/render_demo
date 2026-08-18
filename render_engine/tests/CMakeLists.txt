@@ -15,6 +15,8 @@ add_executable(engine_unit_tests
   unit/test_m29.cpp
   unit/test_m30.cpp
   unit/test_m31.cpp
+  unit/test_m32.cpp
+  unit/test_m33.cpp
   unit/test_product_wave_stubs.cpp
   unit/test_headless_integration.cpp
   unit/test_usable.cpp
@@ -42,6 +44,7 @@ target_link_libraries(engine_unit_tests PRIVATE
   engine_vfx
   engine_gpu_driven
   engine_vt
+  engine_hlod
   engine_rt
   engine_app
 )

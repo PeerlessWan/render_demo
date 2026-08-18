@@ -27,9 +27,41 @@ void AnimationStateMachine::AddTransition(AnimTransition transition) {
   transitions_.push_back(std::move(transition));
 }
 
+void AnimationStateMachine::SetDefaultCrossfadeDuration(float seconds) {
+  default_crossfade_ = std::max(0.f, seconds);
+}
+
+float AnimationStateMachine::crossfade_alpha() const {
+  if (!crossfading_ || crossfade_duration_ <= 1e-6f) {
+    return 1.f;
+  }
+  return std::clamp(crossfade_t_ / crossfade_duration_, 0.f, 1.f);
+}
+
+void AnimationStateMachine::BeginCrossfade(std::string_view from, float from_time, float duration) {
+  if (duration <= 1e-6f) {
+    crossfading_ = false;
+    return;
+  }
+  previous_ = std::string(from);
+  previous_time_ = from_time;
+  crossfade_duration_ = duration;
+  crossfade_t_ = 0.f;
+  crossfading_ = true;
+}
+
 void AnimationStateMachine::SetState(std::string_view name) {
   if (FindState(name) == nullptr) {
     return;
+  }
+  if (name == current_) {
+    return;
+  }
+  const float fade = default_crossfade_;
+  if (fade > 1e-6f && !current_.empty()) {
+    BeginCrossfade(current_, state_time_, fade);
+  } else {
+    crossfading_ = false;
   }
   current_ = std::string(name);
   state_time_ = 0.f;
@@ -105,6 +137,9 @@ bool AnimationStateMachine::TryTransition() {
       }
       triggers_.erase(it);
     }
+    const float fade =
+        t.crossfade_duration > 1e-6f ? t.crossfade_duration : default_crossfade_;
+    BeginCrossfade(current_, state_time_, fade);
     current_ = t.to;
     state_time_ = 0.f;
     return true;
@@ -121,6 +156,15 @@ void AnimationStateMachine::Update(float dt) {
   if (!cur) {
     return;
   }
+
+  if (crossfading_) {
+    crossfade_t_ += dt;
+    previous_time_ += dt;
+    if (crossfade_t_ >= crossfade_duration_) {
+      crossfading_ = false;
+    }
+  }
+
   const float prev = state_time_;
   state_time_ += dt;
 
@@ -142,6 +186,21 @@ void AnimationStateMachine::Update(float dt) {
   }
 }
 
+SkinPose AnimationStateMachine::LerpPoses(const SkinPose& a, const SkinPose& b, float t) {
+  SkinPose out;
+  const std::size_t n = std::max(a.bone_matrices.size(), b.bone_matrices.size());
+  out.bone_matrices.resize(n, Mat4::Identity());
+  const float u = std::clamp(t, 0.f, 1.f);
+  for (std::size_t i = 0; i < n; ++i) {
+    const Mat4& ma = i < a.bone_matrices.size() ? a.bone_matrices[i] : Mat4::Identity();
+    const Mat4& mb = i < b.bone_matrices.size() ? b.bone_matrices[i] : Mat4::Identity();
+    for (int k = 0; k < 16; ++k) {
+      out.bone_matrices[i].m[k] = ma.m[k] + (mb.m[k] - ma.m[k]) * u;
+    }
+  }
+  return out;
+}
+
 SkinPose AnimationStateMachine::Sample(const Skeleton& skel) const {
   const AnimState* cur = FindState(current_);
   if (!cur) {
@@ -149,7 +208,16 @@ SkinPose AnimationStateMachine::Sample(const Skeleton& skel) const {
     empty.bone_matrices.assign(skel.joints.size(), Mat4::Identity());
     return empty;
   }
-  return SampleClip(skel, cur->clip, state_time_);
+  const SkinPose to_pose = SampleClip(skel, cur->clip, state_time_);
+  if (!crossfading_) {
+    return to_pose;
+  }
+  const AnimState* prev = FindState(previous_);
+  if (!prev) {
+    return to_pose;
+  }
+  const SkinPose from_pose = SampleClip(skel, prev->clip, previous_time_);
+  return LerpPoses(from_pose, to_pose, crossfade_alpha());
 }
 
 SkinPose AnimationStateMachine::SampleBlend(const Skeleton& skel,

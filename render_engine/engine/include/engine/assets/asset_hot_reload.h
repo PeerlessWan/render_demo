@@ -7,7 +7,7 @@
 namespace engine::assets {
 
 // C16 / Mega-W8: mtime poll for textures/meshes under a content root.
-// Host ConsumeInvalidateRequest then reloads affected assets (Sandbox logs only).
+// Host ConsumeInvalidateRequest then reloads affected assets (Sandbox ReloadTexture).
 class AssetHotReload {
  public:
   void SetRoot(std::filesystem::path root) { root_ = std::move(root); }

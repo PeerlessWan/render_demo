@@ -4,12 +4,14 @@
 #include "engine/core/result.h"
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace engine::vt {
 
-// C06 minimal Virtual Texture: CPU-side page table + physical cache + request list.
-// No GPU feedback / tiled resources this wave — residency + Sample stub only.
+// C06 / Mega-W9 Virtual Texture: CPU page table + physical cache + request list +
+// GPU feedback stub (CPU-simulated feedback buffer). Feature name: "virtual_texture".
+// Not Nanite; Sample remains a CPU stub (not wired as default full-material path).
 
 struct PageCoord {
   std::uint32_t x = 0;
@@ -19,6 +21,12 @@ struct PageCoord {
   bool operator==(const PageCoord& o) const {
     return x == o.x && y == o.y && mip == o.mip;
   }
+};
+
+// GPU feedback entry (CPU-simulated): page id + optional mip hint / importance.
+struct VtFeedbackRequest {
+  PageCoord page{};
+  float importance = 1.f;
 };
 
 struct PageTableEntry {
@@ -56,9 +64,16 @@ class VirtualTexture {
   // Queue a residency request if not resident. Dedupes pending list.
   void RequestPage(PageCoord page);
 
+  // Mega-W9: ingest CPU-simulated GPU feedback buffer into the request queue.
+  void ProcessGpuFeedback(std::span<const VtFeedbackRequest> feedback);
+
   // Satisfy oldest pending requests into free / LRU physical slots.
   // Returns number of pages made resident.
   std::uint32_t ProcessRequests(std::uint32_t max_uploads);
+
+  // Page upload helper: ProcessRequests then return how many pages are now resident.
+  // Marks residency via the same physical-cache path as ProcessRequests.
+  std::uint32_t UploadPendingPages(std::uint32_t max_uploads);
 
   // Evict one resident page (LRU-ish: first occupied). Returns true if evicted.
   bool EvictOne();

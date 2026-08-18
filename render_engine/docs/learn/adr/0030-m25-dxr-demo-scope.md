@@ -1,9 +1,11 @@
 # ADR 0030: M25/W4/W7 DXR demo scope（Feature 门控 + 最小真 DispatchRays）
 
-- 状态: Accepted
+- 状态: Accepted（**RT 加深部分 superseded → [ADR 0036](0036-mega-w9-deepen.md)**）
 - 日期: 2026-08-15
-- 更新: 2026-08-17（W7：BLAS/TLAS + 可选 DispatchRays）
-- 关联: CH19、ADR 0007、PLAN M8/M25/W4/W7、`engine/rt`、`samples/learn/19_dxr_intro`
+- 更新: 2026-08-17（W7：BLAS/TLAS + 可选 DispatchRays；W9：见 0036 DXR 小分辨率合成 / VK TraceRays 示范或 SKIP）
+- 关联: CH19、ADR 0007、PLAN M8/M25/W4/W7/W9、`engine/rt`、`samples/learn/19_dxr_intro`
+
+> **修订注记（Mega-W9）：** 本 ADR 的「Vulkan RT 继续 Feature=false / SKIP」与示范深度条款，以 [ADR 0036](0036-mega-w9-deepen.md) 为准（VK TraceRays 示范或诚实 SKIP；DXR 可选小分辨率合成）。门控 / 无能力 SKIP 契约仍有效。
 
 ## 背景
 

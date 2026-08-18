@@ -17,6 +17,7 @@ struct Path2DVertex {
 enum class Path2DTopology {
   LineList = 0,
   TriangleStrip = 1,
+  TriangleList = 2,
 };
 
 struct Path2DMesh {
@@ -41,6 +42,11 @@ class Path2D {
   [[nodiscard]] Path2DMesh BuildStrokeTriangleStrip(float half_width) const;
   // Same stroke with U along length [0,1] and V across [-1,1]→[0,1] for textured ribbons.
   [[nodiscard]] Path2DMesh BuildTexturedStrokeTriangleStrip(float half_width) const;
+
+  // Mega-W9 / G13: closed contour → triangle list (fan from first vertex; convex-friendly).
+  [[nodiscard]] Path2DMesh TessellateFillFan() const;
+  // Simple ear-clip for closed simple polygons (no holes / self-intersections).
+  [[nodiscard]] Path2DMesh EarClipSimple() const;
 
  private:
   std::vector<Vec2> points_;

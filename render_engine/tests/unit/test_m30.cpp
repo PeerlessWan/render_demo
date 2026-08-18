@@ -198,6 +198,19 @@ TEST_CASE("MeshletizeAabbGrid splits by cell", "[m30][w8][c08]") {
   REQUIRE(total_idx == 6);
 }
 
+TEST_CASE("MeshletizePreferMeshoptimizer falls back to AABB", "[m30][w9][c08]") {
+  // third_party has no meshoptimizer — Prefer API must match AABB cook.
+  std::vector<engine::Vec3> pos{
+      {0.f, 0.f, 0.f}, {1.f, 0.f, 0.f}, {0.f, 1.f, 0.f},
+      {9.f, 9.f, 0.f}, {10.f, 9.f, 0.f}, {9.f, 10.f, 0.f},
+  };
+  std::vector<std::uint32_t> idx{0, 1, 2, 3, 4, 5};
+  const auto aabb = engine::gpu_driven::MeshletizeAabbGrid(pos, idx, 2);
+  const auto prefer = engine::gpu_driven::MeshletizePreferMeshoptimizer(pos, idx, 2);
+  REQUIRE(prefer.meshlets.size() == aabb.meshlets.size());
+  REQUIRE(prefer.indices.size() == aabb.indices.size());
+}
+
 TEST_CASE("CullMeshletsToIndirect frustum culls", "[m30][w8][c08]") {
   engine::ClearFeatureOverrides();
   std::vector<engine::gpu_driven::Meshlet> meshlets(2);
@@ -226,20 +239,48 @@ TEST_CASE("CullMeshletsToIndirect frustum culls", "[m30][w8][c08]") {
   engine::ClearFeatureOverrides();
 }
 
-TEST_CASE("MeshletPathAvailable and MS stub Feature gate", "[m30][w8][c08]") {
+TEST_CASE("MeshletPathAvailable and MS path Feature gate", "[m30][w8][w9][c08]") {
   engine::ClearFeatureOverrides();
   REQUIRE_FALSE(engine::gpu_driven::MeshletPathAvailable());
-  auto st = engine::gpu_driven::TryMeshShaderPathStub();
+  auto st = engine::gpu_driven::TryMeshShaderPath();
   REQUIRE_FALSE(st);
   REQUIRE(st.code() == engine::ErrorCode::Unavailable);
+  REQUIRE(st.message().find("SKIP") != std::string::npos);
 
   engine::SetFeatureOverride("meshlet", true);
   REQUIRE(engine::gpu_driven::MeshletPathAvailable());
-  st = engine::gpu_driven::TryMeshShaderPathStub();
-  REQUIRE_FALSE(st);
-  REQUIRE(st.message().find("meshlet") != std::string::npos ||
-          st.message().find("PSO") != std::string::npos);
+  st = engine::gpu_driven::TryMeshShaderPath();
+  // Ok (ready / MS PSO / DispatchMesh) or Unavailable (tier/shader/PSO) — honest SKIP.
+  if (st) {
+    REQUIRE(st.code() == engine::ErrorCode::Ok);
+  } else {
+    REQUIRE(st.code() == engine::ErrorCode::Unavailable);
+    REQUIRE((st.message().find("Mesh Shader") != std::string::npos ||
+             st.message().find("meshlet") != std::string::npos ||
+             st.message().find("PSO") != std::string::npos));
+  }
   engine::ClearFeatureOverrides();
+
+  engine::SetFeatureOverride("mesh_shader", true);
+  st = engine::gpu_driven::TryMeshShaderPathStub();
+  if (st) {
+    REQUIRE(st.code() == engine::ErrorCode::Ok);
+  } else {
+    REQUIRE(st.code() == engine::ErrorCode::Unavailable);
+  }
+  engine::ClearFeatureOverrides();
+}
+
+TEST_CASE("ProbeMeshShaderSupportVk returns Ok or Unavailable", "[m30][w9][c08]") {
+  auto st = engine::gpu_driven::ProbeMeshShaderSupportVk();
+  if (st) {
+    REQUIRE(st.code() == engine::ErrorCode::Ok);
+  } else {
+    REQUIRE(st.code() == engine::ErrorCode::Unavailable);
+    REQUIRE(st.message().find("mesh_shader") != std::string::npos ||
+            st.message().find("VULKAN") != std::string::npos ||
+            st.message().find("vkCreateInstance") != std::string::npos);
+  }
 }
 
 TEST_CASE("VirtualTexture residency and Sample stub", "[m30][w8][c06]") {

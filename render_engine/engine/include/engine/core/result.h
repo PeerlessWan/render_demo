@@ -17,6 +17,9 @@ class Status {
  public:
   static Status Ok() { return Status{ErrorCode::Ok, {}}; }
 
+  // Ok with a short diagnostic (e.g. "simulated-loopback") for stub/demo paths.
+  static Status Ok(std::string message) { return Status{ErrorCode::Ok, std::move(message)}; }
+
   static Status Fail(ErrorCode code, std::string message) {
     return Status{code, std::move(message)};
   }

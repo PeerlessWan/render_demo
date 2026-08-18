@@ -7,7 +7,7 @@
 namespace engine::assets {
 
 // M26/C16: mtime poll for .hlsl / .cso under a shader directory.
-// W6: Poll sets a PSO rebuild request the host consumes (Sandbox may rebuild PSO).
+// W6/W9: Poll sets a PSO rebuild request; Sandbox RebuildLitPsoIfPossible consumes it.
 class ShaderHotReload {
  public:
   void SetShaderDir(std::filesystem::path dir) { dir_ = std::move(dir); }

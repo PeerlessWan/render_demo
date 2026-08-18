@@ -36,7 +36,7 @@
 详见 [POSITIONING.md](POSITIONING.md) §2：
 
 - **引擎内**无编辑器与脚本（外挂见 [HOSTING.md](HOSTING.md)、[LAYERS](../../docs/LAYERS.md)、`game_kit/` / `genre_kits/` / `games/` / `editor/`）；工具侧仅最小 CLI + 可选 C20  
-- 开放世界无 VT / Nanite 级；地形水植被仅基础  
+- 开放世界 **无 Nanite**；VT 为最小可用（Feature `virtual_texture`），**非默认全材质**；地形水植被仅基础  
 - 动态 GI / 光追深度不及顶尖产品  
 - 音频/物理/网络能力边界；非 ECS；双后端与硬解视频约束；无资产生态  
 
@@ -53,8 +53,8 @@
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
 | C01 | 产品级 Deferred / Forward+ 路径钉死 | **已落地（M26）**：Forward+ 钉死 + Pass 名冻结；见 [FORWARD_PLUS.md](FORWARD_PLUS.md)、[ADR 0032](learn/adr/0032-m26-forward-plus-cluster.md) | 高（影响扩展方式） |
-| C02 | 集群 / 分块多灯光 | **Mega-W8 热路径**：CPU `AssignLightsToTiles` → `FrameCB` 打包（8×4、≤8/tile）；lit PS 按屏幕 UV 累加；`EffectTuning::enable_tiled_lights` 默认开 | 高 |
-| C03 | IES / Light Function | **Mega-W8**：IES 文本→LUT + lit 采样；Light Function 示意级 | 中 |
+| C02 | 集群 / 分块多灯光 | **Mega-W9**：range 扩格 `AssignLightsToTiles` + `light_tile_cull_cs`（CPU Simulate 对齐）；FrameCB 8×4、≤8/tile；`enable_tiled_lights` | 高 |
+| C03 | IES / Light Function | **Mega-W9**：IES + `EvalLightFunctionFactor` / `LocalLight::light_function_id` | 中 |
 | C04 | 更细电影级镜头后处理 | **Mega-W8**：vignette/grain/色差 + 畸变/脏点/眩光（默认 0） | 低 |
 | C05 | 大气 / 体积云 / 天气降水 | **Mega-W8**：`WeatherSystem` + 降水/积雪/雷闪；大气见 W4/W7 | 中 |
 
@@ -62,18 +62,18 @@
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C06 | Virtual Texture 产品化 | **最小落地（W8）**：`engine/vt` 页表/缓存/请求/Sample；非 Nanite | 中 |
-| C07 | HLOD / Impostor | 超大场景层级；本波外置 | 中 |
-| C08 | Meshlet / 更完整 GPU 几何管线 | **加深（W8）**：cook + Cull；MS PSO stub | 中 |
+| C06 | Virtual Texture 产品化 | **加深（W9）**：GPU feedback stub + 页上传；Feature `virtual_texture`；**无 Nanite**；**非默认全材质** | 中 |
+| C07 | HLOD / Impostor | **最小落地（W9）**：`BillboardImpostor` 距离切换 + placeholder bake | 中 |
+| C08 | Meshlet / 更完整 GPU 几何管线 | **加深（W9）**：cook + Cull；D3D12 真 MS PSO / `DispatchMesh`；VK `VK_EXT_mesh_shader` 探测（无扩展 SKIP） | 中 |
 | C09 | FFT / 高级水面 | **Mega-W8**：无限平铺 FFT 海 + 浮力 | 低 |
 
 ### 4.3 动画与角色
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C10 | 动画混合树 / 状态机 | **Mega-W8**：Blend1D/2D + mask + AnimNotify + SampleTree | 高 |
+| C10 | 动画混合树 / 状态机 | **Mega-W8/W9**：Blend1D/2D + mask + AnimNotify + SampleTree；W9 加深 SM crossfade / BlendTree·SM 最小序列化（ADR 0036） | 高 |
 | C11 | IK | **Mega-W8**：`SolveTwoBoneIK` | 中 |
-| C12 | GPU 蒙皮产品化打磨 | **Mega-W8**：D3D12 + Vulkan CS 蒙皮 | 低 |
+| C12 | GPU 蒙皮产品化打磨 | **Mega-W8/W9**：D3D12 + Vulkan CS；主路径 `SkinMesh` Feature `gpu_skinning` 双后端尝试 | 低 |
 
 ### 4.3b 物理加深
 
@@ -85,7 +85,7 @@
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| **G13** | **矢量 / 路径绘制** | SVG 级；原「可选后置」 | 按产品需要 |
+| **G13** | **矢量 / 路径绘制** | **部分落地（W9）**：Path2D 描边 + 闭合填充（Fan / EarClip）；SVG 布尔外置 | 按产品需要 |
 | C13 | 九宫格 / 更完整 2D UI 精灵约定 | 偏运行时 UI 与 2D 共用 | 低 |
 | C14 | 3D 世界文字 | **部分落地（W7）**：`BuildWorldTextBillboards`（BMFont 广告牌）；Sandbox DebugDraw 线框 | 中 |
 | C15 | 2D 富文本 / 复杂排版 | 超出 BMFont 基础 | 低 |
@@ -94,8 +94,8 @@
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C16 | 资源热更 / 着色器热重载 | **部分落地（M26/W6）**：`ShaderHotReload::Poll` + `NeedsPsoRebuild` / `ConsumePsoRebuildRequest`；宿主负责重建 PSO | 中 |
-| C17 | 多窗口 / 多 GPU | 特殊部署 | 低 |
+| C16 | 资源热更 / 着色器热重载 | **部分落地（W8/W9）**：`ShaderHotReload` / `AssetHotReload` Poll + Consume；Sandbox 宿主可响应重建请求（真 PSO 闭环见 ADR 0036） | 中 |
+| C17 | 多窗口 / 多 GPU | **钉死（W9）**：单窗口单适配器；**不实装**；见 [C17_MULTI_WINDOW.md](C17_MULTI_WINDOW.md) | 低（不做） |
 | C18 | 立体 / XR 渲染 | 输入层可预留适配器；渲染未排期 | 低（易扩范围） |
 
 ### 4.6 宿主 · 脚本 · 编辑器（引擎外或可选）

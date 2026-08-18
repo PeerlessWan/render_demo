@@ -362,6 +362,22 @@ class IDevice {
     return Status::Ok();
   }
 
+  // Mega-W9 C02: light → tile cull CS (8×4, ≤8/tile). Default Unavailable until Setup.
+  // D3D12/VK: Setup succeeds when CS bytecode exists; Dispatch may fill via CPU
+  // SimulateLightTileCullCs fallback (same math as AssignLightsToTiles) until full UAV path.
+  virtual Status SetupLightTileCullCompute(const std::filesystem::path& /*cs_path*/) {
+    return Status::Fail(ErrorCode::Unavailable, "SetupLightTileCullCompute not available");
+  }
+  virtual Status DispatchLightTileCull(const Mat4& /*view_proj*/,
+                                       std::span<const Vec3> /*positions*/,
+                                       std::span<const float> /*ranges*/,
+                                       std::array<int, 32>& out_counts,
+                                       std::array<int, 256>& out_indices) {
+    out_counts.fill(0);
+    out_indices.fill(-1);
+    return Status::Fail(ErrorCode::Unavailable, "DispatchLightTileCull not available");
+  }
+
   // Bindless Feature 最小路径：堆已绑 + 可按槽位采样/绑定。能力不足则 Fail（调用方可 SKIP）。
   virtual Status ProbeBindlessMinimalPath(std::uint32_t /*srv_heap_slot*/ = 0) {
     return Status::Fail("ProbeBindlessMinimalPath not supported on this device");

@@ -116,4 +116,50 @@ ColorRgba ProbeVolume::Sample(const Vec3& world_pos) const {
   return lerp4(c0, c1, tz);
 }
 
+std::vector<float> ProbeVolume::BuildIrradianceAtlasCpu() const {
+  std::vector<float> atlas;
+  atlas.reserve(probes_.size() * 3);
+  for (const auto& p : probes_) {
+    atlas.push_back(p.irradiance.r);
+    atlas.push_back(p.irradiance.g);
+    atlas.push_back(p.irradiance.b);
+  }
+  return atlas;
+}
+
+ColorRgba ProbeVolume::SampleAtlasCpu(const std::vector<float>& atlas,
+                                      const Vec3& world_pos) const {
+  if (!enabled_ || probes_.empty() || atlas.size() < probes_.size() * 3) {
+    return {0, 0, 0, 1};
+  }
+  const float fx = (world_pos.x - origin_.x) / std::max(spacing_.x, 1e-4f);
+  const float fy = (world_pos.y - origin_.y) / std::max(spacing_.y, 1e-4f);
+  const float fz = (world_pos.z - origin_.z) / std::max(spacing_.z, 1e-4f);
+  const int x0 = (std::max)(0, (std::min)(nx_ - 1, static_cast<int>(std::floor(fx))));
+  const int y0 = (std::max)(0, (std::min)(ny_ - 1, static_cast<int>(std::floor(fy))));
+  const int z0 = (std::max)(0, (std::min)(nz_ - 1, static_cast<int>(std::floor(fz))));
+  const int x1 = (std::min)(nx_ - 1, x0 + 1);
+  const int y1 = (std::min)(ny_ - 1, y0 + 1);
+  const int z1 = (std::min)(nz_ - 1, z0 + 1);
+  const float tx = (std::max)(0.f, (std::min)(1.f, fx - static_cast<float>(x0)));
+  const float ty = (std::max)(0.f, (std::min)(1.f, fy - static_cast<float>(y0)));
+  const float tz = (std::max)(0.f, (std::min)(1.f, fz - static_cast<float>(z0)));
+
+  auto at = [&](int x, int y, int z) -> ColorRgba {
+    const int i = x + nx_ * (y + ny_ * z);
+    const std::size_t base = static_cast<std::size_t>(i) * 3;
+    return ColorRgba{atlas[base], atlas[base + 1], atlas[base + 2], 1.f};
+  };
+  auto lerp4 = [](const ColorRgba& a, const ColorRgba& b, float t) {
+    return ColorRgba{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1.f};
+  };
+  const ColorRgba c00 = lerp4(at(x0, y0, z0), at(x1, y0, z0), tx);
+  const ColorRgba c10 = lerp4(at(x0, y1, z0), at(x1, y1, z0), tx);
+  const ColorRgba c01 = lerp4(at(x0, y0, z1), at(x1, y0, z1), tx);
+  const ColorRgba c11 = lerp4(at(x0, y1, z1), at(x1, y1, z1), tx);
+  const ColorRgba c0 = lerp4(c00, c10, ty);
+  const ColorRgba c1 = lerp4(c01, c11, ty);
+  return lerp4(c0, c1, tz);
+}
+
 }  // namespace engine::gi

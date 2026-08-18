@@ -1,4 +1,4 @@
-# Linux + Vulkan（M18 · W5 加深）
+# Linux + Vulkan（M18 · Mega-W9 加深）
 
 > 当前仓库 **以 Windows 为主路径**。本页给出 Linux（X11）上构建 Vulkan 的步骤与 CMake 开关；**运行时冒烟视自托管 CI 机**，本波不承诺本机 Windows 树能交叉编出完整 Linux 二进制。
 
@@ -8,11 +8,25 @@
 |---|---|
 | Windows Vulkan（M17） | `backends/vulkan/vulkan_device.cpp`：Win32 surface + swapchain（`ENGINE_WITH_VULKAN`） |
 | `engine/platform/win32/` | 已实现 `Window::Create`（Win32 + headless） |
-| `engine/platform/linux/` | **尚未落地**（无 `window_x11` / Wayland）；架构树见 [ARCHITECTURE.md](ARCHITECTURE.md) |
+| `engine/platform/linux/` | **Mega-W9**：`include/engine/platform/linux/window_x11.h` + `platform/linux/window_x11.cpp` 桩；`#ifdef __linux__` 下 headless Ok / 真窗口 Unavailable |
 | D3D12 | Linux **不做**；CMake 应只开 Vulkan |
-| 本波口径 | **文档 + 构建说明加深**；真窗口/Surface 另波 |
+| X11 clear 路径 | 文档 + `TryX11ClearPathStub`（`VK_KHR_xlib_surface` 未接线 → SKIP） |
 
 旧占位页 [LINUX_VULKAN.md](LINUX_VULKAN.md) 已并入本页。
+
+## X11 clear 路径（Mega-W9）
+
+目标链路（有 Linux 显示 + Vulkan 驱动时）：
+
+1. `CreateX11WindowStub` → 真实现改为 `XOpenDisplay` + `XCreateSimpleWindow`（当前非 headless 为 Unavailable）。  
+2. Vulkan `VK_KHR_xlib_surface` / `xcb` 创建 surface。  
+3. `sample_01_clear --backend=vulkan` 清屏一帧。
+
+本波验收：
+
+- 头文件桩可被 Windows 树包含；`__linux__` 上 headless 返回 `Ok("x11-headless-stub")`。  
+- `TryX11ClearPathStub` 诚实 `Unavailable SKIP`，直至 surface 接线。  
+- `ENGINE_LINUX_VK=ON` 仅声明意图并打印缺口，**不**静默安装 X11/Vulkan。
 
 ## 依赖（主机包，引擎不安装）
 
@@ -47,10 +61,10 @@ cmake -S . -B build-linux -G Ninja \
 | 选项 | 含义 |
 |---|---|
 | `ENGINE_WITH_VULKAN` | 编真实 Vulkan `IDevice`（需 SDK） |
-| `ENGINE_LINUX_VK` | **声明意图**：Linux Vulkan 目标路径；本波 **不** 补齐 X11 窗口/Surface。ON 时打印状态与缺口；在非 Linux 主机上仅为文档/开关预留 |
+| `ENGINE_LINUX_VK` | **声明意图**：Linux Vulkan + X11 clear；ON 时打印状态与缺口；在非 Linux 主机上仅为文档/开关预留 |
 | `ENGINE_WITH_OPENSSL` | 系统 OpenSSL 已 `find_package` 成功时启用 HTTPS；失败则 HTTPS `Unavailable` |
 
-Windows 树当前仍链 `platform/win32` 与 `engine_d3d12`；**在 Linux 上完整编译需后续**：条件化跳过 D3D12、实现 `window_x11`、Vulkan surface 从 Win32 抽出（`VK_KHR_xlib_surface` / `xcb`）。在仅有本仓库 Win 路径时，请把 `ENGINE_LINUX_VK` 当 **文档开关**，勿期望 `ninja` 立即通过。
+Windows 树当前仍链 `platform/win32` 与 `engine_d3d12`；**在 Linux 上完整编译需后续**：条件化跳过 D3D12、用 `window_x11` 替换 `Window::Create`、Vulkan surface 从 Win32 抽出。在仅有本仓库 Win 路径时，请把 `ENGINE_LINUX_VK` 当 **文档开关**，勿期望 `ninja` 立即通过。
 
 ## 建议冒烟（有 Linux CI 机时）
 
@@ -65,8 +79,8 @@ ctest --test-dir build-linux -R unit --output-on-failure
 
 ## 已知缺口
 
-1. **`platform/linux/` 未实现** — 无 X11 `Window`；`Window::Create` 现实现在 `window_win32.cpp`。  
-2. **Vulkan surface 绑定 Win32** — 需平台层抽象后再接 X11。  
+1. **`Window::Create` 仍为 Win32** — Linux 桩未接入统一工厂。  
+2. **Vulkan surface 绑定 Win32** — 需平台层抽象后再接 X11（`TryX11ClearPathStub`）。  
 3. **Wayland** — 目标内、本波不做。  
 4. **Vulkan Video** — 与 D3D12VA 对等验收后置；能力不足 SKIP。  
 5. **运行时冒烟** — 依赖自托管 Linux runner；本机 Win 开发机不替代。
@@ -74,4 +88,4 @@ ctest --test-dir build-linux -R unit --output-on-failure
 ## 相关
 
 - [PLAN.md](PLAN.md) M18 · [VULKAN_PARITY.md](VULKAN_PARITY.md) · [KNOWN_GAPS.md](KNOWN_GAPS.md) G19  
-- ADR [0020](learn/adr/0020-windows-d3d12-vulkan-linux-vulkan.md) · QUIC 仍 [ADR 0031](learn/adr/0031-m19-quic-skip-msquic.md) SKIP（W5 不捆绑 MsQuic）
+- ADR [0020](learn/adr/0020-windows-d3d12-vulkan-linux-vulkan.md) · [ADR 0036](learn/adr/0036-mega-w9-deepen.md) · QUIC [ADR 0031](learn/adr/0031-m19-quic-skip-msquic.md)
