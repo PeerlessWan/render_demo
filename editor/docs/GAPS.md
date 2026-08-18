@@ -1,15 +1,15 @@
 # editor 缺口
 
 > 对标 **Godot / Unity 中小 PC 项目的编辑器**，不是 UE5。  
-> **现状：** ED0–ED5 代码已写，Gizmo/Play/Content 已加深。默认内容路径仍是外部 DCC + CLI。  
+> **现状：** 摆放器 + 编辑器可用已收口。默认内容仍可走外部 DCC + CLI；编辑器内扫 `editor/content`。  
 > 一期目标是 **关卡摆放器**（能摆、能改、能存、能再加载、能 Play），不是全能编辑器。
 
 ## 0. 三口径
 
 | 口径 | 含义 | 本层状态 |
 |---|---|---|
-| **摆放器可用** | 打开场景、点选变换、场景树/检视、保存后 Runtime 可读 | **已写已测**（ED0–ED3 + smoke） |
-| **编辑器可用** | + Play-in-Editor、暂停、Prefab 放置、脚本字段 | **已写**（场景 Play + 体素 HUD） |
+| **摆放器可用** | 打开场景、点选变换、场景树/检视、保存后 Runtime 可读 | **已收口** |
+| **编辑器可用** | + Play-in-Editor、暂停、Prefab 放置、脚本字段 | **已收口** |
 | **对标主流** | 材质图、UMG、动画工具、地形雕刻、一站式导入 | **不宣称对齐**；见 §3 / §4 |
 
 权威排期：[PLAN.md](PLAN.md)。功能 ID：[FEATURES.md](FEATURES.md)。
@@ -20,13 +20,13 @@
 
 | ID | 缺口 | 说明 | 对应 |
 |---|---|---|---|
-| ED-G01 | 无代码 | **已写 ED0–ED3**；测试闸门未开 | ED0 |
-| ED-G02 | 场景/Prefab schema 未冻结 | 草案：[PREFAB_SCHEMA.md](../../render_engine/docs/PREFAB_SCHEMA.md)；摆放器已用 v1 JSON | 引擎 M8；GK4；ED2–ED5 |
+| ED-G01 | 无代码 | **已写 ED0–ED5**；`editor_smoke_tests` + `--headless` | ED0 |
+| ED-G02 | 场景/Prefab schema 未冻结 | **已冻结 v3**：[PREFAB_SCHEMA.md](../../render_engine/docs/PREFAB_SCHEMA.md) | 引擎 M8；GK4；ED2–ED5 |
 | ED-G03 | 进程模型未 ADR | **已锁定同进程**：[adr/0001-same-process.md](adr/0001-same-process.md) | ARCHITECTURE §3 |
 | ED-G04 | 拣选 API 未单列 | 已包 `mixed::Pick` | ED2 |
 | ED-G05 | Undo 模型未定 | **已选定命令栈** | ED2 |
 | ED-G06 | Play 快照策略未定 | **退出恢复快照**（ADR 0001） | ED4 |
-| ED-G08 | C20 CLI 未做 | Manifest/场景校验、依赖图；**引擎 tools 候选**，可先于视口 | 引擎 TOOLING |
+| ED-G08 | C20 CLI 未做 | Manifest 依赖图：editor Lint 面板 + `content_lint` | 引擎 TOOLING |
 
 ---
 
@@ -39,13 +39,13 @@
 |---|---|---|---|---|
 | ED-G10 | 进程空壳 | 能启动的 Editor 窗口 | ED0 | — |
 | ED-G11 | 3D/2D 视口 + 编辑相机 | Scene 视口、飞行/轨道，与游戏相机分离 | ED1 | EDVP01–02 |
-| ED-G12 | 点选、Gizmo、选中高亮、Undo | 移物体可撤销 | ED2 | EDVP03–04、EDIO05 |
+| ED-G12 | 点选、Gizmo、选中高亮、Undo | 移物体可撤销 | ED2 | EDVP03–04、EDIO05 已加深（创建/删除/属性 Undo；局部轴） |
 | ED-G13 | 打开/保存场景 | 与 Runtime **同一套**格式 | ED2–ED3 | EDIO01 |
-| ED-G14 | 场景树、检视器、创建/删除节点 | Hierarchy + Inspector | ED3 | EDHI01–03 |
+| ED-G14 | 场景树、检视器、创建/删除节点 | Hierarchy + Inspector | ED3 | EDHI01–03 已加深（改名/重父级/搜索/多选/灯相机碰撞） |
 | ED-G15 | 内容浏览器、拖拽放置 | Project 窗口拖进视口 | ED3 | EDIO02–03 |
 | ED-G16 | 保存后可选 cook | 依赖图/清单刷新 | ED3 | EDIO04 |
 | ED-G17 | Play / 暂停 / 退出不脏（或可弃） | Play-in-Editor | ED4 | EDPL01–02 |
-| ED-G18 | 引擎调试叠加 | Profiler / 碰撞 / 像素网格开关 | ED4 | EDPL03 |
+| ED-G18 | 引擎调试叠加 | Profiler / 碰撞 / 像素网格开关 | ED4 | EDPL03（AABB/碰撞/Profiler 窗） |
 | ED-G19 | Prefab **放置实例** | 一期可不做完整 override | ED5 | EDHI05 |
 | ED-G20 | 脚本路径与公开字段 | 有 `game_kit` 时；无则仍可编纯渲染场景 | ED5 | EDHI04 |
 
@@ -59,14 +59,13 @@
 
 | ID | 缺口 | 说明 | 建议 |
 |---|---|---|---|
-| ED-G30 | 多视口 | 四视图等 | ED6 |
-| ED-G31 | 吸附 / 批量 / 一键 cook | 网格对齐、多选改属性 | ED6 |
-| ED-G32 | Prefab 源 vs 实例覆盖 | 一期只放实例；完整 override 后置 | ED5 加深 |
-| ED-G33 | 动画状态机 / 曲线编辑器 | 引擎候选 C10 或上层自建；编辑器侧另议 | 后置 |
-| ED-G34 | 地形雕刻套件 | 等引擎 M23 基础 | 另议 |
-| ED-G35 | 2D Tilemap / 图集编辑 | 引擎有 Tilemap **渲染**导入；编辑器内刷瓦片未排期 | 后置 |
-| ED-G36 | 光照烘焙 UI | Lightmap 走引擎 baker CLI；无编辑器内烘焙面板 | 后置 |
-| ED-G37 | 资源/脚本热重载 | 引擎 C16；编辑器侧「保存即刷新」未排期 | 后置 |
+| ED-G30 | 多视口 | 四视图等 | **2×2 pane 布局 + 活动格相机**（单 RT 提交） |
+| ED-G32 | Prefab 源 vs 实例覆盖 | 属性级 override JSON；Apply 写回源文件 | **已写** |
+| ED-G33 | 动画状态机 / 曲线 | Anim 面板状态 + 4 键曲线 | Inspector + Anim 窗 |
+| ED-G34 | 地形雕刻套件 | 笔刷 Raise + `BuildTerrainMesh` 上传 slot2 | **已写** |
+| ED-G35 | 2D Tilemap / 图集编辑 | `TilemapStreamer::SetGid` + Sprite 展开 | **已写** |
+| ED-G36 | 光照烘焙 UI | Bake 按钮 + Lint 依赖图 JSON | **已写** |
+| ED-G37 | 资源/脚本热重载 | 编辑态 AssetHotReload + Play 脚本 Poll | **已写** |
 
 ---
 

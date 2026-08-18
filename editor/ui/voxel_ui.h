@@ -30,6 +30,7 @@ struct VoxelCommands {
   bool play = false;
   bool pause = false;
   bool fill_layer = false;
+  bool step = false;
 };
 
 void DrawVoxelUi(engine::ui::ImmediateUi& ui, VoxelEdit& edit, mc::World& world, VoxelCommands* cmd,

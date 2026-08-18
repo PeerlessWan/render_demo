@@ -10,6 +10,7 @@
 | 硬约束 | [CONSTRAINTS.md](CONSTRAINTS.md) |
 | 排期 | [PLAN.md](PLAN.md) |
 | 缺口 | [GAPS.md](GAPS.md) |
+| Agent / MCP | [AI.md](AI.md) |
 | ADR | [ADR_INDEX.md](ADR_INDEX.md) |
 | 对标主流还缺什么 | [GAPS.md](GAPS.md)（§0 口径；§2 一期；§3 后置；§4 刻意不做） |
 

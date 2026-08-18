@@ -20,12 +20,12 @@
 |---|---|---|---|
 | G01 | 跨后端（VK） | **Win 双后端 100% 收口**（见 [VULKAN_PARITY.md](VULKAN_PARITY.md)）：全栈 post、GPU 实例/Cull/Indirect、探针/IBL 分槽；Linux 仍外置 | M17 |
 | G18 | Mesh Shader / GPU Driven | **Cull/Indirect 两端可用**；Bindless 热路径 Feature `bindless_hot_path`（默认 OFF 保黄金图）；VK bindless SKIP | M24 |
-| G19 | Linux | **文档+构建说明加深**（[LINUX.md](LINUX.md)、`ENGINE_LINUX_VK`）；X11 窗口/运行时冒烟视 CI | M18 |
+| G19 | Linux | **文档+构建说明加深**（[LINUX.md](LINUX.md)、`ENGINE_LINUX_VK`）；X11 窗口/运行时冒烟视 CI；**Wayland 文档钉死后置**（W10） | M18 / W10 |
 | G02–G04、G11 | 混合打磨 / 拣选 / 多 DPI | **可用加深** | M20 |
 | G05–G10、G12 | 2D 深度 | **已加深**：chunk→Sprite 展开；SkeletonClip2D；雾 tint / BMFont JSON / 震屏 | M21 |
-| G14 | 动态 GI | **已加深**：ProbeVolume + Lightmap 共存；W6 `RefineDensity` 加密网格（非 DDGI）；见 [gi/README.md](gi/README.md)、[ADR 0033](learn/adr/0033-m27-w6-scene-scale.md) | M22 / W6 |
-| G15 | 地形/水体/植被（基础） | **可用加深** | M23 |
-| G16 | 光追 API 对齐 | **完成（加深）** Feature 门控；W7 `TryBuildCubeBlasTlasAndDispatchRays` 真 BLAS/TLAS+DispatchRays | M25 / W7 |
+| G14 | 动态 GI | **Mega-W10 DDGI-lite**：`BlendNeighborhood` / `CascadeRefine`（CPU，**非** NVIDIA DDGI）；W6 `RefineDensity`；ProbeVolume + Lightmap | M22 / W6 / W10 |
+| G15 | 地形/水体/植被（基础） | **可用加深**；W10 大地形 ChunkStream + CC0 高度图 | M23 / W10 |
+| G16 | 光追 API 对齐 | **完成（加深）** Feature 门控；W7 真 AS/DispatchRays；**W10** `TryHalfResSoftShadowCompose` 半分辨率软阴影 stub（无路径 → Unavailable SKIP） | M25 / W7 / W10 |
 | T01 | 最小工具链（shader/IBL/纹理/cook/黄金图） | 已排期 | M2–M9；见 [TOOLING.md](TOOLING.md) |
 | T03 | 自动化测试加深（准/广） | **Q1–Q3 + C1–C3 + C5–C7 + Q5 ROI 已落地**；C4 双后端比图（默认 ROI + 松闸≈90 PASS，现 RMSE≈74；`--strict` / `-StrictParity` 紧闸 48 可选严） | [PLAN.md](PLAN.md) **§3.1**；不扩 MCP/Harness 命令 |
 | T02 | 图集约定 + Tiled 导入 | 已排期 | M16 |
@@ -62,16 +62,16 @@
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C06 | Virtual Texture 产品化 | **加深（W9）**：GPU feedback stub + 页上传；Feature `virtual_texture`；**无 Nanite**；**非默认全材质** | 中 |
-| C07 | HLOD / Impostor | **最小落地（W9）**：`BillboardImpostor` 距离切换 + placeholder bake | 中 |
-| C08 | Meshlet / 更完整 GPU 几何管线 | **加深（W9）**：cook + Cull；D3D12 真 MS PSO / `DispatchMesh`；VK `VK_EXT_mesh_shader` 探测（无扩展 SKIP） | 中 |
+| C06 | Virtual Texture 产品化 | **加深（W9/W10）**：GPU feedback stub + 页上传；Feature `virtual_texture`；**`vt_near_default` / EffectTuning「近默认」开关（默认 OFF）**；**无 Nanite**；**非默认全材质** | 中 |
+| C07 | HLOD / Impostor | **最小落地（W9/W10）**：`BillboardImpostor` 距离切换 + placeholder bake + **`SerializeBakeToFile` 落盘** | 中 |
+| C08 | Meshlet / 更完整 GPU 几何管线 | **加深（W9/W10）**：cook + Cull；D3D12 真 MS；VK mesh shader 探测；`MeshletizePreferMeshoptimizer`（缺库 AABB）；`third_party/meshoptimizer` stub + `tools/fetch_meshoptimizer.ps1` | 中 |
 | C09 | FFT / 高级水面 | **Mega-W8**：无限平铺 FFT 海 + 浮力 | 低 |
 
 ### 4.3 动画与角色
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C10 | 动画混合树 / 状态机 | **Mega-W8/W9**：Blend1D/2D + mask + AnimNotify + SampleTree；W9 加深 SM crossfade / BlendTree·SM 最小序列化（ADR 0036） | 高 |
+| C10 | 动画混合树 / 状态机 | **Mega-W8/W9/W10**：Blend1D/2D + mask + AnimNotify + SampleTree；SM crossfade；序列化 + **WriteFile/ReadFile 落盘 round-trip** | 高 |
 | C11 | IK | **Mega-W8**：`SolveTwoBoneIK` | 中 |
 | C12 | GPU 蒙皮产品化打磨 | **Mega-W8/W9**：D3D12 + Vulkan CS；主路径 `SkinMesh` Feature `gpu_skinning` 双后端尝试 | 低 |
 
@@ -94,7 +94,7 @@
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C16 | 资源热更 / 着色器热重载 | **部分落地（W8/W9）**：`ShaderHotReload` / `AssetHotReload` Poll + Consume；Sandbox 宿主可响应重建请求（真 PSO 闭环见 ADR 0036） | 中 |
+| C16 | 资源热更 / 着色器热重载 | **部分落地（W8/W9/W10）**：`ShaderHotReload` / `AssetHotReload`；**`TryCompileHlslWithDxc`（PATH 有 dxc 则编，否则 Unavailable SKIP）**；Sandbox 可响应重建（真 PSO 闭环见 ADR 0036） | 中 |
 | C17 | 多窗口 / 多 GPU | **钉死（W9）**：单窗口单适配器；**不实装**；见 [C17_MULTI_WINDOW.md](C17_MULTI_WINDOW.md) | 低（不做） |
 | C18 | 立体 / XR 渲染 | 输入层可预留适配器；渲染未排期 | 低（易扩范围） |
 

@@ -17,6 +17,8 @@ add_executable(engine_unit_tests
   unit/test_m31.cpp
   unit/test_m32.cpp
   unit/test_m33.cpp
+  unit/test_m34.cpp
+  unit/test_m35.cpp
   unit/test_product_wave_stubs.cpp
   unit/test_headless_integration.cpp
   unit/test_usable.cpp
@@ -33,6 +35,8 @@ target_link_libraries(engine_unit_tests PRIVATE
   engine_animation
   engine_post
   engine_physics
+  engine_gameplay
+  engine_clothing
   engine_media
   engine_ui
   engine_render2d

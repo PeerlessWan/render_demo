@@ -8,51 +8,49 @@
 |---|---|---|---|
 | EDVP01 | 3D/2D 视口 | 经引擎 Present；质量档可降以保编辑流畅 | 已写 |
 | EDVP02 | 编辑相机 | 飞行/轨道；与游戏相机分离 | 已写 |
-| EDVP03 | 网格/Gizmo | 平移旋转缩放；吸附可选 | 已写（轴命中 Move/Rotate/Scale） |
+| EDVP03 | 网格/Gizmo | 平移旋转缩放；吸附可选 | 已写（轴/环；Local/World；无轴时 Y 平面拖） |
 | EDVP04 | 选中高亮 | 轮廓或 DebugDraw；复用引擎拣选能力（对齐 M20） | 已写 |
-| EDVP05 | 多视口 | 后置 | 候选 |
+| EDVP05 | 多视口 | 2×2 pane；活动格驱动相机 | 已写 |
 
 ## 2. 层级与属性
 
 | ID | 功能 | 说明 | 状态 |
 |---|---|---|---|
-| EDHI01 | 场景树 | 显隐、重父级、搜索 | 已写（缩进/过滤；无重父级/搜索框） |
-| EDHI02 | 检视器 | 变换、灯光、相机、材质引用（AssetId） | 已写（变换/mesh/欧拉/显隐） |
-| EDHI03 | 创建/删除节点 | 基本类型（空节点、网格实例、灯、精灵…） | 已写（Cube/Empty/Ground/Player） |
-| EDHI04 | 脚本组件字段 | 若链 game_kit：显示公开字段、脚本路径 | 已写（路径字符串） |
-| EDHI05 | Prefab 编辑 | 实例覆盖 vs 源；一期可只「放置实例」 | 已写（放置实例） |
+| EDHI01 | 场景树 | 显隐、重父级、搜索 | 已写（DnD 重父级 / 搜索 / 改名 / Ctrl 多选） |
+| EDHI02 | 检视器 | 变换、灯光、相机、材质引用（AssetId） | 已写（World Light/Camera/Collider + 材质槽） |
+| EDHI03 | 创建/删除节点 | Cube/Empty/Ground/Player/Light/Camera/Collider/Sprite | 已写 |
+| EDHI04 | 脚本组件字段 | `--@export` + persist | 已写 |
+| EDHI05 | Prefab 编辑 | 放置 + 属性 override + Apply 写回源 | 已写 |
 
 ## 3. 内容与 IO
 
 | ID | 功能 | 说明 | 状态 |
 |---|---|---|---|
-| EDIO01 | 打开/保存场景 | 与引擎序列化格式一致 | 已写（game_kit SceneDocument） |
-| EDIO02 | 内容浏览器 | 按 Manifest/AssetId 浏览 | 已写（扫 editor/content json） |
-| EDIO03 | 拖拽放置 | 网格/Prefab 拖入视口 | 已写（内容列表点选后视口放置） |
-| EDIO04 | 调用 cook | 保存后可选跑清单刷新 | 已写（找到 asset_cook 则调） |
-| EDIO05 | Undo/Redo | 属性与变换栈 | 已写 |
+| EDIO01 | 打开/保存场景 | SceneDocument v3 | 已写 |
+| EDIO02 | 内容浏览器 | Manifest/AssetId + 色块缩略图 | 已写 |
+| EDIO03 | 拖拽放置 | Content 拖进视口；Hierarchy DnD | 已写 |
+| EDIO04 | 调用 cook | 保存后可选跑清单刷新 | 已写 |
+| EDIO05 | Undo/Redo | 变换/创建删除/属性/重父级 | 已写 |
 
 ## 4. 播放与调试
 
 | ID | 功能 | 说明 | 状态 |
 |---|---|---|---|
-| EDPL01 | Play-in-Editor | 进入/退出；快照策略 | 已写（场景 player+脚本；体素 HUD） |
-| EDPL02 | 暂停 | 逻辑暂停 | 已写 |
-| EDPL03 | 引擎调试叠加 | 可开 Profiler/碰撞/像素网格等 | 已写（网格/Gizmo/节点数/FPS；无 Profiler） |
+| EDPL01 | Play-in-Editor | 克隆 World；退出不脏编辑场景 | 已写 |
+| EDPL02 | 暂停 | 逻辑暂停 | 已写（含 Step） |
+| EDPL03 | 引擎调试叠加 | Profiler / 碰撞 / 网格 | 已写 |
 
-## 5. 后置（一期不做，对标主流仍弱）
-
-> 缺口 ID 见 [GAPS.md](GAPS.md) §3。立项须改 PLAN。
+## 5. 后置（对标主流仍弱的产品切片）
 
 | 项 | 说明 |
 |---|---|
-| 多视口 / 吸附 / 批量 / 一键 cook | ED6 |
-| Prefab 源 vs 实例覆盖 | 一期只放置实例 |
-| 动画状态机 / 曲线编辑器 | 引擎 C10 或上层；编辑器侧另议 |
-| 地形雕刻套件 | 引擎 M23 后另议 |
-| 2D Tilemap / 图集刷瓦 | 引擎有渲染导入；编辑器内编辑未排期 |
-| 光照烘焙面板 | 走引擎 baker CLI |
-| 资源/脚本热重载 | 引擎 C16；编辑器「保存即刷新」未排期 |
+| 多视口 | 2×2 活动格；非 GPU RTT 四分屏 |
+| Prefab | 属性 override + Apply 写回；嵌套 catalog |
+| 动画 | 状态机拓扑 + 4 键曲线 |
+| 地形 | 笔刷 + TerrainMesh 上传 |
+| Tilemap | Streamer GID + Sprite 展开 |
+| Bake/Lint | CLI + 依赖图 JSON |
+| 热重载 | AssetHotReload + 脚本 Poll |
 
 ## 6. 明确不做（不要当欠债）
 

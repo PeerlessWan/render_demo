@@ -8,3 +8,7 @@ textures/ph/*
   Poly Haven CC0 textures (1k JPEG)
   red_brick_03, metal_plate
   https://polyhaven.com/
+
+scenes/large_terrain/heightmap_512.png
+  Procedural CC0 heightmap (Mega-W10); see scenes/large_terrain/LICENSE.txt
+  Optional larger CC0 maps: scenes/large_terrain/download_large_terrain.ps1

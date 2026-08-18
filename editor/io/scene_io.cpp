@@ -8,6 +8,13 @@ engine::Status SaveScene(const engine::scene::World& world, const std::filesyste
   return game_kit::SaveSceneDocument(game_kit::CaptureWorld(world), path);
 }
 
+engine::Status SaveScene(const engine::scene::World& world, const std::filesystem::path& path,
+                         const std::unordered_map<engine::scene::NodeId, NodeMeta>& meta) {
+  auto doc = game_kit::CaptureWorld(world);
+  StampMeta(&doc, meta);
+  return game_kit::SaveSceneDocument(doc, path);
+}
+
 engine::Status LoadScene(engine::scene::World& world, const std::filesystem::path& path) {
   auto doc = game_kit::LoadSceneDocument(path);
   if (!doc) {

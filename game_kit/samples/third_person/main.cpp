@@ -38,6 +38,7 @@ class CorridorModule final : public game_kit::IGameModule {
     app.set_move_speed(0.f);
     app.set_look_with_lmb(false);
     app.set_look_with_rmb(false);
+    game_kit::PlayerController::InstallPlayDefaults(app.input());
 
 #ifdef GAME_KIT_SAMPLE_DIR
     rt_.set_script_root(GAME_KIT_SAMPLE_DIR);
@@ -52,9 +53,11 @@ class CorridorModule final : public game_kit::IGameModule {
     hud_ = engine::ui::CreateRetainedUiBackend();
     (void)engine::ui::LoadRmlDocumentFromMemory(*hud_,
                                                 "<rml><head></head><body>GK3</body></rml>");
-    hud_->Panel("hud", 16.f, 16.f, 280.f, 72.f);
+    hud_->Panel("hud", 16.f, 16.f, 280.f, 96.f);
     hud_->Label("msg", "Reach the far cube", 28.f, 36.f);
+    hud_->Button("save", "Save", 28.f, 64.f, 72.f, 22.f);
     rt_.set_ui(hud_.get());
+    rt_.set_script_debug(true);
 
     engine::physics::RigidBodyDesc floor;
     floor.position = {0.f, -0.5f, 8.f};
@@ -72,6 +75,12 @@ class CorridorModule final : public game_kit::IGameModule {
 
     goal_pos_ = {0.f, 1.f, 16.f};
 
+    rt_.events().Subscribe("ui.click.save", [this](std::string_view) {
+      (void)game_kit::SaveSnapshot(rt_.saves(), 0, game_kit::CaptureSnapshot(rt_, rt_.world()));
+      if (hud_) {
+        hud_->set_text("msg", "Saved");
+      }
+    });
     rt_.events().Subscribe("level.complete", [this](std::string_view) {
       done_ = true;
       if (hud_) {
@@ -89,6 +98,8 @@ class CorridorModule final : public game_kit::IGameModule {
           rt.entities().Create("player", p);
           rt.entities().Create("goal", goal);
           rt.triggers().Add("goal", goal, {1.6f, 1.6f, 1.6f}, "player");
+          rt.nav().AddObstacle({2.f, 0.5f, 8.f}, {0.6f, 0.5f, 0.6f});
+          (void)rt.nav().BakeFromObstacles();
           const auto sid =
               rt.scripts().Attach(goal, rt.ResolveScriptPath("scripts/goal.lua").string());
           if (auto* sc = rt.scripts().Get(sid)) {

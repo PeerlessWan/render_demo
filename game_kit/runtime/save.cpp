@@ -1,5 +1,6 @@
 #include "game_kit/save.h"
 
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 
@@ -12,13 +13,17 @@ std::filesystem::path SaveSlots::SlotPath(int index) const {
 }
 
 engine::Status SaveSlots::Write(int index, std::string_view payload) {
+  return Write(index, payload, kSaveFormatCurrent);
+}
+
+engine::Status SaveSlots::Write(int index, std::string_view payload, int version) {
   std::error_code ec;
   std::filesystem::create_directories(dir_, ec);
   std::ofstream out(SlotPath(index), std::ios::binary);
   if (!out) {
     return engine::Status::Fail("cannot write save slot");
   }
-  out << "{\"slot\":" << index << ",\"payload\":\"";
+  out << "{\"slot\":" << index << ",\"version\":" << version << ",\"payload\":\"";
   for (char c : payload) {
     if (c == '\\' || c == '"') {
       out << '\\';
@@ -43,6 +48,14 @@ engine::Result<SaveSlot> SaveSlots::Read(int index) const {
   const std::string text = ss.str();
   SaveSlot slot;
   slot.index = index;
+  slot.version = 0;
+  const auto ver = text.find("\"version\"");
+  if (ver != std::string::npos) {
+    const auto colon = text.find(':', ver);
+    if (colon != std::string::npos) {
+      slot.version = std::atoi(text.c_str() + colon + 1);
+    }
+  }
   const auto key = text.find("\"payload\"");
   if (key == std::string::npos) {
     return engine::Result<SaveSlot>::Fail("save slot malformed");

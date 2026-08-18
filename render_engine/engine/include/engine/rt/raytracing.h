@@ -69,4 +69,9 @@ Status TryBuildCubeBlasTlasAndDispatchRays(
 // Ok when extension present; else Unavailable SKIP.
 [[nodiscard]] Status TryVkTraceRaysDemoStub();
 
+// Mega-W10: half-resolution soft-shadow Feature stub (compose factor only; not production RT).
+// Ok + message when Feature raytracing is on and a DXR demo path is available;
+// else Unavailable SKIP.
+[[nodiscard]] Status TryHalfResSoftShadowCompose(float& out_shadow_factor);
+
 }  // namespace engine::rt

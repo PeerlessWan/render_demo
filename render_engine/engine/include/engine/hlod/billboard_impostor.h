@@ -1,7 +1,9 @@
 #pragma once
 
 #include "engine/core/math.h"
+#include "engine/core/result.h"
 
+#include <filesystem>
 #include <string>
 
 namespace engine::hlod {
@@ -25,5 +27,10 @@ struct BillboardImpostor {
 
 // Placeholder "bake": returns a solid-color texture id string for unit tests (no GPU).
 [[nodiscard]] std::string BakeImpostorPlaceholder(const ColorRgba& color);
+
+// Mega-W10: write placeholder bake id + impostor fields to a small text file (CPU, no GPU).
+[[nodiscard]] Status SerializeBakeToFile(const BillboardImpostor& impostor,
+                                         const ColorRgba& bake_color,
+                                         const std::filesystem::path& path);
 
 }  // namespace engine::hlod

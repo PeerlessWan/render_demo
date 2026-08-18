@@ -4,9 +4,16 @@
 #include "editing/selection.h"
 #include "editing/settings.h"
 #include "editing/snap.h"
+#include "editing/terrain_edit.h"
+#include "editing/tile_edit.h"
 #include "editing/undo.h"
+#include "editing/viewport_layout.h"
 #include "editing/voxel_undo.h"
+#include "cmd/session.h"
+#include "mcp/live_io.h"
+#include "mcp/protocol.h"
 #include "io/content_browser.h"
+#include "io/dep_graph.h"
 #include "io/scene_io.h"
 #include "play/scene_play.h"
 #include "ui/editor_ui.h"
@@ -16,6 +23,7 @@
 #include "game_kit/runtime.h"
 #include "game_kit/scene_document.h"
 #include "game_kit/script_component.h"
+#include "game_kit/script_hot_reload.h"
 #include "io/world_save.h"
 #include "sim/gameplay.h"
 #include "sim/player.h"
@@ -25,14 +33,21 @@
 #include "world/chunk.h"
 #include "world/trace.h"
 
+#include "engine/assets/asset_hot_reload.h"
 #include "engine/app/application.h"
 #include "engine/core/log.h"
+#include "engine/debug/console.h"
+#include "engine/debug/debug_draw.h"
 #include "engine/input/input_system.h"
 #include "engine/mixed/pick.h"
+#include "engine/physics/i_physics_world.h"
 #include "engine/platform/window.h"
 #include "engine/render/environment.h"
+#include "engine/render/local_lights.h"
 #include "engine/render/quality.h"
+#include "engine/render/render_scene.h"
 #include "engine/render/render_system.h"
+#include "engine/render2d/tilemap_stream.h"
 #include "engine/rhi/i_device.h"
 #include "engine/ui/immediate_ui.h"
 #include "engine/ui/rml_ui.h"
@@ -239,19 +254,30 @@ int main(int argc, char** argv) {
     engine::LogError(st.message());
     return 1;
   }
+  engine::debug::Profiler profiler;
+  render.SetProfiler(&profiler);
 
   editor::Selection sel;
   editor::UndoStack undo;
   editor::VoxelUndo voxel_undo;
   editor::EditorSettings settings;
+  settings.heights.assign(17 * 17, 0.f);
+  settings.tiles.assign(16 * 16, 0);
+  editor::LiveServer live;
+  (void)live.Start();
+  game_kit::ScriptHotReload hot;
+  hot.SetRoot(std::filesystem::path("editor/scripts"));
+  std::unique_ptr<engine::physics::IPhysicsWorld> phys;
+  engine::render::Camera edit_cam = a.camera();
   editor::VoxelEdit voxel;
   voxel.enabled = start_voxel;
+  settings.workspace = start_voxel ? 1 : 0;
   mc::GameState vox;
   vox.world.set_seed(1);
   vox.world.StreamAround(0, 0, 3);
   bool lmb_prev = false;
   bool rmb_prev = false;
-  const auto scene_path = std::filesystem::path("editor_scene.json");
+  auto scene_path = std::filesystem::path("editor_scene.json");
   std::unordered_map<engine::scene::NodeId, NodeMeta> meta;
   int pending_prefab = -1;
   int pending_content = -1;
@@ -267,6 +293,12 @@ int main(int argc, char** argv) {
   game_kit::ScriptComponentWorld play_scripts;
   editor::ContentBrowser content;
   std::vector<std::string> script_files;
+  engine::scene::World play_world;
+  engine::render2d::TilemapStreamer tiles;
+  engine::assets::AssetHotReload assets_hot;
+  assets_hot.SetRoot(std::filesystem::path("editor/content"));
+  editor::SyncStreamer(settings.tiles, &tiles);
+  std::string lint_json;
   auto rescan_content = [&] {
     content.Scan({std::filesystem::path("editor/content"), std::filesystem::path("game_kit/samples")});
     editor::ScanLuaScripts({std::filesystem::path("scripts"), std::filesystem::path("editor/scripts")},
@@ -281,19 +313,24 @@ int main(int argc, char** argv) {
     const float h = static_cast<float>(app_ref.window().height());
     const float aspect = h > 0.f ? w / h : 1.f;
 
+    engine::scene::World& live_world =
+        (playing && !voxel.enabled) ? play_world : app_ref.world();
     imgui.BeginFrame(snap, w, h, app_ref.delta_time());
+    const bool ctrl_ui = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
     editor::EditorCommands cmd;
     editor::VoxelCommands vcmd;
     std::string script_edit;
-    if (app_ref.world().valid(sel.node) && meta.count(sel.node)) {
+    if (live_world.valid(sel.node) && meta.count(sel.node)) {
       script_edit = meta[sel.node].script_path;
     }
-    editor::DrawEditorUi(imgui, app_ref.world(), sel, undo, scene_path, settings, &cmd, &script_edit,
+    editor::DrawEditorUi(imgui, live_world, sel, undo, scene_path, settings, &cmd, &script_edit,
                          playing && !voxel.enabled, paused_play, &content, script_files,
-                         app_ref.delta_time() > 1e-4f ? 1.f / app_ref.delta_time() : 0.f);
-    if (app_ref.world().valid(sel.node)) {
+                         app_ref.delta_time() > 1e-4f ? 1.f / app_ref.delta_time() : 0.f, ctrl_ui,
+                         &meta);
+    if (live_world.valid(sel.node)) {
       meta[sel.node].script_path = script_edit;
     }
+    voxel.enabled = settings.workspace == 1;
     editor::DrawVoxelUi(imgui, voxel, vox.world, &vcmd, playing && voxel.enabled);
     imgui.RefreshCapture();
     app_ref.set_ui_want_capture(imgui.want_capture_mouse() || imgui.want_capture_keyboard());
@@ -308,6 +345,12 @@ int main(int argc, char** argv) {
     }
     if (cmd.cook) {
       (void)editor::TryRunAssetCook();
+    }
+    if (cmd.bake) {
+      (void)editor::TryRunTool("lightmap_baker");
+    }
+    if (cmd.lint) {
+      (void)editor::TryRunTool("content_lint");
     }
     if (cmd.save_prefab && app_ref.world().valid(sel.node) && !playing) {
       const auto name = app_ref.world().name(sel.node).empty() ? "selection" : app_ref.world().name(sel.node);
@@ -324,6 +367,33 @@ int main(int argc, char** argv) {
       pending_prefab = -1;
     }
 
+    auto apply_scene_file = [&](const std::filesystem::path& path) {
+      auto doc = game_kit::LoadSceneDocument(path);
+      if (!doc) {
+        engine::LogError(doc.status().message());
+        return false;
+      }
+      game_kit::ClearWorld(app_ref.world());
+      if (auto st = game_kit::ApplyWorld(app_ref.world(), doc.value()); !st) {
+        engine::LogError(st.message());
+        return false;
+      }
+      sel.Clear();
+      undo.Clear();
+      settings.dirty = false;
+      scene_path = path;
+      auto cap = game_kit::CaptureWorld(app_ref.world());
+      editor::RestoreMeta(doc.value(), cap, &meta);
+      editor::SyncWorldToMeta(app_ref.world(), &meta);
+      engine::LogInfo("loaded " + path.string());
+      return true;
+    };
+    if (cmd.open_scene >= 0 && !playing &&
+        cmd.open_scene < static_cast<int>(content.items.size())) {
+      const auto& item = content.items[static_cast<std::size_t>(cmd.open_scene)];
+      (void)apply_scene_file(item.path);
+    }
+
     auto persist_scene = [&] {
       auto doc = game_kit::CaptureWorld(app_ref.world());
       editor::StampMeta(&doc, meta);
@@ -338,22 +408,7 @@ int main(int argc, char** argv) {
       persist_scene();
     }
     if (cmd.load) {
-      auto doc = game_kit::LoadSceneDocument(scene_path);
-      if (!doc) {
-        engine::LogError(doc.status().message());
-      } else {
-        game_kit::ClearWorld(app_ref.world());
-        if (auto st = game_kit::ApplyWorld(app_ref.world(), doc.value()); !st) {
-          engine::LogError(st.message());
-        } else {
-          sel.Clear();
-          undo.Clear();
-          settings.dirty = false;
-          auto cap = game_kit::CaptureWorld(app_ref.world());
-          editor::RestoreMeta(doc.value(), cap, &meta);
-          engine::LogInfo("loaded " + scene_path.string());
-        }
-      }
+      (void)apply_scene_file(scene_path);
     }
     if (vcmd.save) {
       if (auto st = mc::SaveWorld(vox, voxel.dir); !st) {
@@ -377,6 +432,89 @@ int main(int argc, char** argv) {
       voxel.dirty = true;
     }
 
+    auto bind_session = [&]() {
+      editor::EditorSession s;
+      s.edit_world = &app_ref.world();
+      s.play_world = &play_world;
+      s.world = (playing && !voxel.enabled) ? &play_world : &app_ref.world();
+      s.sel = &sel;
+      s.undo = &undo;
+      s.settings = &settings;
+      s.meta = &meta;
+      s.scene_path = &scene_path;
+      s.playing = &playing;
+      s.paused = &paused_play;
+      s.rt = &rt;
+      s.scripts = &play_scripts;
+      s.scene_snap = &scene_snap;
+      s.content = &content;
+      s.lint_json = &lint_json;
+      return s;
+    };
+
+    {
+      std::vector<std::string> live_lines;
+      live.Poll(&live_lines);
+      for (const auto& line : live_lines) {
+        const auto out = editor::HandleMcpSession(bind_session(), line);
+        if (!out.empty()) {
+          live.Reply(out);
+        }
+      }
+    }
+
+    if (cmd.create_kind >= 0 && !playing && !voxel.enabled) {
+      editor::EditorOp op;
+      op.kind = editor::EditorOp::Kind::Create;
+      const char* kinds[] = {"cube", "empty", "ground", "player", "light", "camera", "collider", "sprite"};
+      op.create_kind = kinds[cmd.create_kind < 8 ? cmd.create_kind : 0];
+      (void)editor::ApplyOp(bind_session(), op);
+    }
+    if (!cmd.drop_parent.empty() && !cmd.drop_payload.empty() && !playing) {
+      const auto child = static_cast<engine::scene::NodeId>(std::strtoul(cmd.drop_payload.c_str(), nullptr, 10));
+      if (live_world.valid(child)) {
+        sel.Set(child);
+        editor::EditorOp op;
+        op.kind = editor::EditorOp::Kind::SetParent;
+        op.name = cmd.drop_parent;
+        (void)editor::ApplyOp(bind_session(), op);
+      }
+    }
+    if (!app_ref.ui_want_capture()) {
+      std::string payload;
+      if (imgui.PeekDragDrop("content", &payload) && imgui.IsMouseReleased(0)) {
+        pending_content = std::atoi(payload.c_str());
+        pending_prefab = -1;
+      }
+    }
+    if (cmd.lint) {
+      editor::EditorOp op;
+      op.kind = editor::EditorOp::Kind::Lint;
+      const auto r = editor::ApplyOp(bind_session(), op);
+      lint_json = r.json;
+    }
+
+    if (cmd.sculpt) {
+      editor::RaiseHeight(&settings.heights, settings.tile_x, settings.tile_y, settings.sculpt, 2.f);
+      (void)editor::UploadTerrainMesh(app_ref.device(), app_ref.world(), settings.heights, 2);
+      settings.dirty = true;
+    }
+    if (cmd.tile_paint) {
+      editor::PaintTile(&settings.tiles, &tiles, settings.tile_x, settings.tile_y, settings.tile_gid);
+      editor::SyncStreamer(settings.tiles, &tiles);
+      settings.dirty = true;
+    }
+    if (cmd.apply_prefab) {
+      editor::EditorOp op;
+      op.kind = editor::EditorOp::Kind::ApplyPrefab;
+      (void)editor::ApplyOp(bind_session(), op);
+    }
+    if (cmd.revert_prefab) {
+      editor::EditorOp op;
+      op.kind = editor::EditorOp::Kind::RevertPrefab;
+      (void)editor::ApplyOp(bind_session(), op);
+    }
+
     auto toggle_play = [&](bool voxel_play) {
       if (!playing) {
         playing = true;
@@ -384,10 +522,10 @@ int main(int argc, char** argv) {
         if (voxel_play) {
           voxel.enabled = true;
           (void)mc::SaveWorld(vox, voxel_snap_dir);
-          vox.player.pos = app_ref.camera().position - engine::Vec3{0.f, 1.62f, 0.f};
-          vox.player.creative = true;
-          vox.player.flying = true;
-          mc::FillCreativeInventory(&vox.player.inv);
+          mc::SpawnOnSurface(vox.world, &vox.player);
+          mc::GiveSurvivalKit(&vox.player);
+          vox.player.creative = false;
+          vox.player.flying = false;
           app_ref.set_move_speed(0.f);
         } else {
           scene_snap = game_kit::CaptureWorld(app_ref.world());
@@ -401,6 +539,8 @@ int main(int argc, char** argv) {
         playing = false;
         paused_play = false;
         play_scripts.Clear();
+        rt.entities().Clear();
+        rt.set_world(nullptr);
         if (voxel_play || voxel.enabled) {
           (void)mc::LoadWorld(&vox, voxel_snap_dir);
           app_ref.set_move_speed(5.5f);
@@ -414,13 +554,28 @@ int main(int argc, char** argv) {
       }
     };
     if (cmd.play && !voxel.enabled) {
-      toggle_play(false);
+      editor::EditorOp op;
+      op.kind = playing ? editor::EditorOp::Kind::Stop : editor::EditorOp::Kind::Play;
+      if (editor::ApplyOp(bind_session(), op).ok) {
+        app_ref.set_move_speed(playing ? 0.f : 5.5f);
+      }
     }
     if (vcmd.play) {
       toggle_play(true);
     }
     if (cmd.pause || vcmd.pause) {
       paused_play = !paused_play;
+    }
+    if (cmd.step && playing && !voxel.enabled) {
+      editor::EditorOp op;
+      op.kind = editor::EditorOp::Kind::Step;
+      (void)editor::ApplyOp(bind_session(), op);
+    }
+    if (vcmd.step && playing && voxel.enabled) {
+      bool one = false;
+      mc::GameInput in;
+      in.snap = &snap;
+      (void)mc::TickGameplay(&vox, app_ref.camera(), in, 1.f / 60.f, &one, &f3_play, voxel_hud_hits);
     }
 
     const bool lmb = snap.mouse_left && !app_ref.ui_want_capture();
@@ -445,33 +600,28 @@ int main(int argc, char** argv) {
         if (voxel.enabled) {
           (void)voxel_undo.Undo(vox.world);
         } else {
-          (void)undo.Undo(app_ref.world());
+          (void)undo.Undo(app_ref.world(), &meta);
         }
       }
       if (cmd.redo || (y_down && !y_prev && ctrl)) {
         if (voxel.enabled) {
           (void)voxel_undo.Redo(vox.world);
         } else {
-          (void)undo.Redo(app_ref.world());
+          (void)undo.Redo(app_ref.world(), &meta);
         }
       }
       if (s_down && !s_prev && ctrl) {
         persist_scene();
       }
       if ((cmd.duplicate || (d_down && !d_prev && ctrl)) && !voxel.enabled) {
-        const float off = settings.snap ? settings.grid : 1.f;
-        const auto created = editor::DuplicateSelection(app_ref.world(), sel, off);
-        if (!created.empty()) {
-          sel.Set(created.front());
-          for (std::size_t i = 1; i < created.size(); ++i) {
-            sel.Toggle(created[i]);
-          }
-          settings.dirty = true;
-        }
+        editor::EditorOp op;
+        op.kind = editor::EditorOp::Kind::Duplicate;
+        (void)editor::ApplyOp(bind_session(), op);
       }
       if ((cmd.destroy || (del_down && !del_prev)) && !voxel.enabled) {
-        editor::DestroySelection(app_ref.world(), &sel);
-        settings.dirty = true;
+        editor::EditorOp op;
+        op.kind = editor::EditorOp::Kind::Destroy;
+        (void)editor::ApplyOp(bind_session(), op);
       }
       if ((cmd.frame || (f_down && !f_prev)) && !voxel.enabled) {
         editor::FrameCamera(&app_ref.camera(), app_ref.world(), sel.node);
@@ -526,6 +676,9 @@ int main(int argc, char** argv) {
         sel.Set(id);
         meta[id] = NodeMeta{prefab.prefab_id,
                             prefab.scene.nodes.empty() ? "" : prefab.scene.nodes[0].script_path};
+        std::vector<editor::NodeSnap> snaps;
+        editor::CaptureSubtree(app_ref.world(), id, meta, &snaps);
+        undo.PushSpawn(std::move(snaps));
         settings.dirty = true;
       }
     };
@@ -568,8 +721,8 @@ int main(int argc, char** argv) {
       if (!paused_play) {
         rt.Tick(app_ref, app_ref.delta_time());
         play_scripts.Tick(app_ref.delta_time());
-        const auto player = editor::FindNamed(app_ref.world(), "player");
-        if (app_ref.world().valid(player)) {
+        const auto player = editor::FindNamed(live_world, "player");
+        if (live_world.valid(player)) {
           engine::Vec3 wish{};
           if (app_ref.input().key_down(engine::input::Key::W)) {
             wish.z += 1.f;
@@ -583,9 +736,9 @@ int main(int argc, char** argv) {
           if (app_ref.input().key_down(engine::input::Key::D)) {
             wish.x += 1.f;
           }
-          editor::MovePlayerOnGround(app_ref.world(), player, app_ref.camera().yaw, wish, 5.5f,
+          editor::MovePlayerOnGround(live_world, player, app_ref.camera().yaw, wish, 5.5f,
                                     app_ref.delta_time());
-          editor::FollowPlayerCamera(&app_ref.camera(), app_ref.world().local_transform(player).position);
+          editor::FollowPlayerCamera(&app_ref.camera(), live_world.local_transform(player).position);
         }
       }
     } else if (!playing && voxel.enabled) {
@@ -651,11 +804,18 @@ int main(int argc, char** argv) {
         const auto inv_vp = app_ref.camera().view_proj_matrix(aspect).Inverse();
         const auto ray = editor::ScreenRay(snap.mouse_x, snap.mouse_y, w, h, inv_vp);
         const auto origin = app_ref.world().local_transform(sel.node).position;
+        const auto rot = app_ref.world().local_transform(sel.node).rotation;
+        const bool local = settings.gizmo_local;
+        const auto mode = static_cast<editor::GizmoMode>(settings.gizmo_mode);
         const auto hit_ax =
-            editor::HitGizmoAxes(ray, origin, editor::kGizmoLength, editor::kGizmoHitRadius);
+            mode == editor::GizmoMode::Rotate
+                ? editor::HitGizmoRotate(ray, origin, editor::kGizmoLength, editor::kGizmoHitRadius,
+                                         editor::kGizmoRingRadius, editor::kGizmoRingHit, rot, local)
+                : editor::HitGizmoAxes(ray, origin, editor::kGizmoLength, editor::kGizmoHitRadius, rot,
+                                       local);
         if (hit_ax != editor::Axis::None) {
           sel.gizmo_axis = static_cast<int>(hit_ax);
-          sel.axis_u0 = editor::AxisParam(ray, origin, hit_ax);
+          sel.axis_u0 = editor::AxisParamDir(ray, origin, editor::GizmoAxisDir(hit_ax, rot, local));
           sel.drag_acc_x = 0.f;
           sel.drag_acc_z = 0.f;
           store_origins();
@@ -678,6 +838,7 @@ int main(int argc, char** argv) {
           sel.gizmo_axis = 0;
           sel.drag_acc_x = 0.f;
           sel.drag_acc_z = 0.f;
+          sel.plane_drag = false;
           store_origins();
         }
       }
@@ -692,23 +853,34 @@ int main(int argc, char** argv) {
         } else if (!sel.drag_origins.empty()) {
           const auto inv_vp = app_ref.camera().view_proj_matrix(aspect).Inverse();
           const auto ray = editor::ScreenRay(snap.mouse_x, snap.mouse_y, w, h, inv_vp);
-          delta = editor::AxisParam(ray, sel.drag_origins.front().position,
-                                    static_cast<editor::Axis>(sel.gizmo_axis)) -
+          const auto rot = sel.drag_origins.front().rotation;
+          delta = editor::AxisParamDir(ray, sel.drag_origins.front().position,
+                                       editor::GizmoAxisDir(static_cast<editor::Axis>(sel.gizmo_axis), rot,
+                                                            settings.gizmo_local)) -
                   sel.axis_u0;
         }
         if (editor::ApplyGizmo(app_ref.world(), ids, sel.drag_origins, mode,
                                static_cast<editor::Axis>(sel.gizmo_axis), delta, settings.snap,
-                               settings.grid)) {
+                               settings.grid, settings.gizmo_local)) {
           sel.dragging = true;
           settings.dirty = true;
         }
-      } else {
-        sel.drag_acc_x += snap.mouse_dx;
-        sel.drag_acc_z += snap.mouse_dy;
-        if (editor::TranslateSelection(app_ref.world(), ids, sel.drag_origins, sel.drag_acc_x,
-                                       sel.drag_acc_z, 0.01f, settings.snap, settings.grid)) {
-          sel.dragging = true;
-          settings.dirty = true;
+      } else if (!sel.drag_origins.empty()) {
+        const auto inv_vp = app_ref.camera().view_proj_matrix(aspect).Inverse();
+        const auto ray = editor::ScreenRay(snap.mouse_x, snap.mouse_y, w, h, inv_vp);
+        engine::Vec3 hit{};
+        const float y = sel.drag_origins.front().position.y;
+        if (editor::RayHitYPlane(ray, y, &hit)) {
+          if (!sel.plane_drag) {
+            sel.plane0 = hit;
+            sel.plane_drag = true;
+          }
+          if (editor::TranslateSelectionDelta(app_ref.world(), ids, sel.drag_origins,
+                                              hit.x - sel.plane0.x, hit.z - sel.plane0.z,
+                                              settings.snap, settings.grid)) {
+            sel.dragging = true;
+            settings.dirty = true;
+          }
         }
       }
     } else if (!playing && !lmb && lmb_prev && sel.dragging) {
@@ -725,6 +897,7 @@ int main(int argc, char** argv) {
       }
       sel.dragging = false;
       sel.gizmo_axis = 0;
+      sel.plane_drag = false;
       sel.drag_acc_x = 0.f;
       sel.drag_acc_z = 0.f;
     }
@@ -736,10 +909,182 @@ int main(int argc, char** argv) {
     }
     if (!voxel.enabled && !playing && settings.show_gizmo) {
       const auto ids = sel.All();
-      editor::DrawGizmos(app_ref.debug_draw(), app_ref.world(), ids,
-                         static_cast<editor::GizmoMode>(settings.gizmo_mode));
+      editor::DrawGizmos(app_ref.debug_draw(), live_world, ids,
+                         static_cast<editor::GizmoMode>(settings.gizmo_mode), settings.gizmo_local);
+    }
+    if (!voxel.enabled && settings.show_bounds) {
+      live_world.UpdateTransforms();
+      std::vector<engine::scene::NodeId> ids = sel.All();
+      if (ids.empty()) {
+        editor::CollectAllNodes(live_world, &ids);
+      }
+      editor::DrawBounds(app_ref.debug_draw(), live_world, ids);
     }
 
+    {
+      static int last_vp = 0;
+      if (settings.split_view) {
+        if (!app_ref.ui_want_capture() && (GetAsyncKeyState(VK_LBUTTON) & 0x8000)) {
+          editor::ViewportPane panes[4];
+          int n = 0;
+          editor::LayoutViewports(1, w, h, panes, &n);
+          settings.active_pane = editor::PaneAt(panes, n, snap.mouse_x, snap.mouse_y);
+        }
+        editor::ApplyPaneCamera(settings.active_pane, &app_ref.camera(), edit_cam);
+        settings.viewport = settings.active_pane;
+      } else if (settings.viewport == 0) {
+        if (last_vp != 0) {
+          app_ref.camera() = edit_cam;
+        } else if (!playing) {
+          edit_cam = app_ref.camera();
+        }
+      } else if (settings.viewport == 1) {
+        app_ref.camera().position = {0.f, 18.f, 0.01f};
+        app_ref.camera().yaw = 0.f;
+        app_ref.camera().pitch = -1.55f;
+      } else if (settings.viewport == 2) {
+        app_ref.camera().position = {0.f, 2.f, 16.f};
+        app_ref.camera().yaw = 0.f;
+        app_ref.camera().pitch = 0.f;
+      } else if (settings.viewport == 3) {
+        app_ref.camera().position = {16.f, 2.f, 0.f};
+        app_ref.camera().yaw = -1.57f;
+        app_ref.camera().pitch = 0.f;
+      } else if (settings.viewport == 4) {
+        for (const auto& kv : meta) {
+          if (kv.second.active_camera && app_ref.world().valid(kv.first)) {
+            const auto p = app_ref.world().local_transform(kv.first).position;
+            app_ref.camera().position = p + engine::Vec3{0.f, 1.6f, 0.f};
+            break;
+          }
+        }
+      }
+      last_vp = settings.viewport;
+    }
+
+    {
+      std::vector<engine::render::LocalLight> lights;
+      int lid = 1;
+      std::vector<engine::scene::NodeId> nodes;
+      editor::CollectAllNodes(live_world, &nodes);
+      for (auto id : nodes) {
+        const auto* Lc = live_world.light(id);
+        if (!Lc) {
+          continue;
+        }
+        engine::render::LocalLight L;
+        L.id = lid++;
+        L.position = live_world.local_transform(id).position;
+        L.range = Lc->range;
+        L.intensity = Lc->intensity;
+        lights.push_back(L);
+      }
+      render.set_local_lights(lights);
+    }
+
+    if (playing && !voxel.enabled) {
+      if (!phys) {
+        phys = engine::physics::CreateDefaultPhysicsWorld();
+        if (phys) {
+          rt.set_physics(phys.get());
+          std::vector<engine::scene::NodeId> nodes;
+          editor::CollectAllNodes(live_world, &nodes);
+          for (auto id : nodes) {
+            const auto* col = live_world.collider(id);
+            if (!col) {
+              continue;
+            }
+            engine::physics::RigidBodyDesc d;
+            d.position = live_world.local_transform(id).position;
+            d.half_extents = {col->hx, col->hy, col->hz};
+            d.mass = 0.f;
+            (void)phys->CreateBox(d);
+          }
+        }
+      }
+      if (phys && !paused_play) {
+        phys->Step(app_ref.delta_time());
+      }
+    } else if (phys) {
+      rt.set_physics(nullptr);
+      phys.reset();
+    }
+
+    if (settings.hot_reload) {
+      if (assets_hot.Poll() && assets_hot.ConsumeInvalidateRequest()) {
+        editor::EditorOp op;
+        op.kind = editor::EditorOp::Kind::HotReload;
+        (void)editor::ApplyOp(bind_session(), op);
+        rescan_content();
+      }
+      if (playing) {
+        for (const auto& kv : meta) {
+          if (!kv.second.script_path.empty()) {
+            hot.WatchFile(kv.second.script_path);
+          }
+        }
+        if (hot.Poll()) {
+          for (const auto& p : hot.changed_files()) {
+            (void)play_scripts.ReloadPath(p.string(), true);
+          }
+        }
+      }
+    }
+
+    if (settings.show_collision) {
+      std::vector<engine::scene::NodeId> nodes;
+      editor::CollectAllNodes(live_world, &nodes);
+      for (auto id : nodes) {
+        const auto* col = live_world.collider(id);
+        if (!col) {
+          continue;
+        }
+        const auto p = live_world.local_transform(id).position;
+        engine::Aabb box;
+        box.min = p - engine::Vec3{col->hx, col->hy, col->hz};
+        box.max = p + engine::Vec3{col->hx, col->hy, col->hz};
+        app_ref.debug_draw().AddAabb(box, {0.2f, 0.9f, 0.3f, 1.f});
+      }
+    }
+    if (!settings.heights.empty()) {
+      const int n = 17;
+      for (int z = 0; z < n; ++z) {
+        for (int x = 0; x < n; ++x) {
+          const float ht = settings.heights[static_cast<std::size_t>(z * n + x)];
+          if (std::fabs(ht) < 0.01f) {
+            continue;
+          }
+          const engine::Vec3 a{static_cast<float>(x - 8), ht, static_cast<float>(z - 8)};
+          app_ref.debug_draw().AddLine(a, a + engine::Vec3{0.f, 0.15f, 0.f}, {0.8f, 0.5f, 0.2f, 1.f});
+        }
+      }
+    }
+    if (!settings.tiles.empty()) {
+      for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) {
+          const int gid = settings.tiles[static_cast<std::size_t>(y * 16 + x)];
+          if (gid <= 0) {
+            continue;
+          }
+          const float fx = static_cast<float>(x - 8);
+          const float fz = static_cast<float>(y - 8);
+          engine::Aabb box;
+          box.min = {fx, 0.02f, fz};
+          box.max = {fx + 0.9f, 0.04f, fz + 0.9f};
+          app_ref.debug_draw().AddAabb(box, {0.3f, 0.4f, 1.f, 1.f});
+        }
+      }
+    }
+
+    if (settings.show_profiler && imgui.BeginWindow("Profiler", 580.f, 12.f, 280.f, 220.f)) {
+      for (const auto& kv : profiler.samples_ms()) {
+        const std::string line = kv.first + " " + std::to_string(kv.second) + " ms";
+        imgui.Text(line.c_str());
+      }
+      imgui.EndWindow();
+    }
+
+    profiler.Begin("DrawFrame");
     if (voxel.enabled) {
       std::vector<engine::rhi::LitDrawItem> opaque;
       std::vector<engine::rhi::LitDrawItem> water;
@@ -769,11 +1114,17 @@ int main(int argc, char** argv) {
                    &ui_quads, &hud_hits);
       voxel_hud_hits = std::move(hud_hits);
     }
-    if (auto st = render.DrawFrame(app_ref.device(), app_ref.render_scene(), env, aspect, nullptr,
+    live_world.UpdateTransforms();
+    auto draw_scene = engine::render::RenderSceneExtractor::Extract(live_world, app_ref.camera(), aspect);
+    std::vector<engine::render2d::Sprite> tile_sprites;
+    editor::ExpandTilesToSprites(tiles, &tile_sprites);
+    if (auto st = render.DrawFrame(app_ref.device(), draw_scene, env, aspect,
+                                   tile_sprites.empty() ? nullptr : &tile_sprites,
                                    ui_quads.empty() ? nullptr : &ui_quads, &app_ref.debug_draw());
         !st) {
       engine::LogError(st.message());
     }
+    profiler.End("DrawFrame");
     if (voxel.enabled && !playing) {
       engine::rhi::ScreenQuad preview;
       preview.x0 = w - 48.f;

@@ -67,6 +67,9 @@ class Application {
 
   // Fly camera tuning (Sandbox can raise ambient/scene separately).
   void set_move_speed(float units_per_sec) { move_speed_ = units_per_sec; }
+  // When false, skip WASD/QE fly move (possess character mode); look/zoom still apply.
+  void set_fly_locomotion_enabled(bool v) { fly_locomotion_enabled_ = v; }
+  [[nodiscard]] bool fly_locomotion_enabled() const { return fly_locomotion_enabled_; }
   void set_look_sensitivity(float rad_per_pixel) { look_sensitivity_ = rad_per_pixel; }
   void set_zoom_sensitivity(float units_per_notch) { zoom_sensitivity_ = units_per_notch; }
   void set_pan_sensitivity(float units_per_pixel) { pan_sensitivity_ = units_per_pixel; }
@@ -117,6 +120,7 @@ class Application {
   std::shared_ptr<net::NetSystem> net_;
   bool ui_want_capture_ = false;
   float move_speed_ = 5.5f;
+  bool fly_locomotion_enabled_ = true;
   float look_sensitivity_ = 0.0024f;
   float zoom_sensitivity_ = 0.55f;
   float pan_sensitivity_ = 0.0045f;

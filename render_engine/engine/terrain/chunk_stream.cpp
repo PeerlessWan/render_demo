@@ -1,5 +1,8 @@
 #include "engine/terrain/chunk_stream.h"
 
+#include "engine/terrain/heightmap.h"
+
+#include <algorithm>
 #include <memory>
 
 namespace engine::terrain {
@@ -12,6 +15,17 @@ void TerrainChunkStreamer::Configure(float chunk_world_size, int load_radius_chu
   resident_.clear();
   last_cam_chunk_ = {};
   ResetCounters();
+}
+
+void TerrainChunkStreamer::ConfigureForHeightmap(const Heightmap& map, int chunks_along_short_axis,
+                                                 int load_radius_chunks,
+                                                 std::size_t bytes_per_chunk) {
+  const float wx = HeightmapWorldSizeX(map);
+  const float wz = HeightmapWorldSizeZ(map);
+  const float short_axis = std::max(1.f, std::min(wx, wz));
+  const int n = chunks_along_short_axis > 0 ? chunks_along_short_axis : 8;
+  const float chunk = short_axis / static_cast<float>(n);
+  Configure(chunk, load_radius_chunks, bytes_per_chunk);
 }
 
 void TerrainChunkStreamer::Update(const Vec3& camera_world, assets::StreamingBudget& budget) {

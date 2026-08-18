@@ -9,6 +9,7 @@
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
@@ -123,6 +124,57 @@ void EnsureJoltTypesRegistered() {
   });
 }
 
+class ContactCollector final : public JPH::ContactListener {
+ public:
+  void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold&,
+                      JPH::ContactSettings&) override {
+    Add(a, b);
+  }
+  void OnContactPersisted(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold&,
+                          JPH::ContactSettings&) override {
+    Add(a, b);
+  }
+
+  std::vector<ContactPair> Take() {
+    std::vector<ContactPair> out = std::move(pairs_);
+    pairs_.clear();
+    seen_.clear();
+    return out;
+  }
+
+ private:
+  static int BodyIndex(const JPH::Body& b) {
+    const JPH::uint64 user = b.GetUserData();
+    if (user == static_cast<JPH::uint64>(-1) || user == static_cast<JPH::uint64>(-2)) {
+      return -1;
+    }
+    return static_cast<int>(user);
+  }
+
+  void Add(const JPH::Body& a, const JPH::Body& b) {
+    int ia = BodyIndex(a);
+    int ib = BodyIndex(b);
+    if (ia < 0 || ib < 0) {
+      return;
+    }
+    if (ia > ib) {
+      std::swap(ia, ib);
+    }
+    const std::uint64_t key = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(ia)) << 32) |
+                              static_cast<std::uint32_t>(ib);
+    for (auto k : seen_) {
+      if (k == key) {
+        return;
+      }
+    }
+    seen_.push_back(key);
+    pairs_.push_back(ContactPair{ia, ib});
+  }
+
+  std::vector<ContactPair> pairs_;
+  std::vector<std::uint64_t> seen_;
+};
+
 class JoltWorld final : public IPhysicsWorld {
  public:
   JoltWorld() {
@@ -135,6 +187,8 @@ class JoltWorld final : public IPhysicsWorld {
     constexpr JPH::uint kMaxContactConstraints = 4096;
     physics_.Init(kMaxBodies, 0, kMaxBodyPairs, kMaxContactConstraints, broadphase_layers_,
                   object_vs_broadphase_, object_vs_object_);
+    contacts_ = std::make_unique<ContactCollector>();
+    physics_.SetContactListener(contacts_.get());
 
     JPH::BoxShapeSettings floor_shape_settings(JPH::Vec3(200.f, 1.f, 200.f));
     floor_shape_settings.SetEmbedded();
@@ -378,6 +432,13 @@ class JoltWorld final : public IPhysicsWorld {
     return true;
   }
 
+  std::vector<ContactPair> ConsumeContacts() override {
+    if (!contacts_) {
+      return IPhysicsWorld::ConsumeContacts();
+    }
+    return contacts_->Take();
+  }
+
   int CreateSoftBody(const SoftBodyDesc& desc) override {
     const int grid = std::clamp(desc.grid, 2, 16);
     const float cell = desc.cell > 1e-4f ? desc.cell : 0.2f;
@@ -490,6 +551,7 @@ class JoltWorld final : public IPhysicsWorld {
   std::vector<JPH::BodyID> soft_body_ids_;
   std::vector<std::vector<std::uint32_t>> soft_body_indices_;
   JPH::BodyID floor_id_;
+  std::unique_ptr<ContactCollector> contacts_;
 };
 
 }  // namespace

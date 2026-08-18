@@ -17,12 +17,12 @@
 
 #include "engine/scene/world.h"
 #include "engine/script/i_script_host.h"
-#include "engine/script/i_script_host.h"
 
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <thread>
+#include <unordered_map>
 
 TEST_CASE("timer delay fires once", "[gk1]") {
   game_kit::Timer t;
@@ -75,12 +75,54 @@ TEST_CASE("scene document world roundtrip", "[ed2]") {
   REQUIRE(game_kit::SaveSceneDocument(doc, path).ok());
   auto loaded = game_kit::LoadSceneDocument(path);
   REQUIRE(loaded.ok());
-  REQUIRE(loaded.value().format_version == 1);
+  REQUIRE(loaded.value().format_version == game_kit::kSceneFormatCurrent);
   REQUIRE(!loaded.value().nodes.empty());
 
   engine::scene::World world2;
   REQUIRE(game_kit::ApplyWorld(world2, loaded.value()).ok());
   REQUIRE(!world2.roots().empty());
+}
+
+TEST_CASE("scene document script component roundtrip", "[ed2][prefab]") {
+  engine::scene::World world;
+  const auto n = world.CreateNode("chest");
+  game_kit::GameRuntime rt;
+  rt.set_world(&world);
+  auto* e = rt.entities().Get(rt.entities().Create("chest", n));
+  REQUIRE(e);
+  e->script_path = "chest.lua";
+  e->AddTag("loot");
+
+  const auto doc = game_kit::CaptureWorld(world, rt);
+  REQUIRE(doc.format_version == game_kit::kSceneFormatCurrent);
+  REQUIRE(!doc.host_api_hint.empty());
+  bool saw_script = false;
+  bool saw_tag = false;
+  for (const auto& node : doc.nodes) {
+    for (const auto& c : node.components) {
+      if (c.type == "Script" && c.script == "chest.lua") {
+        saw_script = true;
+      }
+      if (c.type == "GameTag" && c.script == "loot") {
+        saw_tag = true;
+      }
+    }
+  }
+  REQUIRE(saw_script);
+  REQUIRE(saw_tag);
+
+  const auto path = std::filesystem::temp_directory_path() / "game_kit_scene_script.json";
+  REQUIRE(game_kit::SaveSceneDocument(doc, path).ok());
+  auto loaded = game_kit::LoadSceneDocument(path);
+  REQUIRE(loaded.ok());
+  engine::scene::World world2;
+  std::unordered_map<std::string, engine::scene::NodeId> ids;
+  REQUIRE(game_kit::ApplyWorld(world2, loaded.value(), &ids).ok());
+  game_kit::GameRuntime rt2;
+  game_kit::BindSceneScripts(rt2, world2, loaded.value(), ids);
+  auto* e2 = rt2.entities().FindByName("chest");
+  REQUIRE(e2 != nullptr);
+  REQUIRE(e2->HasTag("loot"));
 }
 
 TEST_CASE("lua pcall isolates errors", "[gk2]") {

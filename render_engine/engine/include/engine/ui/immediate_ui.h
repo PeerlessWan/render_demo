@@ -5,6 +5,7 @@
 #include "engine/platform/window.h"
 #include "engine/rhi/i_device.h"
 
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <string_view>
@@ -51,6 +52,23 @@ class ImmediateUi {
   bool Button(std::string_view label, float w = 0.f, float h = 0.f);
   // Combo over null-terminated UTF-8 items; returns true when selection changes.
   bool Combo(std::string_view label, int* current, const char* const* items, int item_count);
+  bool InputText(std::string_view label, char* buf, std::size_t buf_size);
+
+  bool Selectable(std::string_view label, bool selected);
+  bool BeginChild(std::string_view id, float w, float h);
+  void EndChild();
+  void SameLine(float offset_from_start = 0.f);
+  void ColorBox(float r, float g, float b, float a, float w, float h);
+
+  bool BeginDragDropSource();
+  void SetDragDropPayload(std::string_view type, std::string_view data);
+  void EndDragDropSource();
+  bool BeginDragDropTarget();
+  bool AcceptDragDropPayload(std::string_view type, std::string* out);
+  void EndDragDropTarget();
+  [[nodiscard]] bool PeekDragDrop(std::string_view type, std::string* out) const;
+  [[nodiscard]] bool IsItemHovered() const;
+  [[nodiscard]] bool IsMouseReleased(int button) const;
 
  private:
   struct Impl;

@@ -25,6 +25,7 @@ add_library(engine_assets STATIC
   assets/gltf_loader.cpp
   assets/shader_hot_reload.cpp
   assets/asset_hot_reload.cpp
+  assets/shader_compile_hook.cpp
 )
 target_include_directories(engine_assets PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_assets PUBLIC engine_core)
@@ -67,6 +68,18 @@ target_include_directories(engine_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/in
 target_link_libraries(engine_platform PUBLIC engine_core)
 if(WIN32)
   target_link_libraries(engine_platform PRIVATE user32 gdi32 imm32)
+endif()
+# Mega-W10: real Xlib path when building on Linux with libX11 (Windows keeps stubs).
+if(UNIX AND NOT APPLE)
+  find_package(X11)
+  if(X11_FOUND)
+    target_include_directories(engine_platform PRIVATE ${X11_INCLUDE_DIR})
+    target_link_libraries(engine_platform PRIVATE ${X11_LIBRARIES})
+    target_compile_definitions(engine_platform PRIVATE ENGINE_HAS_X11=1)
+    message(STATUS "engine_platform: X11 enabled (ENGINE_HAS_X11)")
+  else()
+    message(STATUS "engine_platform: X11 not found; CreateX11WindowStub stays stub/Unavailable")
+  endif()
 endif()
 
 add_library(engine_input STATIC
@@ -287,6 +300,20 @@ add_library(engine_ocean STATIC
 target_include_directories(engine_ocean PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_ocean PUBLIC engine_core engine_terrain)
 target_link_libraries(engine_physics PUBLIC engine_ocean)
+
+# Mega-W10: demo cape/skirt (ADR 0037) — not a DCC clothing pipeline.
+add_library(engine_clothing STATIC
+  clothing/garment_cloth.cpp
+)
+target_include_directories(engine_clothing PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(engine_clothing PUBLIC engine_core engine_physics)
+
+# Mega-W10: possess walk/jump + third-person camera helper.
+add_library(engine_gameplay STATIC
+  gameplay/possess_controller.cpp
+)
+target_include_directories(engine_gameplay PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(engine_gameplay PUBLIC engine_core)
 
 add_library(engine_vfx STATIC
   vfx/particles.cpp

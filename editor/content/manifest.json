@@ -1,0 +1,28 @@
+{
+  "assets": [
+    {
+      "id": "scene_start",
+      "type": "scene",
+      "path": "start.json",
+      "deps": ["mesh_ground", "mesh_cube"]
+    },
+    {
+      "id": "prop_cube",
+      "type": "prefab",
+      "path": "cube_prop.json",
+      "deps": ["mesh_cube"]
+    },
+    {
+      "id": "mesh_cube",
+      "type": "mesh",
+      "path": "builtin:cube",
+      "deps": []
+    },
+    {
+      "id": "mesh_ground",
+      "type": "mesh",
+      "path": "builtin:ground",
+      "deps": []
+    }
+  ]
+}

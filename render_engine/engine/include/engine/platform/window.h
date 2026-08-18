@@ -30,6 +30,8 @@ struct WindowInputSnapshot {
   bool mouse_right = false;
   bool mouse_middle = false;
   bool close_requested = false;
+  // UTF-8 code units typed this frame (WM_CHAR). Cleared at PumpEvents start.
+  std::string text;
 };
 
 class Window {

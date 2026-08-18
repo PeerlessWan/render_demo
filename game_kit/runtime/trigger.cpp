@@ -3,6 +3,8 @@
 #include "game_kit/event_bus.h"
 #include "game_kit/script_component.h"
 
+#include "engine/physics/i_physics_world.h"
+
 #include <cmath>
 #include <sstream>
 
@@ -55,7 +57,7 @@ void TriggerWorld::Tick(engine::scene::World& world, EntityWorld& entities, Even
     const auto center = world.local_transform(vol.node).position;
     std::vector<EntityId> now;
     for (const auto& e : entities.all()) {
-      if (e.node == engine::scene::kInvalidNode || !world.valid(e.node)) {
+      if (!e.active || e.node == engine::scene::kInvalidNode || !world.valid(e.node)) {
         continue;
       }
       if (!vol.target_entity.empty() && e.name != vol.target_entity) {
@@ -110,8 +112,87 @@ void TriggerWorld::Tick(engine::scene::World& world, EntityWorld& entities, Even
   }
 }
 
+void TriggerWorld::TickPhysics(engine::physics::IPhysicsWorld& phys, EntityWorld& entities,
+                               EventBus& events, ScriptComponentWorld& scripts) {
+  std::vector<PhysPair> now;
+  const auto contacts = phys.ConsumeContacts();
+  const auto& all = entities.all();
+  auto find_body = [&](int body) -> const Entity* {
+    for (const auto& e : all) {
+      if (e.active && e.physics_body == body) {
+        return &e;
+      }
+    }
+    return nullptr;
+  };
+  if (!contacts.empty()) {
+    for (const auto& c : contacts) {
+      const Entity* ea = find_body(c.a);
+      const Entity* eb = find_body(c.b);
+      if (!ea || !eb) {
+        continue;
+      }
+      now.push_back(PhysPair{ea->id, eb->id});
+    }
+  } else {
+    for (const auto& a : all) {
+      if (!a.active || a.physics_body < 0 || !a.physics_is_trigger) {
+        continue;
+      }
+      const auto hits =
+          phys.OverlapAabb(phys.body_position(a.physics_body), phys.body_half_extents(a.physics_body));
+      for (int bid : hits) {
+        if (bid == a.physics_body) {
+          continue;
+        }
+        const Entity* eb = find_body(bid);
+        if (!eb) {
+          continue;
+        }
+        now.push_back(PhysPair{a.id, eb->id});
+      }
+    }
+  }
+
+  auto has = [](const std::vector<PhysPair>& xs, EntityId a, EntityId b) {
+    for (const auto& p : xs) {
+      if (p.a == a && p.b == b) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  for (const auto& p : now) {
+    if (has(phys_inside_, p.a, p.b)) {
+      continue;
+    }
+    Entity* ta = entities.Get(p.a);
+    Entity* tb = entities.Get(p.b);
+    const std::string other = tb ? tb->name : "?";
+    events.Publish("collision.enter", other);
+    if (ta) {
+      scripts.DispatchCollision(ta->node, true, other);
+    }
+  }
+  for (const auto& p : phys_inside_) {
+    if (has(now, p.a, p.b)) {
+      continue;
+    }
+    Entity* ta = entities.Get(p.a);
+    Entity* tb = entities.Get(p.b);
+    const std::string other = tb ? tb->name : "?";
+    events.Publish("collision.leave", other);
+    if (ta) {
+      scripts.DispatchCollision(ta->node, false, other);
+    }
+  }
+  phys_inside_ = std::move(now);
+}
+
 void TriggerWorld::Clear() {
   vols_.clear();
+  phys_inside_.clear();
   next_id_ = 1;
 }
 

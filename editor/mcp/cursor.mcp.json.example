@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "render-demo-editor": {
+      "command": "D:/workspace/media/render_demo/build_kits/editor/Release/editor_mcp.exe",
+      "args": []
+    }
+  }
+}

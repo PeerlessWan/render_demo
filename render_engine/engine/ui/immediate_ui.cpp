@@ -153,6 +153,9 @@ void ImmediateUi::BeginFrame(const WindowInputSnapshot& input, float display_w, 
   if (std::fabs(input.mouse_wheel) > 1e-6f) {
     io.AddMouseWheelEvent(0.f, input.mouse_wheel);
   }
+  if (!input.text.empty()) {
+    io.AddInputCharactersUTF8(input.text.c_str());
+  }
 
   auto map_key = [](int vk) -> ImGuiKey {
     switch (vk) {
@@ -174,6 +177,12 @@ void ImmediateUi::BeginFrame(const WindowInputSnapshot& input, float display_w, 
         return ImGuiKey_RightArrow;
       case 0x28:
         return ImGuiKey_DownArrow;
+      case 0x2E:
+        return ImGuiKey_Delete;
+      case 0x24:
+        return ImGuiKey_Home;
+      case 0x23:
+        return ImGuiKey_End;
       case 0x70:
         return ImGuiKey_F1;
       default:
@@ -403,6 +412,186 @@ bool ImmediateUi::Combo(std::string_view label, int* current, const char* const*
     return false;
   }
   return ImGui::Combo(std::string(label).c_str(), current, items, item_count);
+#endif
+}
+
+bool ImmediateUi::InputText(std::string_view label, char* buf, std::size_t buf_size) {
+#if !(defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI)
+  (void)label;
+  (void)buf;
+  (void)buf_size;
+  return false;
+#else
+  if (!impl_->ready || !buf || buf_size == 0) {
+    return false;
+  }
+  return ImGui::InputText(std::string(label).c_str(), buf, buf_size);
+#endif
+}
+
+bool ImmediateUi::Selectable(std::string_view label, bool selected) {
+#if !(defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI)
+  (void)label;
+  (void)selected;
+  return false;
+#else
+  if (!impl_->ready) {
+    return false;
+  }
+  return ImGui::Selectable(std::string(label).c_str(), selected);
+#endif
+}
+
+bool ImmediateUi::BeginChild(std::string_view id, float w, float h) {
+#if !(defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI)
+  (void)id;
+  (void)w;
+  (void)h;
+  return false;
+#else
+  if (!impl_->ready) {
+    return false;
+  }
+  return ImGui::BeginChild(std::string(id).c_str(), ImVec2(w, h), true);
+#endif
+}
+
+void ImmediateUi::EndChild() {
+#if defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI
+  if (impl_->ready) {
+    ImGui::EndChild();
+  }
+#endif
+}
+
+void ImmediateUi::SameLine(float offset_from_start) {
+#if defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI
+  if (impl_->ready) {
+    if (offset_from_start > 0.f) {
+      ImGui::SameLine(offset_from_start);
+    } else {
+      ImGui::SameLine();
+    }
+  }
+#else
+  (void)offset_from_start;
+#endif
+}
+
+void ImmediateUi::ColorBox(float r, float g, float b, float a, float w, float h) {
+#if defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI
+  if (impl_->ready) {
+    ImGui::ColorButton("##thumb", ImVec4(r, g, b, a), ImGuiColorEditFlags_NoTooltip, ImVec2(w, h));
+  }
+#else
+  (void)r;
+  (void)g;
+  (void)b;
+  (void)a;
+  (void)w;
+  (void)h;
+#endif
+}
+
+bool ImmediateUi::BeginDragDropSource() {
+#if defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI
+  return impl_->ready && ImGui::BeginDragDropSource(ImGuiDragDropFlags_None);
+#else
+  return false;
+#endif
+}
+
+void ImmediateUi::SetDragDropPayload(std::string_view type, std::string_view data) {
+#if defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI
+  if (impl_->ready) {
+    const std::string t(type);
+    const std::string d(data);
+    ImGui::SetDragDropPayload(t.c_str(), d.data(), d.size());
+  }
+#else
+  (void)type;
+  (void)data;
+#endif
+}
+
+void ImmediateUi::EndDragDropSource() {
+#if defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI
+  if (impl_->ready) {
+    ImGui::EndDragDropSource();
+  }
+#endif
+}
+
+bool ImmediateUi::BeginDragDropTarget() {
+#if defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI
+  return impl_->ready && ImGui::BeginDragDropTarget();
+#else
+  return false;
+#endif
+}
+
+bool ImmediateUi::AcceptDragDropPayload(std::string_view type, std::string* out) {
+#if !(defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI)
+  (void)type;
+  (void)out;
+  return false;
+#else
+  if (!impl_->ready) {
+    return false;
+  }
+  const std::string t(type);
+  if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(t.c_str())) {
+    if (out) {
+      out->assign(static_cast<const char*>(p->Data), static_cast<std::size_t>(p->DataSize));
+    }
+    return true;
+  }
+  return false;
+#endif
+}
+
+void ImmediateUi::EndDragDropTarget() {
+#if defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI
+  if (impl_->ready) {
+    ImGui::EndDragDropTarget();
+  }
+#endif
+}
+
+bool ImmediateUi::PeekDragDrop(std::string_view type, std::string* out) const {
+#if !(defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI)
+  (void)type;
+  (void)out;
+  return false;
+#else
+  if (!impl_->ready) {
+    return false;
+  }
+  const ImGuiPayload* p = ImGui::GetDragDropPayload();
+  if (!p || !p->IsDataType(std::string(type).c_str())) {
+    return false;
+  }
+  if (out) {
+    out->assign(static_cast<const char*>(p->Data), static_cast<std::size_t>(p->DataSize));
+  }
+  return true;
+#endif
+}
+
+bool ImmediateUi::IsItemHovered() const {
+#if defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI
+  return impl_->ready && ImGui::IsItemHovered();
+#else
+  return false;
+#endif
+}
+
+bool ImmediateUi::IsMouseReleased(int button) const {
+#if defined(ENGINE_WITH_IMGUI) && ENGINE_WITH_IMGUI
+  return impl_->ready && ImGui::IsMouseReleased(button);
+#else
+  (void)button;
+  return false;
 #endif
 }
 

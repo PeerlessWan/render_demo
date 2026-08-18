@@ -74,12 +74,22 @@ void CoroutineScheduler::Tick(float dt) {
     if (s.status == CoroutineStatus::Dead || s.status == CoroutineStatus::Error) {
       continue;
     }
-    if (s.status == CoroutineStatus::Suspended && s.wake_after > 0.f) {
+    if (s.status == CoroutineStatus::Suspended && s.wake_topic.empty() && s.wake_after > 0.f) {
       s.wake_after -= dt;
       if (s.wake_after <= 0.f) {
         s.wake_after = 0.f;
         s.status = CoroutineStatus::Pending;
       }
+    }
+  }
+}
+
+void CoroutineScheduler::WakeTopic(std::string_view topic) {
+  for (auto& s : slots_) {
+    if (s.status == CoroutineStatus::Suspended && !s.wake_topic.empty() && s.wake_topic == topic) {
+      s.wake_topic.clear();
+      s.wake_after = 0.f;
+      s.status = CoroutineStatus::Pending;
     }
   }
 }

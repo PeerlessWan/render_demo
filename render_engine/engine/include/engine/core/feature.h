@@ -25,6 +25,9 @@ struct FeatureSet {
   bool hiz = false;
   // Mega-W9 C06: CPU VT path available (Sample stub + feedback/upload helpers).
   bool virtual_texture = true;
+  // Mega-W10: Sandbox "near default" — prefer VT sampling on lit path when capable.
+  // Still NOT full-material Nanite; default OFF so golden/C4 stay classic.
+  bool vt_near_default = false;
   FeatureLevel level = FeatureLevel::L0;
 };
 

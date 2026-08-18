@@ -263,7 +263,7 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   lighting.local_spot = {};
   lighting.local_spot_inner.fill(-1.f);
   lighting.local_ies.fill(0.f);
-  // M26/C02: accept up to 16 CPU lights; upload closest 16 (shadow casters preferred).
+  // M26/Mega-W10 C02: accept up to kMaxLocalLightsCpu; upload closest Gpu max (shadow casters preferred).
   struct RankedLight {
     LocalLight light;
     float dist2 = 0.f;
@@ -359,12 +359,12 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   lighting.enable_ibl = effect_.enable_ibl && env.has_ibl();
   lighting.ibl_intensity = effect_.ibl_intensity;
 
-  // Mega-W8 C02: prefer GPU Feature path (DispatchLightTileCull / Simulate) else CPU Assign.
+  // Mega-W10 C02: prefer GPU Feature path (DispatchLightTileCull / Simulate) else CPU Assign.
   lighting.enable_tiled_lights = effect_.enable_tiled_lights;
   lighting.tile_light_count.fill(0);
   lighting.tile_light_index.fill(-1);
   if (lighting.enable_tiled_lights && lighting.local_light_count > 0) {
-    std::array<int, kLightTileCount> counts{};
+    std::array<int, kLightClusterCount> counts{};
     std::array<int, kTileLightIndexCount> indices{};
     const std::span<const Vec3> positions(lighting.local_pos.data(),
                                           static_cast<std::size_t>(lighting.local_light_count));
@@ -372,17 +372,17 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
                                         static_cast<std::size_t>(lighting.local_light_count));
     bool filled = false;
     if (auto st = device.DispatchLightTileCull(lighting.view_proj, positions, ranges, counts,
-                                               indices);
+                                               indices, lighting.eye, lighting.camera_forward);
         st) {
       filled = true;
     }
     if (!filled) {
       std::vector<std::vector<int>> tiles;
       AssignLightsToTiles(packed_lights, lighting.view_proj, kLightTileGridW, kLightTileGridH,
-                          tiles);
+                          tiles, lighting.eye, lighting.camera_forward);
       PackTileLightLists(tiles, counts, indices);
     }
-    for (int t = 0; t < kLightTileCount; ++t) {
+    for (int t = 0; t < kLightClusterCount; ++t) {
       lighting.tile_light_count[static_cast<std::size_t>(t)] = counts[static_cast<std::size_t>(t)];
     }
     for (int i = 0; i < kTileLightIndexCount; ++i) {

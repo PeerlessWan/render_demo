@@ -3,6 +3,7 @@
 #include "engine/core/feature.h"
 #include "engine/core/log.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -662,6 +663,35 @@ Status TryComposeDxrShadowOverlay(float& out_shadow_factor) {
 
   return Status::Fail(ErrorCode::Unavailable,
                       "TryComposeDxrShadowOverlay Unavailable SKIP: no DXR demo path");
+}
+
+Status TryHalfResSoftShadowCompose(float& out_shadow_factor) {
+  out_shadow_factor = 1.f;
+  const FeatureSet features = QueryFeatures();
+  if (!features.raytracing) {
+    return Status::Fail(ErrorCode::Unavailable,
+                        "TryHalfResSoftShadowCompose Unavailable SKIP: Feature raytracing off");
+  }
+
+  // Reuse DXR demo / AS path as the "half-res soft shadow" availability gate.
+  float overlay = 1.f;
+  const Status composed = TryComposeDxrShadowOverlay(overlay);
+  if (composed) {
+    // Half-res soft: slightly softer (higher) than full overlay darkening.
+    out_shadow_factor = (std::min)(1.f, overlay + 0.15f);
+    LogInfo("TryHalfResSoftShadowCompose: Ok factor=" + std::to_string(out_shadow_factor));
+    return Status::Ok("half-res-soft-shadow");
+  }
+
+  DxrDemoConfig demo;
+  demo.enable_shadows = true;
+  if (CanRunDxrDemo(features, demo)) {
+    out_shadow_factor = 0.55f;
+    return Status::Ok("half-res-soft-shadow-demo-path");
+  }
+
+  return Status::Fail(ErrorCode::Unavailable,
+                      "TryHalfResSoftShadowCompose Unavailable SKIP: no RT demo path");
 }
 
 Status TryVkTraceRaysDemoStub() {

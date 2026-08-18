@@ -10,6 +10,10 @@
 #include <string_view>
 #include <vector>
 
+namespace engine::physics {
+class IPhysicsWorld;
+}
+
 namespace game_kit {
 
 class EventBus;
@@ -39,11 +43,18 @@ class TriggerWorld {
 
   void Tick(engine::scene::World& world, EntityWorld& entities, EventBus& events,
             ScriptComponentWorld& scripts);
+  void TickPhysics(engine::physics::IPhysicsWorld& phys, EntityWorld& entities, EventBus& events,
+                   ScriptComponentWorld& scripts);
 
   void Clear();
 
  private:
+  struct PhysPair {
+    EntityId a = kInvalidEntity;
+    EntityId b = kInvalidEntity;
+  };
   std::vector<TriggerVolume> vols_;
+  std::vector<PhysPair> phys_inside_;
   TriggerId next_id_ = 1;
 };
 

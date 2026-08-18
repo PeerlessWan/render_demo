@@ -162,4 +162,65 @@ ColorRgba ProbeVolume::SampleAtlasCpu(const std::vector<float>& atlas,
   return lerp4(c0, c1, tz);
 }
 
+void ProbeVolume::BlendNeighborhood(float weight) {
+  weight = std::clamp(weight, 0.f, 1.f);
+  if (weight <= 0.f || probes_.empty() || nx_ <= 0 || ny_ <= 0 || nz_ <= 0) {
+    return;
+  }
+  auto idx = [&](int x, int y, int z) {
+    return static_cast<std::size_t>(x + nx_ * (y + ny_ * z));
+  };
+  std::vector<ColorRgba> next(probes_.size());
+  for (int z = 0; z < nz_; ++z) {
+    for (int y = 0; y < ny_; ++y) {
+      for (int x = 0; x < nx_; ++x) {
+        const auto i = idx(x, y, z);
+        ColorRgba sum{};
+        int n = 0;
+        auto add = [&](int xx, int yy, int zz) {
+          if (xx < 0 || yy < 0 || zz < 0 || xx >= nx_ || yy >= ny_ || zz >= nz_) {
+            return;
+          }
+          const auto& c = probes_[idx(xx, yy, zz)].irradiance;
+          sum.r += c.r;
+          sum.g += c.g;
+          sum.b += c.b;
+          ++n;
+        };
+        add(x - 1, y, z);
+        add(x + 1, y, z);
+        add(x, y - 1, z);
+        add(x, y + 1, z);
+        add(x, y, z - 1);
+        add(x, y, z + 1);
+        const ColorRgba& self = probes_[i].irradiance;
+        if (n == 0) {
+          next[i] = self;
+          continue;
+        }
+        const float inv = 1.f / static_cast<float>(n);
+        const ColorRgba mean{sum.r * inv, sum.g * inv, sum.b * inv, 1.f};
+        next[i] = ColorRgba{self.r + (mean.r - self.r) * weight,
+                            self.g + (mean.g - self.g) * weight,
+                            self.b + (mean.b - self.b) * weight, 1.f};
+      }
+    }
+  }
+  for (std::size_t i = 0; i < probes_.size(); ++i) {
+    probes_[i].irradiance = next[i];
+  }
+}
+
+void ProbeVolume::CascadeRefine(const Vec3& focus, int levels) {
+  levels = std::clamp(levels, 0, 3);
+  if (levels <= 0 || nx_ <= 0) {
+    return;
+  }
+  // focus is documented for callers (camera / character); densify is uniform for lite path.
+  (void)focus;
+  for (int i = 0; i < levels; ++i) {
+    RefineDensity(2);
+  }
+}
+
 }  // namespace engine::gi

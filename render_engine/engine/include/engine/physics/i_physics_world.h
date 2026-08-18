@@ -3,6 +3,7 @@
 #include "engine/core/math.h"
 #include "engine/core/result.h"
 
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -15,6 +16,11 @@ struct RayHit {
   Vec3 normal{0, 1, 0};
   float distance = 0.f;
   int body_id = -1;
+};
+
+struct ContactPair {
+  int a = -1;
+  int b = -1;
 };
 
 struct RigidBodyDesc {
@@ -63,6 +69,40 @@ class IPhysicsWorld {
 
   // Mega-W8 buoyancy: apply linear impulse (Δv = impulse / mass). Default false.
   virtual bool ApplyImpulse(int /*body_id*/, const Vec3& /*impulse*/) { return false; }
+
+  // Host API v0: AABB overlap query. Default walks body_position / half_extents.
+  virtual std::vector<int> OverlapAabb(const Vec3& center, const Vec3& half) const {
+    std::vector<int> out;
+    const int n = body_count();
+    for (int i = 0; i < n; ++i) {
+      const Vec3 p = body_position(i);
+      const Vec3 h = body_half_extents(i);
+      if (std::fabs(p.x - center.x) <= h.x + half.x && std::fabs(p.y - center.y) <= h.y + half.y &&
+          std::fabs(p.z - center.z) <= h.z + half.z) {
+        out.push_back(i);
+      }
+    }
+    return out;
+  }
+
+  // Host API v0: contacts since last consume. Default synthesizes AABB pairs.
+  virtual std::vector<ContactPair> ConsumeContacts() {
+    std::vector<ContactPair> out;
+    const int n = body_count();
+    for (int i = 0; i < n; ++i) {
+      const Vec3 pa = body_position(i);
+      const Vec3 ha = body_half_extents(i);
+      for (int j = i + 1; j < n; ++j) {
+        const Vec3 pb = body_position(j);
+        const Vec3 hb = body_half_extents(j);
+        if (std::fabs(pa.x - pb.x) <= ha.x + hb.x && std::fabs(pa.y - pb.y) <= ha.y + hb.y &&
+            std::fabs(pa.z - pb.z) <= ha.z + hb.z) {
+          out.push_back(ContactPair{i, j});
+        }
+      }
+    }
+    return out;
+  }
 };
 
 std::unique_ptr<IPhysicsWorld> CreateBuiltinPhysicsWorld();

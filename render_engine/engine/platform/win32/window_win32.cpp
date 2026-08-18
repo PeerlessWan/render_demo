@@ -65,6 +65,7 @@ class WindowWin32 final : public Window {
   [[nodiscard]] const WindowInputSnapshot& input_snapshot() const override { return input_; }
 
   void PumpEvents() override {
+    input_.text.clear();
     MSG msg{};
     while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
       if (msg.message == WM_QUIT) {
@@ -130,6 +131,18 @@ class WindowWin32 final : public Window {
   }
 
   void OnMouseWheel(float notches) { input_.mouse_wheel += notches; }
+
+  void OnChar(wchar_t ch) {
+    if (ch < 32 && ch != 9) {
+      return;
+    }
+    char utf8[8]{};
+    const int n = WideCharToMultiByte(CP_UTF8, 0, &ch, 1, utf8, static_cast<int>(sizeof(utf8)),
+                                      nullptr, nullptr);
+    if (n > 0) {
+      input_.text.append(utf8, static_cast<std::size_t>(n));
+    }
+  }
 
   void SetCursorCaptured(bool captured) override {
     if (!hwnd_ || soft_captured_ == captured) {
@@ -258,6 +271,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         self->OnMouseWheel(static_cast<float>(delta) / static_cast<float>(WHEEL_DELTA));
         return 0;
       }
+      case WM_CHAR:
+        self->OnChar(static_cast<wchar_t>(wparam));
+        return 0;
       case WM_CLOSE:
         self->OnDestroy();
         DestroyWindow(hwnd);

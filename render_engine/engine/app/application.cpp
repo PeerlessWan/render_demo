@@ -1,12 +1,14 @@
 #include "engine/app/application.h"
 
 #include "engine/core/clock.h"
+#include "engine/core/host_api.h"
 #include "engine/core/log.h"
 #include "engine/debug/console.h"
 #include "engine/net/net_system.h"
 
 #include <cmath>
 #include <cstdlib>
+#include <string>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -112,6 +114,7 @@ Result<std::unique_ptr<Application>> Application::Create(const ApplicationDesc& 
 }
 
 Status Application::Run(FrameCallback on_frame) {
+  LogInfo(std::string("engine.host_api_version=") + kHostApiVersion);
   LogInfo(headless_ ? "Application loop start (headless)" : "Application loop start");
   if (auto st = modules_.InitAll(*this); !st) {
     LogError(st.message());
@@ -171,8 +174,10 @@ Status Application::Run(FrameCallback on_frame) {
     was_looking_ = want_look || want_pan;
 
     if (!ui_want_capture_) {
-      camera_.MoveLocal(input_.axis("MoveZ") * move_speed, input_.axis("MoveX") * move_speed,
-                        input_.axis("MoveY") * move_speed);
+      if (fly_locomotion_enabled_) {
+        camera_.MoveLocal(input_.axis("MoveZ") * move_speed_, input_.axis("MoveX") * move_speed_,
+                          input_.axis("MoveY") * move_speed_);
+      }
       if (want_pan) {
         // Middle-drag pans in view plane (screen X → right, screen Y → up).
         camera_.MoveLocal(0.f, -input_.axis("LookX") * pan_sensitivity_,

@@ -7,8 +7,11 @@
 #include "io/content_browser.h"
 #include "io/scene_io.h"
 #include "play/scene_play.h"
+#include "cmd/session.h"
+#include "mcp/protocol.h"
 
 #include "game_kit/prefab.h"
+#include "game_kit/runtime.h"
 #include "game_kit/scene_document.h"
 
 #include "kit_test.h"
@@ -16,8 +19,11 @@
 #include "engine/render/camera.h"
 #include "engine/scene/world.h"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <string>
+#include <unordered_map>
 
 TEST_CASE("selection default invalid", "[ed0]") {
   editor::Selection sel;
@@ -270,4 +276,209 @@ TEST_CASE("scene play moves named player", "[play]") {
   cam.pitch = 0.f;
   editor::FollowPlayerCamera(&cam, world.local_transform(p).position);
   REQUIRE(cam.position.y > 1.f);
+}
+
+TEST_CASE("gizmo ring hit prefers rotate axis", "[gizmo]") {
+  editor::Ray ray;
+  ray.origin = {0.85f, 1.f, 0.f};
+  ray.dir = {0.f, -1.f, 0.f};
+  const auto hit = editor::HitGizmoRotate(ray, {0.f, 0.f, 0.f}, 1.4f, 0.18f, 0.85f, 0.16f);
+  REQUIRE(hit == editor::Axis::Y);
+}
+
+TEST_CASE("ground clamps player y", "[play]") {
+  engine::scene::World world;
+  const auto g = world.CreateNode("ground");
+  engine::scene::Transform gt;
+  gt.scale = {8.f, 1.f, 8.f};
+  world.set_local_transform(g, gt);
+  engine::scene::MeshRenderer mesh;
+  mesh.mesh_id = "ground";
+  world.set_mesh(g, mesh);
+  REQUIRE(editor::GroundTopY(world, 0.f, 0.f) == 0.5f);
+  const auto p = world.CreateNode("player");
+  engine::scene::Transform pt;
+  pt.position = {0.f, 0.f, 0.f};
+  world.set_local_transform(p, pt);
+  editor::ResolveGroundY(world, p);
+  REQUIRE(world.local_transform(p).position.y == 0.5f);
+}
+
+TEST_CASE("restore meta matches by name not index", "[play]") {
+  game_kit::SceneDocument stored;
+  game_kit::SceneNode a;
+  a.id = "9";
+  a.name = "chest";
+  a.script_path = "editor/scripts/chest.lua";
+  stored.nodes.push_back(a);
+  game_kit::SceneNode b;
+  b.id = "8";
+  b.name = "player";
+  stored.nodes.push_back(b);
+  game_kit::SceneDocument captured;
+  game_kit::SceneNode c;
+  c.id = "1";
+  c.name = "chest";
+  captured.nodes.push_back(c);
+  game_kit::SceneNode d;
+  d.id = "2";
+  d.name = "player";
+  captured.nodes.push_back(d);
+  std::unordered_map<engine::scene::NodeId, editor::NodeMeta> meta;
+  editor::RestoreMeta(stored, captured, &meta);
+  REQUIRE(meta[1].script_path == "editor/scripts/chest.lua");
+  REQUIRE(meta[2].script_path.empty());
+}
+
+TEST_CASE("bind play scripts registers entities", "[play]") {
+  engine::scene::World world;
+  const auto p = world.CreateNode("player");
+  const auto c = world.CreateNode("chest");
+  std::unordered_map<engine::scene::NodeId, editor::NodeMeta> meta;
+  meta[c] = editor::NodeMeta{"", "editor/scripts/chest.lua"};
+  game_kit::GameRuntime rt;
+  game_kit::ScriptComponentWorld scripts;
+  editor::BindPlayScripts(scripts, world, rt, meta);
+  REQUIRE(rt.entities().FindByName("player") != nullptr);
+  REQUIRE(rt.entities().FindByName("player")->node == p);
+  REQUIRE(rt.entities().FindByNode(c) != nullptr);
+}
+
+TEST_CASE("undo spawn then redo restores name", "[undo]") {
+  engine::scene::World world;
+  editor::UndoStack undo;
+  std::unordered_map<engine::scene::NodeId, editor::NodeMeta> meta;
+  const auto id = world.CreateNode("cube");
+  engine::scene::MeshRenderer mesh;
+  mesh.mesh_id = "cube";
+  world.set_mesh(id, mesh);
+  std::vector<editor::NodeSnap> snaps;
+  editor::CaptureSubtree(world, id, meta, &snaps);
+  undo.PushSpawn(std::move(snaps));
+  REQUIRE(undo.Undo(world, &meta));
+  REQUIRE(!world.valid(id));
+  REQUIRE(undo.Redo(world, &meta));
+  REQUIRE(editor::FindNamed(world, "cube") != engine::scene::kInvalidNode);
+  const auto again = editor::FindNamed(world, "cube");
+  REQUIRE(world.mesh(again) != nullptr);
+  REQUIRE(world.mesh(again)->mesh_id == "cube");
+}
+
+TEST_CASE("undo kill restores node", "[undo]") {
+  engine::scene::World world;
+  editor::UndoStack undo;
+  std::unordered_map<engine::scene::NodeId, editor::NodeMeta> meta;
+  const auto id = world.CreateNode("keep");
+  std::vector<editor::NodeSnap> snaps;
+  editor::CaptureSubtree(world, id, meta, &snaps);
+  undo.PushKill(std::move(snaps));
+  (void)world.DestroyNode(id);
+  REQUIRE(!world.valid(id));
+  REQUIRE(undo.Undo(world, &meta));
+  REQUIRE(editor::FindNamed(world, "keep") != engine::scene::kInvalidNode);
+}
+
+TEST_CASE("batch visible props on two nodes", "[inspector]") {
+  engine::scene::World world;
+  const auto a = world.CreateNode("a");
+  const auto b = world.CreateNode("b");
+  std::unordered_map<engine::scene::NodeId, editor::NodeMeta> meta;
+  auto before_a = editor::CaptureProp(world, a, meta);
+  auto before_b = editor::CaptureProp(world, b, meta);
+  world.set_visible(a, false);
+  world.set_visible(b, false);
+  auto after_a = editor::CaptureProp(world, a, meta);
+  auto after_b = editor::CaptureProp(world, b, meta);
+  editor::UndoStack undo;
+  undo.PushProps({before_a, before_b}, {after_a, after_b});
+  REQUIRE(!world.visible(a));
+  REQUIRE(undo.Undo(world, &meta));
+  REQUIRE(world.visible(a));
+  REQUIRE(world.visible(b));
+}
+
+TEST_CASE("local gizmo move x follows rotation", "[gizmo]") {
+  engine::scene::World world;
+  const auto n = world.CreateNode("rot");
+  engine::scene::Transform t;
+  t.rotation = engine::Quat::FromEulerYxz(1.5707963f, 0.f, 0.f);
+  world.set_local_transform(n, t);
+  const auto dir = editor::GizmoAxisDir(editor::Axis::X, t.rotation, true);
+  std::vector<engine::scene::NodeId> ids{n};
+  std::vector<engine::scene::Transform> origins{t};
+  REQUIRE(editor::ApplyGizmo(world, ids, origins, editor::GizmoMode::Move, editor::Axis::X, 1.f, false,
+                             1.f, true));
+  const auto p = world.local_transform(n).position;
+  REQUIRE(std::fabs(p.x - dir.x) < 0.05f);
+  REQUIRE(std::fabs(p.z - dir.z) < 0.05f);
+}
+
+TEST_CASE("apply op create select set dump", "[cmd]") {
+  editor::EditorHost host;
+  auto s = host.Bind();
+  editor::EditorOp create;
+  create.kind = editor::EditorOp::Kind::Create;
+  create.create_kind = "cube";
+  REQUIRE(editor::ApplyOp(s, create).ok);
+  editor::EditorOp sel;
+  sel.kind = editor::EditorOp::Kind::Select;
+  sel.name = "cube";
+  REQUIRE(editor::ApplyOp(s, sel).ok);
+  editor::EditorOp xf;
+  xf.kind = editor::EditorOp::Kind::SetTransform;
+  xf.has_x = true;
+  xf.x = 2.f;
+  REQUIRE(editor::ApplyOp(s, xf).ok);
+  editor::EditorOp dump;
+  dump.kind = editor::EditorOp::Kind::Dump;
+  const auto r = editor::ApplyOp(s, dump);
+  REQUIRE(r.ok);
+  REQUIRE(r.json.find("\"name\":\"cube\"") != std::string::npos);
+  REQUIRE(r.json.find("\"x\":2") != std::string::npos);
+}
+
+TEST_CASE("mcp tools call reaches apply op", "[mcp]") {
+  editor::EditorHost host;
+  const auto listed = editor::HandleMcpLine(
+      host, R"({"jsonrpc":"2.0","id":1,"method":"tools/list"})");
+  REQUIRE(listed.find("editor_dump") != std::string::npos);
+  const auto created = editor::HandleMcpLine(
+      host, R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"editor_create","arguments":{"kind":"player"}}})");
+  REQUIRE(created.find("isError\":false") != std::string::npos);
+  const auto dumped = editor::HandleMcpLine(
+      host, R"({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"editor_dump","arguments":{}}})");
+  REQUIRE(dumped.find("player") != std::string::npos);
+}
+
+TEST_CASE("set parent reparents and rejects cycle", "[hierarchy]") {
+  engine::scene::World world;
+  const auto a = world.CreateNode("a");
+  const auto b = world.CreateNode("b");
+  REQUIRE(world.set_parent(b, a));
+  REQUIRE(world.parent(b) == a);
+  REQUIRE(!world.set_parent(a, b));
+  REQUIRE(world.set_parent(b, engine::scene::kInvalidNode));
+  REQUIRE(world.parent(b) == engine::scene::kInvalidNode);
+}
+
+TEST_CASE("node meta extra encodes light", "[io]") {
+  editor::NodeMeta m;
+  m.has_light = true;
+  m.light_range = 12.f;
+  m.material_id = "cube";
+  const auto json = editor::EncodeNodeMeta(m);
+  editor::NodeMeta out;
+  editor::DecodeNodeMetaExtra(json, &out);
+  REQUIRE(out.has_light);
+  REQUIRE(std::fabs(out.light_range - 12.f) < 0.01f);
+  REQUIRE(out.material_id == "cube");
+}
+
+TEST_CASE("mcp lists set_parent bake lint", "[mcp]") {
+  editor::EditorHost host;
+  const auto listed = editor::HandleMcpLine(
+      host, R"({"jsonrpc":"2.0","id":1,"method":"tools/list"})");
+  REQUIRE(listed.find("editor_set_parent") != std::string::npos);
+  REQUIRE(listed.find("editor_bake") != std::string::npos);
+  REQUIRE(listed.find("editor_lint") != std::string::npos);
 }

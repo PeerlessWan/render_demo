@@ -15,6 +15,8 @@ struct Selection {
   float drag_acc_z = 0.f;
   int gizmo_axis = 0;
   float axis_u0 = 0.f;
+  bool plane_drag = false;
+  engine::Vec3 plane0{};
   std::vector<engine::scene::Transform> drag_origins;
 
   [[nodiscard]] std::vector<engine::scene::NodeId> All() const {
@@ -44,6 +46,8 @@ struct Selection {
     drag_acc_z = 0.f;
     gizmo_axis = 0;
     axis_u0 = 0.f;
+    plane_drag = false;
+    plane0 = {};
     drag_origins.clear();
   }
 
@@ -55,6 +59,8 @@ struct Selection {
     drag_acc_z = 0.f;
     gizmo_axis = 0;
     axis_u0 = 0.f;
+    plane_drag = false;
+    plane0 = {};
     drag_origins.clear();
   }
 

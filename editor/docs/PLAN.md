@@ -10,8 +10,8 @@
 
 | 口径 | 本层交付 | 缺陷 |
 |---|---|---|
-| **摆放器可用** | ED0–ED3 | 现全缺；见 GAPS §2 |
-| **编辑器可用** | ED4–ED5 | 现全缺；Play / Prefab / 脚本字段 |
+| **摆放器可用** | ED0–ED3 | **已收口** |
+| **编辑器可用** | ED4–ED5 | **已收口**（Play / Prefab / 脚本 Entity） |
 | **对标主流** | 不宣称 | 材质图 / UMG / 动画工具 / DCC — GAPS §3–§4，刻意不对齐 |
 
 一期是关卡摆放器，不替代 Blender，也不替代 `game_kit` GK0–GK3。
@@ -26,7 +26,7 @@
 | **ED3** 层级与内容 | 能摆 | 场景树、内容浏览器、拖拽创建、保存完整 | 搭一个小关卡无手改 JSON |
 | **ED4** Play | 能验 | Play-in-Editor、暂停、退出恢复 | 进 Play 可动，退出场景不脏（或可弃） |
 | **ED5** Prefab/脚本 | 内容协作 | Prefab 放置；可选 game_kit 脚本字段 | 与 GK4 对齐 |
-| **ED6** 打磨 | 可选 | 多视口、吸附、批量、cook 一键 | 单独立项 |
+| **ED6** 打磨 | 产品切片 | 多视口 pane、Prefab Apply 写回、地形网格、Tilemap、Lint 图、热重载 | 单测 + 集成 + 自动化 |
 
 ## 2. 建议时序
 
@@ -44,10 +44,10 @@
 
 | 里程碑 | 状态 |
 |---|---|
-| ED0–ED3 | 已写 |
-| ED4 Play | 同进程快照 Play；场景 player WASD + 脚本 tick；体素 HUD；退出恢复 |
-| ED5 Prefab | 内容扫描放置实例 + 选中存 Prefab + 脚本 Combo |
-| ED6 | 吸附/批量/Gizmo 轴命中已写；多视口不做 |
+| ED0–ED3 | 已收口 |
+| ED4 Play | 场景 Entity+脚本+地面钳制；体素生存出生+HUD；退出恢复 |
+| ED5 Prefab | Content 打开场景 / 放置实例 + 选中存 Prefab + 脚本 Combo |
+| ED6 | 产品切片：2×2 pane、World 组件、Prefab Apply 写回、地形网格、Tilemap streamer、Lint 图、热重载、三层测试 |
 
 ## 4. 相关
 

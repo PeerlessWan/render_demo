@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace game_kit {
@@ -24,7 +25,8 @@ struct CoroutineSlot {
   CoroutineHandle handle{};
   std::string name;
   CoroutineStatus status = CoroutineStatus::Pending;
-  float wake_after = 0.f;  // seconds; 0 = ready
+  float wake_after = 0.f;  // seconds; 0 = not a timer wait
+  std::string wake_topic;  // non-empty = wait_event
   ScriptVm* owner_vm = nullptr;
   void* lua_thread = nullptr;
   void* lua_main = nullptr;
@@ -42,6 +44,7 @@ class CoroutineScheduler {
 
   // Advance wake timers; marks Suspended→Pending when due.
   void Tick(float dt);
+  void WakeTopic(std::string_view topic);
   // lua_resume Pending slots that have a Lua thread.
   void ResumeLua();
 

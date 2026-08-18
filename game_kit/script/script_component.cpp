@@ -98,10 +98,18 @@ engine::Status ScriptComponentWorld::LoadFromDisk(ScriptComponent& c) {
   return LoadFromString(c, ss.str(), c.path);
 }
 
-engine::Status ScriptComponentWorld::Reload(ScriptComponent& c) {
+engine::Status ScriptComponentWorld::Reload(ScriptComponent& c, bool preserve_state) {
+  std::string persist;
+  if (preserve_state) {
+    persist = c.vm.DumpPersist();
+  }
   CallDestroy(c);
   c.vm.Reset();
   auto st = LoadFromDisk(c);
+  if (st && preserve_state && !persist.empty()) {
+    (void)c.vm.RestorePersist(persist);
+    (void)c.vm.CallNamed("on_hot_reload");
+  }
   if (!st) {
     engine::LogError("script reload failed: " + c.path + " — " + st.message());
   } else {
@@ -110,13 +118,13 @@ engine::Status ScriptComponentWorld::Reload(ScriptComponent& c) {
   return st;
 }
 
-engine::Status ScriptComponentWorld::ReloadPath(std::string_view path) {
+engine::Status ScriptComponentWorld::ReloadPath(std::string_view path, bool preserve_state) {
   engine::Status last = engine::Status::Ok();
   bool any = false;
   for (auto& c : comps_) {
     if (c.path == path) {
       any = true;
-      last = Reload(c);
+      last = Reload(c, preserve_state);
     }
   }
   if (!any) {
@@ -151,6 +159,28 @@ void ScriptComponentWorld::DispatchTrigger(engine::scene::NodeId node, bool ente
     }
     Bind(c);
     (void)c.vm.CallTrigger(enter, other);
+  }
+}
+
+void ScriptComponentWorld::DispatchCollision(engine::scene::NodeId node, bool enter,
+                                             std::string_view other) {
+  for (auto& c : comps_) {
+    if (c.node != node || !c.enabled || c.vm.frozen()) {
+      continue;
+    }
+    Bind(c);
+    (void)c.vm.CallNamed1(enter ? "on_collision_enter" : "on_collision_leave", other);
+  }
+}
+
+void ScriptComponentWorld::DispatchNotify(engine::scene::NodeId node, std::string_view fn,
+                                          std::string_view arg) {
+  for (auto& c : comps_) {
+    if (c.node != node || !c.enabled || c.vm.frozen()) {
+      continue;
+    }
+    Bind(c);
+    (void)c.vm.CallNamed1(fn, arg);
   }
 }
 

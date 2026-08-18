@@ -2,6 +2,7 @@
 
 #include "engine/assets/streaming_budget.h"
 #include "engine/core/math.h"
+#include "engine/terrain/heightmap.h"
 
 #include <cmath>
 #include <cstddef>
@@ -40,9 +41,27 @@ struct ChunkKeyHash {
   return "terrain/chunk_" + std::to_string(key.x) + "_" + std::to_string(key.z);
 }
 
+// World XZ extent covered by a heightmap grid (exclusive of last sample edge).
+[[nodiscard]] inline float HeightmapWorldSizeX(const Heightmap& map) {
+  return map.width > 1 ? static_cast<float>(map.width - 1) * map.cell : 0.f;
+}
+[[nodiscard]] inline float HeightmapWorldSizeZ(const Heightmap& map) {
+  return map.height > 1 ? static_cast<float>(map.height - 1) * map.cell : 0.f;
+}
+
+// Estimate resident bytes for one streamed height chunk tile (float samples).
+[[nodiscard]] inline std::size_t EstimateHeightChunkBytes(int samples_per_edge) {
+  const int n = samples_per_edge > 0 ? samples_per_edge : 1;
+  return static_cast<std::size_t>(n) * static_cast<std::size_t>(n) * sizeof(float);
+}
+
 class TerrainChunkStreamer {
  public:
   void Configure(float chunk_world_size, int load_radius_chunks, std::size_t bytes_per_chunk);
+
+  // Convenience: pick chunk size from heightmap world extent (at least 1 chunk on the short axis).
+  void ConfigureForHeightmap(const Heightmap& map, int chunks_along_short_axis,
+                             int load_radius_chunks, std::size_t bytes_per_chunk);
 
   // Load/unload around camera chunk; integrates with StreamingBudget residency.
   void Update(const Vec3& camera_world, assets::StreamingBudget& budget);

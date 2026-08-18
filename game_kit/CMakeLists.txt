@@ -35,6 +35,32 @@ else()
   message(WARNING "game_kit: Lua 5.4 sources missing; ScriptVm stub only")
 endif()
 
+set(_recast_ok FALSE)
+FetchContent_Declare(recastnav
+  URL https://github.com/recastnavigation/recastnavigation/archive/refs/tags/v1.6.0.tar.gz
+)
+FetchContent_GetProperties(recastnav)
+if(NOT recastnav_POPULATED)
+  FetchContent_Populate(recastnav)
+endif()
+if(EXISTS "${recastnav_SOURCE_DIR}/Recast/Include/Recast.h" AND EXISTS "${recastnav_SOURCE_DIR}/Detour/Include/DetourNavMesh.h")
+  file(GLOB _recast_src CONFIGURE_DEPENDS "${recastnav_SOURCE_DIR}/Recast/Source/*.cpp")
+  file(GLOB _detour_src CONFIGURE_DEPENDS "${recastnav_SOURCE_DIR}/Detour/Source/*.cpp")
+  add_library(recast_static STATIC ${_recast_src} ${_detour_src})
+  target_include_directories(recast_static PUBLIC
+    "${recastnav_SOURCE_DIR}/Recast/Include"
+    "${recastnav_SOURCE_DIR}/Detour/Include"
+  )
+  if(MSVC)
+    target_compile_options(recast_static PRIVATE /W3)
+    target_compile_definitions(recast_static PRIVATE _CRT_SECURE_NO_WARNINGS)
+  endif()
+  set(_recast_ok TRUE)
+  message(STATUS "game_kit: Recast from ${recastnav_SOURCE_DIR}")
+else()
+  message(WARNING "game_kit: Recast sources missing; Steer-only nav")
+endif()
+
 add_library(game_kit STATIC
   runtime/level_flow.cpp
   runtime/timer.cpp
@@ -46,6 +72,12 @@ add_library(game_kit STATIC
   runtime/runtime.cpp
   runtime/trigger.cpp
   runtime/player_controller.cpp
+  runtime/anim_player.cpp
+  runtime/audio_mixer.cpp
+  runtime/nav.cpp
+  runtime/timeline.cpp
+  runtime/snapshot.cpp
+  runtime/script_fields.cpp
   script/vm/lua_vm.cpp
   script/bindings/lua_api.cpp
   script/script_hot_reload.cpp
@@ -59,7 +91,7 @@ target_include_directories(game_kit PUBLIC
 target_include_directories(game_kit PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/script
 )
-target_link_libraries(game_kit PUBLIC engine_app engine_scene engine_core engine_physics engine_ui engine_media)
+target_link_libraries(game_kit PUBLIC engine_app engine_scene engine_core engine_physics engine_ui engine_media engine_animation engine_input)
 target_compile_features(game_kit PUBLIC cxx_std_20)
 if(_lua_ok)
   target_link_libraries(game_kit PUBLIC lua_static)
@@ -67,6 +99,24 @@ if(_lua_ok)
   target_compile_definitions(game_kit PUBLIC GAME_KIT_WITH_LUA=1)
 else()
   target_compile_definitions(game_kit PUBLIC GAME_KIT_WITH_LUA=0)
+endif()
+if(_recast_ok)
+  target_link_libraries(game_kit PUBLIC recast_static)
+  target_compile_definitions(game_kit PUBLIC GAME_KIT_WITH_RECAST=1)
+else()
+  target_compile_definitions(game_kit PUBLIC GAME_KIT_WITH_RECAST=0)
+endif()
+
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+  execute_process(
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/script/bindings/gen_lua_api.py" --check
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    RESULT_VARIABLE _lua_api_check
+  )
+  if(NOT _lua_api_check EQUAL 0)
+    message(WARNING "game_kit: lua_api_reg.inc does not match api.json; run script/bindings/gen_lua_api.py")
+  endif()
 endif()
 
 add_executable(hello_playable samples/hello_playable/main.cpp)
@@ -90,10 +140,13 @@ kit_use_shaders(prefab_place)
 add_executable(game_kit_tests
   tests/main.cpp
   tests/test_runtime.cpp
+  tests/test_gameplay.cpp
+  tests/test_integration.cpp
 )
 target_include_directories(game_kit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(game_kit_tests PRIVATE game_kit)
-# Compile only. Do not add_test — wait for session 98eb28cc.
+enable_testing()
+add_test(NAME game_kit.unit COMMAND game_kit_tests)
 
 if(MSVC)
   target_compile_options(game_kit PRIVATE /W4)

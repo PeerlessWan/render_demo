@@ -91,6 +91,9 @@ struct EffectTuning {
   float flare_strength = 0.f;
   // Mega-W8 C02: lit PS consumes packed tile light lists instead of scanning 0..15.
   bool enable_tiled_lights = true;
+  // Mega-W10 C06: Sandbox "near default" VT preference (pairs with Feature vt_near_default).
+  // Default OFF — classic materials / golden stay non-VT; not Nanite.
+  bool enable_vt_near_default = false;
 };
 
 class RenderSystem {

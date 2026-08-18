@@ -33,7 +33,9 @@ render_demo/
 │  Gameplay Runtime（本层，品类无关）      │
 │   LevelFlow · Entity/ScriptComponent    │
 │   Timer · EventBus · SaveGame 槽        │
-│   Trigger 约定 · 玩家控制器骨架          │
+│   Trigger 约定 · 玩家控制器              │
+│   AnimPlayer · Mixer · Nav · Timeline   │
+│   WorldSnapshot · LoopbackReplicator    │
 ├────────────────────────────────────────┤
 │  Engine Host Adapter                    │
 │   公开 API 薄稳定 Facade                │
@@ -70,6 +72,11 @@ game_kit/
 │   ├── save.cpp
 │   ├── trigger.cpp
 │   ├── player_controller.cpp
+│   ├── anim_player.cpp
+│   ├── audio_mixer.cpp
+│   ├── nav.cpp
+│   ├── timeline.cpp
+│   ├── snapshot.cpp
 │   ├── prefab.cpp
 │   └── runtime.cpp
 ├── script/

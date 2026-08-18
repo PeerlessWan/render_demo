@@ -1,9 +1,9 @@
-# Host API v0 草案（公开契约面）
+# Host API v0（公开契约面）
 
 > 供 `game_kit` / `editor` / 外部游戏工程依赖。  
 > **权威帧序：** [HOSTING.md](HOSTING.md) §4、[ARCHITECTURE.md](ARCHITECTURE.md) §4.1。  
-> **状态：文档草案（D10）** — Mega-W9 **不冻结** Host API；字段/签名以实现为准，破坏性变更仍走 semver / ADR。  
-> 目标：随实现成熟冻结为 v0 Stable（见 §6）；本波仅对齐能力边界叙述。
+> **状态：v0 子集已冻结（0.1）** — `engine::kHostApiVersion`；启动日志打印 `engine.host_api_version=`。  
+> 改冻结面签名须 ADR / 大版本。未列入下表的模块仍为 Preview。
 
 ## 1. 目标与稳定级别
 
@@ -40,7 +40,7 @@ include/engine/
 | **assets** | `AssetId`、`AssetHandle`、RequestLoad/Cancel、Pump 后完成回调、Manifest 查询 | M3 |
 | **scene** | Node 层级、Transform、显隐、相机、渲染向序列化 IO | M4/M8 |
 | **render** | 质量档开关、视图模式（调试）、**不**暴露后端命令录制 | M2+ |
-| **physics** | Raycast/ShapeCast、Trigger 订阅、角色控制器接口 | M12 |
+| **physics** | Raycast、MoveCharacter、**OverlapAabb**、**ConsumeContacts**、Trigger 体创建 | M12 / v0 |
 | **ui** | Retained：显隐/文本/基础控件；WantCapture 查询 | M8/M15 |
 | **audio** | Clip 播放/停止/增益（无 DSP） | M7 |
 | **net** | Http/Ws/Quic 请求与 Pump 回调 | M19 |
@@ -61,7 +61,7 @@ include/engine/
 
 > 与 [HOSTING.md](HOSTING.md) §5.4、[game_kit SCRIPTING](../../game_kit/docs/SCRIPTING.md) 对齐。破坏性变更走 ADR。
 
-**允许（经 Facade / 外层 VM）：** Node 变换与层级、Prefab 生成/销毁、Timer/Event、LevelFlow、Action 只读、Raycast、Audio 播放、UI 显隐/文本、Asset RequestLoad。  
+**允许（经 Facade / 外层 VM）：** Node 变换与层级、Prefab 生成/销毁、Timer/Event、LevelFlow、Action 只读、Raycast / OverlapAabb、Audio 播放、UI 显隐/文本/创建控件、Asset RequestLoad。  
 
 **禁止：** 创建/枚举 Device、改 PSO/描述符、持有 GPU 裸指针、在非主线程未入队写 Scene。  
 
@@ -77,8 +77,8 @@ include/engine/
 
 | 版本 | 条件 |
 |---|---|
-| **0.x** | M4 起 Preview；M9 起宣称 Host API v0 Stable（核心子集） |
-| 文档字段 | `engine.host_api_version` 启动日志打印 |
+| **0.1** | game_kit 消费子集 **Frozen**：Scene TRS、Input、Physics Raycast/MoveCharacter/Overlap/Contacts、Retained UI、Audio Play、Asset RequestLoad |
+| 文档字段 | 启动日志 `engine.host_api_version=`（`engine::kHostApiVersion`） |
 
 `game_kit` / `editor` 文档中声明依赖的最低 Host API 版本。
 

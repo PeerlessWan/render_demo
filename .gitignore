@@ -1,0 +1,16 @@
+# CMake / IDE
+build/
+build_kits/
+out/
+cmake-build-*/
+.vs/
+.vscode/
+*.user
+
+# Runtime worlds (minecraft / local play)
+saves/
+worlds/
+
+# Python
+__pycache__/
+*.pyc

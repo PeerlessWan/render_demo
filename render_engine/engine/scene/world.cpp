@@ -98,6 +98,101 @@ const MeshRenderer* World::mesh(NodeId id) const {
   return &nodes_[id].mesh;
 }
 
+void World::clear_mesh(NodeId id) {
+  if (valid(id)) {
+    nodes_[id].has_mesh = false;
+    nodes_[id].mesh = MeshRenderer{};
+  }
+}
+
+void World::set_light(NodeId id, LightComponent light) {
+  if (!valid(id)) {
+    return;
+  }
+  nodes_[id].light = light;
+  nodes_[id].has_light = true;
+}
+
+const LightComponent* World::light(NodeId id) const {
+  if (!valid(id) || !nodes_[id].has_light) {
+    return nullptr;
+  }
+  return &nodes_[id].light;
+}
+
+void World::clear_light(NodeId id) {
+  if (valid(id)) {
+    nodes_[id].has_light = false;
+    nodes_[id].light = LightComponent{};
+  }
+}
+
+void World::set_camera(NodeId id, CameraComponent camera) {
+  if (!valid(id)) {
+    return;
+  }
+  nodes_[id].camera = camera;
+  nodes_[id].has_camera = true;
+}
+
+const CameraComponent* World::camera(NodeId id) const {
+  if (!valid(id) || !nodes_[id].has_camera) {
+    return nullptr;
+  }
+  return &nodes_[id].camera;
+}
+
+void World::clear_camera(NodeId id) {
+  if (valid(id)) {
+    nodes_[id].has_camera = false;
+    nodes_[id].camera = CameraComponent{};
+  }
+}
+
+void World::set_collider(NodeId id, ColliderComponent collider) {
+  if (!valid(id)) {
+    return;
+  }
+  nodes_[id].collider = collider;
+  nodes_[id].has_collider = true;
+}
+
+const ColliderComponent* World::collider(NodeId id) const {
+  if (!valid(id) || !nodes_[id].has_collider) {
+    return nullptr;
+  }
+  return &nodes_[id].collider;
+}
+
+void World::clear_collider(NodeId id) {
+  if (valid(id)) {
+    nodes_[id].has_collider = false;
+    nodes_[id].collider = ColliderComponent{};
+  }
+}
+
+void World::set_sprite(NodeId id, SpriteComponent sprite) {
+  if (!valid(id)) {
+    return;
+  }
+  nodes_[id].sprite = std::move(sprite);
+  nodes_[id].has_sprite = true;
+}
+
+const SpriteComponent* World::sprite(NodeId id) const {
+  if (!valid(id) || !nodes_[id].has_sprite) {
+    return nullptr;
+  }
+  return &nodes_[id].sprite;
+}
+
+void World::clear_sprite(NodeId id) {
+  if (valid(id)) {
+    nodes_[id].has_sprite = false;
+    nodes_[id].sprite = SpriteComponent{};
+  }
+}
+
 void World::set_visible(NodeId id, bool visible) {
   if (valid(id)) {
     nodes_[id].visible = visible;
@@ -105,6 +200,46 @@ void World::set_visible(NodeId id, bool visible) {
 }
 
 bool World::visible(NodeId id) const { return valid(id) && nodes_[id].visible; }
+
+NodeId World::parent(NodeId id) const {
+  return valid(id) ? nodes_[id].parent : kInvalidNode;
+}
+
+Status World::set_parent(NodeId id, NodeId new_parent) {
+  if (!valid(id)) {
+    return Status::Fail(ErrorCode::NotFound, "node not found");
+  }
+  if (new_parent != kInvalidNode && !valid(new_parent)) {
+    return Status::Fail(ErrorCode::InvalidArgument, "parent not found");
+  }
+  if (id == new_parent) {
+    return Status::Fail(ErrorCode::InvalidArgument, "cannot parent to self");
+  }
+  for (NodeId walk = new_parent; valid(walk); walk = nodes_[walk].parent) {
+    if (walk == id) {
+      return Status::Fail(ErrorCode::InvalidArgument, "parent cycle");
+    }
+  }
+  auto& n = nodes_[id];
+  const NodeId old = n.parent;
+  if (old == new_parent) {
+    return Status::Ok();
+  }
+  if (old == kInvalidNode) {
+    roots_.erase(std::remove(roots_.begin(), roots_.end(), id), roots_.end());
+  } else if (valid(old)) {
+    auto& sib = nodes_[old].children;
+    sib.erase(std::remove(sib.begin(), sib.end(), id), sib.end());
+  }
+  n.parent = new_parent;
+  if (new_parent == kInvalidNode) {
+    roots_.push_back(id);
+  } else {
+    nodes_[new_parent].children.push_back(id);
+  }
+  MarkDirty(id);
+  return Status::Ok();
+}
 
 const std::vector<NodeId>& World::children(NodeId id) const {
   static const std::vector<NodeId> kEmpty;

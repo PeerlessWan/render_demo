@@ -62,14 +62,14 @@ TEST_CASE("SimulateLightTileCullCs matches AssignLightsToTiles pack", "[m32][w9]
   std::vector<std::vector<int>> tiles;
   engine::render::CullLightsToTilesCpuReference(lights, vp, engine::render::kLightTileGridW,
                                                 engine::render::kLightTileGridH, tiles);
-  std::array<int, engine::render::kLightTileCount> ref_counts{};
+  std::array<int, engine::render::kLightClusterCount> ref_counts{};
   std::array<int, engine::render::kTileLightIndexCount> ref_indices{};
   engine::render::PackTileLightLists(tiles, ref_counts, ref_indices);
 
   std::array<engine::Vec3, 3> positions{lights[0].position, lights[1].position,
                                        lights[2].position};
   std::array<float, 3> ranges{lights[0].range, lights[1].range, lights[2].range};
-  std::array<int, engine::render::kLightTileCount> sim_counts{};
+  std::array<int, engine::render::kLightClusterCount> sim_counts{};
   std::array<int, engine::render::kTileLightIndexCount> sim_indices{};
   engine::render::SimulateLightTileCullCs(vp, positions, ranges, sim_counts, sim_indices);
 
@@ -84,8 +84,8 @@ TEST_CASE("IDevice light tile cull Unavailable until Setup", "[m32][w9][c02]") {
   desc.headless = true;
   auto dev = engine::rhi::CreateHeadlessDevice(desc);
   REQUIRE(dev);
-  std::array<int, 32> counts{};
-  std::array<int, 256> indices{};
+  std::array<int, 128> counts{};
+  std::array<int, 1024> indices{};
   std::array<engine::Vec3, 1> pos{{{0.f, 0.f, -5.f}}};
   std::array<float, 1> ranges{{2.f}};
   const engine::Mat4 vp = engine::Mat4::Identity();
@@ -102,14 +102,14 @@ TEST_CASE("EvalTiledLightList sees range-binned neighbor tiles", "[m32][w9][c02]
   const engine::Mat4 proj = engine::Mat4::Perspective(1.047f, 2.f, 0.1f, 100.f);
   const engine::Mat4 vp = proj * view;
 
-  std::array<int, engine::render::kLightTileCount> counts{};
+  std::array<int, engine::render::kLightClusterCount> counts{};
   std::array<int, engine::render::kTileLightIndexCount> indices{};
   engine::render::SimulateLightTileCullCs(vp, std::span<const engine::Vec3>(&lights[0].position, 1),
                                           std::span<const float>(&lights[0].range, 1), counts,
                                           indices);
 
   int tiles_with_light = 0;
-  for (int t = 0; t < engine::render::kLightTileCount; ++t) {
+  for (int t = 0; t < engine::render::kLightClusterCount; ++t) {
     if (counts[static_cast<std::size_t>(t)] > 0) {
       ++tiles_with_light;
     }

@@ -7,9 +7,10 @@
 产品 **不透明 lit** 路径为 **Forward+**：
 
 - 单次（或少量）HDR color + depth 写入；**无** deferred G-buffer（无 Albedo/Normal/ORM MRT 布局）。  
-- 方向光 + CSM；局部点/聚光在 lit 像素着色器中累加（C02：最多 16 上传，≤2 Atlas 阴影）。  
-- **Mega-W8/W9 C02**：`AssignLightsToTiles` 按 **range 球体投影 AABB** 扩格进 8×4 tile（非仅中心点）；`PackTileLightLists` → FrameCB；lit PS 按屏幕 UV 累加。  
-- **Tile CS**：`shaders/hlsl/light_tile_cull_cs.hlsl`（及 `_vk`）输出同形 `tile_light_count[32]` / `tile_light_index[256]`；CPU `SimulateLightTileCullCs` / `CullLightsToTilesCpuReference` 与 CS 数学对齐。`RenderSystem` 在 `enable_tiled_lights` 时优先 `DispatchLightTileCull`，否则回退 CPU。  
+- 方向光 + CSM；局部点/聚光在 lit 像素着色器中累加（C02：最多 **32** 上传，≤2 Atlas 阴影）。  
+- **Mega-W8/W9/W10 C02**：`AssignLightsToTiles` 按 **range 球体投影 AABB** 扩格进 8×4 tile，并按 **view-space 深度** 粗分 `kLightZSlices=4`（cluster = slice×32 + tile）；`PackTileLightLists` → FrameCB（count[128] / index[1024]）；lit PS 按屏幕 UV + view Z 取 cluster 累加。  
+- **Tile CS**：`shaders/hlsl/light_tile_cull_cs.hlsl`（及 `_vk`）输出同形 `tile_light_count[128]` / `tile_light_index[1024]`；CPU `SimulateLightTileCullCs` / `CullLightsToTilesCpuReference` 与 CS 数学对齐。`RenderSystem` 在 `enable_tiled_lights` 时优先 `DispatchLightTileCull`，否则回退 CPU。  
+  - FrameCB：D3D12 `kFrameCbBytes=16384` 容纳 32 灯 + 8×4×4 列表；32 灯与 Z-slice 一并落地（未因对齐回退到 16）。
 - SSAO / TAA / SSR / Bloom / Fog / Tonemap 等在 **后处理** 消费 color/depth，不改变 Forward+ 主路径定义。
 
 ## FrameGraph Pass 名（冻结）
@@ -32,5 +33,5 @@
 ## 非目标（本波）
 
 - Deferred / Hybrid deferred  
-- Z-slice 完整 GPU 集群重写（本波仅屏幕 2D tile + range bin）  
+- 完整 GPU 集群重写 / 细粒度 froxel（本波为屏幕 2D tile × 粗 Z-slice）  
 - Mesh Shader 几何管线（见 C08）

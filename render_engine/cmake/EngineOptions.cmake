@@ -101,7 +101,7 @@ endif()
 option(ENGINE_LINUX_VK "Declare Linux+Vulkan (X11) build intent; see docs/LINUX.md" OFF)
 if(ENGINE_LINUX_VK)
   message(STATUS "ENGINE_LINUX_VK=ON: Linux Vulkan path (docs/LINUX.md). "
-                 "platform/linux/ not implemented yet; Wayland later. "
+                 "X11 window path in platform/linux (ENGINE_HAS_X11); Wayland postponed. "
                  "Windows-only tree may not compile on Linux until D3D12/Win32 are gated.")
   if(NOT UNIX OR APPLE)
     message(STATUS "ENGINE_LINUX_VK: host is not Linux; flag is documentation/preview only")

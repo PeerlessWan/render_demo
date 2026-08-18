@@ -17,4 +17,4 @@
 
 引擎侧接入契约：[../render_engine/docs/HOSTING.md](../render_engine/docs/HOSTING.md)。
 
-**现状：** GK0–GK3 代码已落地（`hello_playable` / `third_person`）；**测试等引擎加深会话 98eb28cc 收口后再跑。**
+**现状：** GK0–GK5 + 产品级加深已落地（`hello_playable` / `third_person`）；`ctest -R game_kit.unit`。Host API **0.1** / Prefab **v3**。

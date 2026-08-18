@@ -34,6 +34,7 @@ FeatureSet QueryFeatures() {
   f.execute_indirect = false;
   f.hiz = false;
   f.virtual_texture = true;
+  f.vt_near_default = false;
 
   std::lock_guard lock(g_feature_mu);
   auto apply = [&](const char* name, bool& dst) {
@@ -52,6 +53,7 @@ FeatureSet QueryFeatures() {
   apply("execute_indirect", f.execute_indirect);
   apply("hiz", f.hiz);
   apply("virtual_texture", f.virtual_texture);
+  apply("vt_near_default", f.vt_near_default);
   return f;
 }
 
@@ -76,6 +78,7 @@ bool QueryFeature(std::string_view name) {
   if (name == "execute_indirect") return f.execute_indirect;
   if (name == "hiz") return f.hiz;
   if (name == "virtual_texture") return f.virtual_texture;
+  if (name == "vt_near_default") return f.vt_near_default;
   return false;
 }
 

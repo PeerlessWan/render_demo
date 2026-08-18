@@ -50,6 +50,15 @@ class ProbeVolume {
   [[nodiscard]] ColorRgba SampleAtlasCpu(const std::vector<float>& atlas,
                                          const Vec3& world_pos) const;
 
+  // Mega-W10 DDGI-lite (CPU only — NOT NVIDIA DDGI / RTXGI):
+  // Blend each probe irradiance toward the mean of its 6-neighborhood (clamped edges).
+  // weight in [0,1]: 0 = no change, 1 = full neighbor mean.
+  void BlendNeighborhood(float weight = 0.25f);
+
+  // DDGI-lite cascade densify: RefineDensity near `focus` by subdividing the whole grid
+  // `levels` times (each level factor=2). Keeps extents; not a multi-volume cascade stack.
+  void CascadeRefine(const Vec3& focus, int levels = 1);
+
  private:
   bool enabled_ = true;
   Vec3 origin_{};

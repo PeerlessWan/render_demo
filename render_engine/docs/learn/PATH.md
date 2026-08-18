@@ -66,6 +66,11 @@
 | CH34 | 混合打磨与 2D 深度（拣选/MV/分层） | M20–M21 | `34_hybrid_2d_depth` | 与 CH30 增量是什么？ |
 | CH35 | 动态 GI / 地形水体植被 / GPU Driven / VK RT | M22–M25 | 见下行「CH35 入口」 | 各能力属于 L几？ |
 | CH36 | Mega-W9 加深冒烟（meshlet/MS、天气、QUIC…） | Mega-W9 / ADR 0036 | `36_w9_deepen` | W9 边界与 SKIP 口径？ |
+| CH37 | 演示级服装 / 披风裙摆 SoftBody | Mega-W10 / ADR 0037 | `37_clothing` | 演示挂接 vs 服装管线？ |
+| CH38 | 大地形高度图 + ChunkStream | Mega-W10 / ADR 0037 | `38_large_terrain` | LoadHeightmapPng 与预算驻留？ |
+| CH39 | Mega-W10 加深冒烟（地形/服装/possess…） | Mega-W10 / ADR 0037 | `39_w10_deepen` | W10 边界与仍外置？ |
+
+相关 Sample（无独立短章）：`40_possess_third_person`（附身第三人称，见 CH37/CH39）。
 
 ### CH35 入口（具体 Sample / Sandbox 开关）
 
@@ -81,7 +86,7 @@
 
 ### 本波新增 / 补齐的 Learn Sample
 
-`13_environment_quality`、`14_skinning`、`17_vfx`、`18b_video_texture`、`18c_audio_playback`、`20_engine_ops`、`23_occlusion_culling`、`28_hdr_color_sandbox`、`31_net_loopback`、`34_hybrid_2d_depth`、`36_w9_deepen`（CMake：`ENGINE_BUILD_LEARN_SAMPLES`）。
+`13_environment_quality`、`14_skinning`、`17_vfx`、`18b_video_texture`、`18c_audio_playback`、`20_engine_ops`、`23_occlusion_culling`、`28_hdr_color_sandbox`、`31_net_loopback`、`34_hybrid_2d_depth`、`36_w9_deepen`、`37_clothing`、`38_large_terrain`、`39_w10_deepen`、`40_possess_third_person`（CMake：`ENGINE_BUILD_LEARN_SAMPLES`）。
 
 ## 每章固定结构（章节文模板）
 
@@ -122,10 +127,11 @@
 | M20–M21 | CH34 |
 | M22–M25 | CH35 |
 | Mega-W9 | CH36（加深冒烟）+ 补齐缺 Sample |
+| Mega-W10 | CH37–CH39（服装 / 大地形 / W10 冒烟）+ `40_possess_third_person` |
 
-原则：**产品代码可以一次实现完整能力；学习 Sample 按章裁剪场景，避免第一章就打开 CSM+DLSS+DXR。** 默认学习路径仍以 **D3D12** 为主；双后端差异见 [ADR 0020](adr/0020-windows-d3d12-vulkan-linux-vulkan.md)；网络见 [ADR 0021](adr/0021-network-http-ws-quic.md)；W9 边界见 [ADR 0036](adr/0036-mega-w9-deepen.md)。编译运行见 [GETTING_STARTED_M1.md](../GETTING_STARTED_M1.md)。
+原则：**产品代码可以一次实现完整能力；学习 Sample 按章裁剪场景，避免第一章就打开 CSM+DLSS+DXR。** 默认学习路径仍以 **D3D12** 为主；双后端差异见 [ADR 0020](adr/0020-windows-d3d12-vulkan-linux-vulkan.md)；网络见 [ADR 0021](adr/0021-network-http-ws-quic.md)；W9 边界见 [ADR 0036](adr/0036-mega-w9-deepen.md)；W10 边界见 [ADR 0037](adr/0037-mega-w10-deepen.md)。编译运行见 [GETTING_STARTED_M1.md](../GETTING_STARTED_M1.md)。
 
-章节正文见 [chapters/README.md](chapters/README.md)（CH00–CH11 完整模板；CH12–CH36 选修短章）。
+章节正文见 [chapters/README.md](chapters/README.md)（CH00–CH11 完整模板；CH12–CH39 选修短章）。
 
 ## 练习难度约定
 

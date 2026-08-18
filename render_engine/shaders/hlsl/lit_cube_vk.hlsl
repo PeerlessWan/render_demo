@@ -23,10 +23,10 @@ cbuffer FrameCB : register(b0) {
   float g_local_count;
   float g_enable_taa;
   float2 g_pad_before_lights;
-  float4 g_local_pos_range[16];
-  float4 g_local_color_intensity[16];
-  float4 g_local_spot[16];       // xyz=dir, w=cosOuter (-1 = point/omni)
-  float4 g_local_spot_inner[4];  // cosInner for lights 0..15
+  float4 g_local_pos_range[32];
+  float4 g_local_color_intensity[32];
+  float4 g_local_spot[32];       // xyz=dir, w=cosOuter (-1 = point/omni)
+  float4 g_local_spot_inner[8];  // cosInner for lights 0..31
   float4x4 g_local_shadow_vp[12];
   float g_enable_local_shadow;
   float g_local_shadow_bias;
@@ -37,14 +37,18 @@ cbuffer FrameCB : register(b0) {
   float g_jitter_y;
   float g_pad_j0;
   float g_pad_j1;
-  float4 g_local_ies[4];  // C03/W7
-  // Mega-W8 C02: packed Forward+ tile light lists (8×4, ≤8 / tile).
+  float4 g_local_ies[8];  // C03/W7
+  // Mega-W10 C02: packed Forward+ tile×Z light lists (8×4×4, ≤8 / cluster).
   float g_enable_tiled_lights;
   float g_tile_grid_w;
   float g_tile_grid_h;
   float g_max_lights_per_tile;
-  float4 g_tile_light_count[8];
-  float4 g_tile_light_index[64];
+  float g_z_slices;
+  float g_z_near;
+  float g_z_far;
+  float g_pad_z;
+  float4 g_tile_light_count[32];
+  float4 g_tile_light_index[256];
 };
 
 cbuffer ObjectCB : register(b1) {
@@ -323,6 +327,19 @@ int TileIndexFromScreenUv(float2 uv) {
   return ty * gw + tx;
 }
 
+int ZSliceFromViewZ(float view_z) {
+  int ns = max((int)g_z_slices, 1);
+  float denom = max(g_z_far - g_z_near, 1e-5);
+  float t = saturate((view_z - g_z_near) / denom);
+  t = min(t, 0.999f);
+  return min((int)(t * (float)ns), ns - 1);
+}
+
+int ClusterIndex(int tile, float view_z) {
+  int tile_count = max((int)g_tile_grid_w, 1) * max((int)g_tile_grid_h, 1);
+  return ZSliceFromViewZ(view_z) * tile_count + tile;
+}
+
 float3 AccumulateLocalLight(int i, float3 world_pos, float3 n, float3 diffuse, float ao) {
   float3 lpos = g_local_pos_range[i].xyz;
   float range = max(g_local_pos_range[i].w, 1e-3);
@@ -409,15 +426,17 @@ float4 PSMain(VSOutput input) : SV_Target {
 
   int lc = (int)g_local_count;
   if (g_enable_tiled_lights > 0.5f && lc > 0) {
+    float vz = dot(input.world_pos - g_eye, normalize(g_cam_forward));
     int tile = TileIndexFromScreenUv(ScreenUvFromWorld(input.world_pos));
-    int count = (int)g_tile_light_count[tile >> 2][tile & 3];
+    int cluster = ClusterIndex(tile, vz);
+    int count = (int)g_tile_light_count[cluster >> 2][cluster & 3];
     count = min(count, max((int)g_max_lights_per_tile, 0));
     count = min(count, 8);
     [unroll] for (int s = 0; s < 8; ++s) {
       if (s >= count) {
         break;
       }
-      int flat = tile * 8 + s;
+      int flat = cluster * 8 + s;
       int i = (int)g_tile_light_index[flat >> 2][flat & 3];
       if (i < 0 || i >= lc) {
         continue;
@@ -425,7 +444,7 @@ float4 PSMain(VSOutput input) : SV_Target {
       lit += AccumulateLocalLight(i, input.world_pos, n, diffuse, tex_ao);
     }
   } else {
-    [unroll] for (int i = 0; i < 16; ++i) {
+    [unroll] for (int i = 0; i < 32; ++i) {
       if (i >= lc) {
         break;
       }

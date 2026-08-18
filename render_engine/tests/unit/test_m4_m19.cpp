@@ -320,6 +320,33 @@ TEST_CASE("Physics stack and raycast", "[physics]") {
   REQUIRE(world->SoftBodyGetIndexCount(0) == 0);
   std::vector<std::uint32_t> indices;
   REQUIRE_FALSE(world->SoftBodyGetIndices(0, indices));
+
+  engine::physics::RigidBodyDesc a;
+  a.position = {0.f, 0.5f, 0.f};
+  a.half_extents = {0.5f, 0.5f, 0.5f};
+  a.mass = 0.f;
+  engine::physics::RigidBodyDesc b;
+  b.position = {0.4f, 0.5f, 0.f};
+  b.half_extents = {0.5f, 0.5f, 0.5f};
+  b.mass = 0.f;
+  const int ia = world->CreateBox(a);
+  const int ib = world->CreateBox(b);
+  const auto hits = world->OverlapAabb({0.f, 0.5f, 0.f}, {0.6f, 0.6f, 0.6f});
+  REQUIRE(hits.size() >= 2);
+  bool saw_a = false;
+  bool saw_b = false;
+  for (int id : hits) {
+    saw_a = saw_a || id == ia;
+    saw_b = saw_b || id == ib;
+  }
+  REQUIRE(saw_a);
+  REQUIRE(saw_b);
+  const auto contacts = world->ConsumeContacts();
+  bool pair = false;
+  for (const auto& c : contacts) {
+    pair = pair || ((c.a == ia && c.b == ib) || (c.a == ib && c.b == ia));
+  }
+  REQUIRE(pair);
 }
 
 TEST_CASE("Default physics world and Jolt factory", "[physics][m12]") {

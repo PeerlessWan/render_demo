@@ -549,14 +549,16 @@ class D3D12Device final : public IDevice {
   }
 
   Status DispatchLightTileCull(const Mat4& view_proj, std::span<const Vec3> positions,
-                               std::span<const float> ranges, std::array<int, 32>& out_counts,
-                               std::array<int, 256>& out_indices) override {
+                               std::span<const float> ranges, std::array<int, 128>& out_counts,
+                               std::array<int, 1024>& out_indices, const Vec3& eye,
+                               const Vec3& cam_forward) override {
     if (!tile_cull_ready_) {
       out_counts.fill(0);
       out_indices.fill(-1);
       return Status::Fail(ErrorCode::Unavailable, "DispatchLightTileCull: not set up");
     }
-    engine::render::SimulateLightTileCullCs(view_proj, positions, ranges, out_counts, out_indices);
+    engine::render::SimulateLightTileCullCs(view_proj, positions, ranges, out_counts, out_indices,
+                                            eye, cam_forward);
     return Status::Ok();
   }
 
@@ -1272,10 +1274,10 @@ class D3D12Device final : public IDevice {
       float enable_ssao;
       float enable_taa;
       float local_count;
-      float local_pos_range[16][4];
-      float local_color_intensity[16][4];
-      float local_spot[16][4];       // xyz=dir, w=cosOuter (-1 = point/omni)
-      float local_spot_inner[16];    // cosInner for lights 0..15
+      float local_pos_range[32][4];
+      float local_color_intensity[32][4];
+      float local_spot[32][4];       // xyz=dir, w=cosOuter (-1 = point/omni)
+      float local_spot_inner[32];    // cosInner for lights 0..31
       float local_shadow_vp[12][16];
       float enable_local_shadow;
       float local_shadow_bias;
@@ -1289,14 +1291,18 @@ class D3D12Device final : public IDevice {
       float enable_ibl;
       float ibl_intensity;
       float _pad_before_ies[2];  // HLSL: float4 g_local_ies starts 16-byte aligned
-      float local_ies[16];  // C03/W7 profile id as float (0=off)
-      // Mega-W8 C02: packed Forward+ tile lists (must match lit_cube.hlsl).
+      float local_ies[32];  // C03/W7 profile id as float (0=off)
+      // Mega-W10 C02: packed Forward+ tile×Z lists (must match lit_cube.hlsl).
       float enable_tiled_lights;
       float tile_grid_w;
       float tile_grid_h;
       float max_lights_per_tile;
-      float tile_light_count[32];
-      float tile_light_index[256];
+      float z_slices;
+      float z_near;
+      float z_far;
+      float _pad_z;
+      float tile_light_count[128];
+      float tile_light_index[1024];
     } data{};
     std::memcpy(data.view_proj, lighting.view_proj.m.data(), sizeof(data.view_proj));
     for (int i = 0; i < 4; ++i) {
@@ -1330,7 +1336,7 @@ class D3D12Device final : public IDevice {
     data.enable_ssao = lighting.enable_ssao ? 1.f : 0.f;
     data.enable_taa = lighting.enable_taa ? 1.f : 0.f;
     data.local_count = static_cast<float>(lighting.local_light_count);
-    for (int i = 0; i < 16; ++i) {
+    for (int i = 0; i < 32; ++i) {
       data.local_pos_range[i][0] = lighting.local_pos[static_cast<std::size_t>(i)].x;
       data.local_pos_range[i][1] = lighting.local_pos[static_cast<std::size_t>(i)].y;
       data.local_pos_range[i][2] = lighting.local_pos[static_cast<std::size_t>(i)].z;
@@ -1364,17 +1370,20 @@ class D3D12Device final : public IDevice {
     data.reflection_intensity = lighting.reflection_intensity;
     data.enable_ibl = lighting.enable_ibl ? 1.f : 0.f;
     data.ibl_intensity = lighting.ibl_intensity;
-    for (int i = 0; i < 16; ++i) {
+    for (int i = 0; i < 32; ++i) {
       data.local_ies[i] = lighting.local_ies[static_cast<std::size_t>(i)];
     }
     data.enable_tiled_lights = lighting.enable_tiled_lights ? 1.f : 0.f;
     data.tile_grid_w = 8.f;
     data.tile_grid_h = 4.f;
     data.max_lights_per_tile = 8.f;
-    for (int i = 0; i < 32; ++i) {
+    data.z_slices = 4.f;
+    data.z_near = 0.5f;
+    data.z_far = 80.f;
+    for (int i = 0; i < 128; ++i) {
       data.tile_light_count[i] = static_cast<float>(lighting.tile_light_count[static_cast<std::size_t>(i)]);
     }
-    for (int i = 0; i < 256; ++i) {
+    for (int i = 0; i < 1024; ++i) {
       data.tile_light_index[i] = static_cast<float>(lighting.tile_light_index[static_cast<std::size_t>(i)]);
     }
 
@@ -3139,7 +3148,7 @@ class D3D12Device final : public IDevice {
  private:
   static constexpr UINT kMaxLitDraws = 64;
   static constexpr UINT kShadowVpSlots = 16;  // 4 cascades + local tiles
-  static constexpr UINT64 kFrameCbBytes = 8192;  // ≥ FrameData (+ tile lists), 256-aligned
+  static constexpr UINT64 kFrameCbBytes = 16384;  // ≥ FrameData (32 lights + 8×4×4 clusters)
   static constexpr UINT64 kPostCbBytes = 512;
 
   UINT64 FrameCbOffset() const { return static_cast<UINT64>(frame_index_) * kFrameCbBytes; }

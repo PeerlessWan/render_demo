@@ -1,11 +1,12 @@
-// Vulkan variant of light_tile_cull_cs.hlsl (Mega-W9 C02).
+// Vulkan variant of light_tile_cull_cs.hlsl (Mega-W10 C02).
 // Explicit [[vk::binding]] for SPIR-V; compile with -fvk-use-dx-layout.
-// Same contract: tile_light_count[32] + tile_light_index[256], 8×4, ≤8/tile, ≤16 lights.
+// Same contract: tile_light_count[128] + tile_light_index[1024], 8×4×4, ≤8/cluster, ≤32 lights.
 
 static const uint kGridW = 8;
 static const uint kGridH = 4;
 static const uint kTileCount = 32;
-static const uint kMaxLights = 16;
+static const uint kZSlices = 4;
+static const uint kMaxLights = 32;
 static const uint kMaxPerTile = 8;
 
 struct LightPacked {
@@ -15,7 +16,11 @@ struct LightPacked {
 
 struct TileCullCB {
   float4x4 view_proj;
+  float3 eye;
   uint light_count;
+  float3 cam_forward;
+  float z_near;
+  float z_far;
   uint _pad0;
   uint _pad1;
   uint _pad2;
@@ -68,16 +73,33 @@ bool LightUvAabb(float3 pos, float range, out float u0, out float u1, out float 
   return accepted > 0;
 }
 
-[numthreads(8, 4, 1)]
+int ViewZToSlice(float view_z) {
+  float denom = max(cb.z_far - cb.z_near, 1e-5);
+  float t = saturate((view_z - cb.z_near) / denom);
+  t = min(t, 0.999);
+  return min((int)(t * (float)kZSlices), (int)kZSlices - 1);
+}
+
+[numthreads(8, 4, 4)]
 void CSMain(uint3 dtid : SV_DispatchThreadID) {
-  if (dtid.x >= kGridW || dtid.y >= kGridH) {
+  if (dtid.x >= kGridW || dtid.y >= kGridH || dtid.z >= kZSlices) {
     return;
   }
   const uint tile = dtid.y * kGridW + dtid.x;
+  const uint slice = dtid.z;
+  const uint cluster = slice * kTileCount + tile;
   const float tile_u0 = (float)dtid.x / (float)kGridW;
   const float tile_u1 = (float)(dtid.x + 1) / (float)kGridW;
   const float tile_v0 = (float)dtid.y / (float)kGridH;
   const float tile_v1 = (float)(dtid.y + 1) / (float)kGridH;
+
+  float3 fwd = cb.cam_forward;
+  float fl = length(fwd);
+  if (fl < 1e-6) {
+    fwd = float3(0, 0, -1);
+  } else {
+    fwd /= fl;
+  }
 
   int count = 0;
   int slots[8];
@@ -99,15 +121,22 @@ void CSMain(uint3 dtid : SV_DispatchThreadID) {
     if (u1 < tile_u0 || u0 > tile_u1 || v1 < tile_v0 || v0 > tile_v1) {
       continue;
     }
+    float r = max(L.range, 0.0);
+    float vz = dot(L.pos - cb.eye, fwd);
+    int sz0 = ViewZToSlice(vz - r);
+    int sz1 = ViewZToSlice(vz + r);
+    if ((int)slice < sz0 || (int)slice > sz1) {
+      continue;
+    }
     if (count < (int)kMaxPerTile) {
       slots[count] = (int)li;
       ++count;
     }
   }
 
-  g_tile_light_count[tile] = count;
+  g_tile_light_count[cluster] = count;
   [unroll]
   for (int s = 0; s < 8; ++s) {
-    g_tile_light_index[tile * kMaxPerTile + (uint)s] = slots[s];
+    g_tile_light_index[cluster * kMaxPerTile + (uint)s] = slots[s];
   }
 }

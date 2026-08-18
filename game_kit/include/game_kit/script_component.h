@@ -40,12 +40,14 @@ class ScriptComponentWorld {
   engine::Status LoadFromString(ScriptComponent& c, std::string_view source,
                                 std::string_view chunk_name);
   // Safe hot reload: on_destroy + Reset VM + LoadFromDisk. Does not destroy Device.
-  engine::Status Reload(ScriptComponent& c);
-  engine::Status ReloadPath(std::string_view path);
+  engine::Status Reload(ScriptComponent& c, bool preserve_state = false);
+  engine::Status ReloadPath(std::string_view path, bool preserve_state = false);
 
   void AttachHost(engine::scene::World* world, GameRuntime* rt);
   void Tick(float dt);
   void DispatchTrigger(engine::scene::NodeId node, bool enter, std::string_view other);
+  void DispatchCollision(engine::scene::NodeId node, bool enter, std::string_view other);
+  void DispatchNotify(engine::scene::NodeId node, std::string_view fn, std::string_view arg);
 
   void Clear();
 

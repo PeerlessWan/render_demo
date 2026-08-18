@@ -12,6 +12,8 @@ namespace engine::vt {
 // C06 / Mega-W9 Virtual Texture: CPU page table + physical cache + request list +
 // GPU feedback stub (CPU-simulated feedback buffer). Feature name: "virtual_texture".
 // Not Nanite; Sample remains a CPU stub (not wired as default full-material path).
+// Mega-W10: Feature "vt_near_default" + EffectTuning::enable_vt_near_default = Sandbox
+// "near default" switch (opt-in lit VT preference; still not full-material Nanite).
 
 struct PageCoord {
   std::uint32_t x = 0;

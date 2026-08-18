@@ -1,10 +1,43 @@
 #include "engine/terrain/heightmap.h"
 
+#include "engine/assets/image_loader.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 
 namespace engine::terrain {
+
+Result<Heightmap> LoadHeightmapPng(const std::filesystem::path& path, float cell,
+                                   float height_scale) {
+  auto loader = assets::CreateDefaultImageLoader();
+  if (!loader) {
+    return Result<Heightmap>::Fail("CreateDefaultImageLoader returned null");
+  }
+  auto img = loader->LoadFile(path);
+  if (!img) {
+    return Result<Heightmap>::Fail(img.status().message());
+  }
+  const assets::ImageRgba8& rgba = img.value();
+  if (rgba.width < 2 || rgba.height < 2) {
+    return Result<Heightmap>::Fail("Heightmap PNG too small (need >= 2x2): " + path.string());
+  }
+  Heightmap map;
+  map.width = rgba.width;
+  map.height = rgba.height;
+  map.cell = cell > 1e-6f ? cell : 1.f;
+  const float scale = height_scale;
+  map.samples.resize(static_cast<std::size_t>(map.width) * static_cast<std::size_t>(map.height));
+  for (int y = 0; y < map.height; ++y) {
+    for (int x = 0; x < map.width; ++x) {
+      const std::size_t i = static_cast<std::size_t>(y) * static_cast<std::size_t>(map.width) +
+                            static_cast<std::size_t>(x);
+      const std::uint8_t r = rgba.rgba[i * 4u];
+      map.samples[i] = (static_cast<float>(r) / 255.f) * scale;
+    }
+  }
+  return Result<Heightmap>::Ok(std::move(map));
+}
 
 float SampleHeight(const Heightmap& map, float x, float z) {
   if (map.width < 2 || map.height < 2 || map.samples.empty()) {

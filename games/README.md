@@ -30,4 +30,4 @@ games/<title>  →  genre_kit?  →  game_kit  →  render_engine
 
 ## 现状
 
-占位目录；尚无游戏工程。先推进 `render_engine` M1 与 `game_kit` 文档/实现。
+- [`minecraft/`](minecraft/)：生存核心环体素沙盒（纯色方块，未测；等引擎会话收口）。

@@ -12,12 +12,14 @@
 #include <fstream>
 
 TEST_CASE("Local light capacity constants", "[m26][c02]") {
-  static_assert(engine::render::kMaxLocalLightsGpu == 16);
-  static_assert(engine::render::kMaxLocalLightsCpu == 16);
+  static_assert(engine::render::kMaxLocalLightsGpu == 32);
+  static_assert(engine::render::kMaxLocalLightsCpu == 32);
   static_assert(engine::render::kMaxLocalLightsGpu > 4);
   static_assert(engine::render::kMaxLocalShadowLights == 2);
   static_assert(engine::render::kLightTileCount == 32);
-  REQUIRE(engine::render::kMaxLocalLightsGpu == 16);
+  static_assert(engine::render::kLightZSlices == 4);
+  static_assert(engine::render::kLightClusterCount == 128);
+  REQUIRE(engine::render::kMaxLocalLightsGpu == 32);
 }
 
 TEST_CASE("AssignLightsToTiles bins by projected position", "[m26][c02]") {
@@ -32,18 +34,18 @@ TEST_CASE("AssignLightsToTiles bins by projected position", "[m26][c02]") {
   std::vector<std::vector<int>> tiles;
   engine::render::AssignLightsToTiles(lights, vp, engine::render::kLightTileGridW,
                                       engine::render::kLightTileGridH, tiles);
-  REQUIRE(tiles.size() == static_cast<std::size_t>(engine::render::kLightTileCount));
+  REQUIRE(tiles.size() == static_cast<std::size_t>(engine::render::kLightClusterCount));
   int total = 0;
   int left = -1;
   int right = -1;
-  for (int t = 0; t < engine::render::kLightTileCount; ++t) {
+  for (int t = 0; t < engine::render::kLightClusterCount; ++t) {
     for (int idx : tiles[static_cast<std::size_t>(t)]) {
       ++total;
       if (idx == 0) {
-        left = t;
+        left = t % engine::render::kLightTileCount;
       }
       if (idx == 1) {
-        right = t;
+        right = t % engine::render::kLightTileCount;
       }
     }
   }

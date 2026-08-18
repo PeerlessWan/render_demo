@@ -160,6 +160,8 @@ Windows + MSVC；Linux + GCC/Clang（M18+）。自托管 runner 需：**GPU 驱�
 
 配置示例维度：`quality=low/med`、`taa=on/off`、`shadows=on`（High+RT 可夜跑）。
 
+**Bindless 热路径（可选基线）**：Feature `bindless_hot_path` 默认 **OFF**，主黄金图 / C4 走 classic `pad=-1`。若要覆盖 SM6.6 `ResourceDescriptorHeap` 热路径，需单独 `SetFeatureOverride("bindless_hot_path", true)` 并维护 **可选** 黄金基线（不替换默认基线；缺基线 → SKIP）。详见 [VULKAN_PARITY.md](VULKAN_PARITY.md) Bindless 行。
+
 ### 4.3 性能冒烟（可选）
 
 - 固定场景跑 N 帧，记录平均 GPU/CPU 帧时。  

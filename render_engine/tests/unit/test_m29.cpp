@@ -173,10 +173,12 @@ TEST_CASE("Tile light pack constants", "[m29][w8][c02]") {
   static_assert(engine::render::kLightTileGridW == 8);
   static_assert(engine::render::kLightTileGridH == 4);
   static_assert(engine::render::kLightTileCount == 32);
+  static_assert(engine::render::kLightZSlices == 4);
+  static_assert(engine::render::kLightClusterCount == 128);
   static_assert(engine::render::kMaxLightsPerTile == 8);
-  static_assert(engine::render::kTileLightIndexCount == 256);
+  static_assert(engine::render::kTileLightIndexCount == 1024);
   REQUIRE(engine::render::kTileLightIndexCount ==
-          engine::render::kLightTileCount * engine::render::kMaxLightsPerTile);
+          engine::render::kLightClusterCount * engine::render::kMaxLightsPerTile);
 }
 
 TEST_CASE("PackTileLightLists populates FrameLighting-shaped arrays", "[m29][w8][c02]") {
@@ -194,15 +196,15 @@ TEST_CASE("PackTileLightLists populates FrameLighting-shaped arrays", "[m29][w8]
   std::vector<std::vector<int>> tiles;
   engine::render::AssignLightsToTiles(lights, vp, engine::render::kLightTileGridW,
                                       engine::render::kLightTileGridH, tiles);
-  REQUIRE(tiles.size() == static_cast<std::size_t>(engine::render::kLightTileCount));
+  REQUIRE(tiles.size() == static_cast<std::size_t>(engine::render::kLightClusterCount));
 
-  std::array<int, engine::render::kLightTileCount> counts{};
+  std::array<int, engine::render::kLightClusterCount> counts{};
   std::array<int, engine::render::kTileLightIndexCount> indices{};
   engine::render::PackTileLightLists(tiles, counts, indices);
 
   int populated = 0;
   int total_slots = 0;
-  for (int t = 0; t < engine::render::kLightTileCount; ++t) {
+  for (int t = 0; t < engine::render::kLightClusterCount; ++t) {
     REQUIRE(counts[static_cast<std::size_t>(t)] >= 0);
     REQUIRE(counts[static_cast<std::size_t>(t)] <= engine::render::kMaxLightsPerTile);
     if (counts[static_cast<std::size_t>(t)] > 0) {
@@ -216,15 +218,15 @@ TEST_CASE("PackTileLightLists populates FrameLighting-shaped arrays", "[m29][w8]
   engine::rhi::FrameLighting lighting{};
   lighting.enable_tiled_lights = true;
   lighting.local_light_count = 3;
-  for (int t = 0; t < engine::render::kLightTileCount; ++t) {
+  for (int t = 0; t < engine::render::kLightClusterCount; ++t) {
     lighting.tile_light_count[static_cast<std::size_t>(t)] = counts[static_cast<std::size_t>(t)];
   }
   for (int i = 0; i < engine::render::kTileLightIndexCount; ++i) {
     lighting.tile_light_index[static_cast<std::size_t>(i)] = indices[static_cast<std::size_t>(i)];
   }
   REQUIRE(lighting.enable_tiled_lights);
-  REQUIRE(lighting.tile_light_count.size() == 32);
-  REQUIRE(lighting.tile_light_index.size() == 256);
+  REQUIRE(lighting.tile_light_count.size() == 128);
+  REQUIRE(lighting.tile_light_index.size() == 1024);
 }
 
 TEST_CASE("EvalTiledLightList matches AssignLightsToTiles bins", "[m29][w8][c02]") {
@@ -238,7 +240,7 @@ TEST_CASE("EvalTiledLightList matches AssignLightsToTiles bins", "[m29][w8][c02]
   std::vector<std::vector<int>> tiles;
   engine::render::AssignLightsToTiles(lights, vp, engine::render::kLightTileGridW,
                                       engine::render::kLightTileGridH, tiles);
-  std::array<int, engine::render::kLightTileCount> counts{};
+  std::array<int, engine::render::kLightClusterCount> counts{};
   std::array<int, engine::render::kTileLightIndexCount> indices{};
   engine::render::PackTileLightLists(tiles, counts, indices);
 
@@ -246,7 +248,7 @@ TEST_CASE("EvalTiledLightList matches AssignLightsToTiles bins", "[m29][w8][c02]
   const float u0 = std::clamp(ndc0.x * 0.5f + 0.5f, 0.f, 0.999f);
   const float v0 = std::clamp(ndc0.y * 0.5f + 0.5f, 0.f, 0.999f);
   std::vector<int> eval0;
-  engine::render::EvalTiledLightList(counts, indices, u0, v0, eval0);
+  engine::render::EvalTiledLightList(counts, indices, u0, v0, /*view_z=*/5.f, eval0);
   REQUIRE_FALSE(eval0.empty());
   bool found0 = false;
   for (int idx : eval0) {
@@ -260,7 +262,7 @@ TEST_CASE("EvalTiledLightList matches AssignLightsToTiles bins", "[m29][w8][c02]
   const float u1 = std::clamp(ndc1.x * 0.5f + 0.5f, 0.f, 0.999f);
   const float v1 = std::clamp(ndc1.y * 0.5f + 0.5f, 0.f, 0.999f);
   std::vector<int> eval1;
-  engine::render::EvalTiledLightList(counts, indices, u1, v1, eval1);
+  engine::render::EvalTiledLightList(counts, indices, u1, v1, /*view_z=*/5.f, eval1);
   REQUIRE_FALSE(eval1.empty());
   bool found1 = false;
   for (int idx : eval1) {
@@ -271,7 +273,7 @@ TEST_CASE("EvalTiledLightList matches AssignLightsToTiles bins", "[m29][w8][c02]
   REQUIRE(found1);
 
   std::vector<int> edge;
-  engine::render::EvalTiledLightList(counts, indices, -1.f, 2.f, edge);
+  engine::render::EvalTiledLightList(counts, indices, -1.f, 2.f, 5.f, edge);
   REQUIRE(edge.size() <= static_cast<std::size_t>(engine::render::kMaxLightsPerTile));
 }
 

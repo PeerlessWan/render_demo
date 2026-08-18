@@ -1,9 +1,16 @@
 #include "game_kit/scene_document.h"
 
+#include "game_kit/entity.h"
+#include "game_kit/runtime.h"
+#include "game_kit/script_fields.h"
+
+#include "engine/core/host_api.h"
+
 #include <cctype>
 #include <cstdlib>
 #include <cstdio>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 #include <unordered_map>
 
@@ -28,6 +35,96 @@ void WriteTransform(std::ostream& out, const engine::scene::Transform& t) {
       << "],\"s\":[" << t.scale.x << ',' << t.scale.y << ',' << t.scale.z << "]}";
 }
 
+}  // namespace
+
+void ApplyNodeComponents(engine::scene::World& world, engine::scene::NodeId id, const SceneNode& n) {
+  if (!world.valid(id)) {
+    return;
+  }
+  for (const auto& c : n.components) {
+    if (c.type == "MeshRenderer") {
+      engine::scene::MeshRenderer mesh;
+      mesh.mesh_id = c.mesh.empty() ? "cube" : c.mesh;
+      mesh.material_id = c.material;
+      if (mesh.mesh_id == "ground") {
+        mesh.never_cull = true;
+        mesh.local_bounds = {{-4.f, -0.05f, -4.f}, {4.f, 0.05f, 4.f}};
+      }
+      if (mesh.mesh_id == "terrain") {
+        mesh.never_cull = true;
+      }
+      world.set_mesh(id, mesh);
+    } else if (c.type == "Light") {
+      engine::scene::LightComponent L;
+      L.kind = c.kind;
+      L.range = c.range;
+      L.intensity = c.intensity;
+      world.set_light(id, L);
+    } else if (c.type == "Camera") {
+      engine::scene::CameraComponent cam;
+      cam.active = c.active;
+      cam.fovy_rad = c.fovy;
+      world.set_camera(id, cam);
+    } else if (c.type == "Collider") {
+      engine::scene::ColliderComponent col;
+      col.hx = c.hx;
+      col.hy = c.hy;
+      col.hz = c.hz;
+      world.set_collider(id, col);
+    } else if (c.type == "Sprite" || c.type == "Tilemap") {
+      engine::scene::SpriteComponent spr;
+      spr.atlas_id = c.atlas.empty() ? "tiles" : c.atlas;
+      spr.gid = c.gid;
+      world.set_sprite(id, spr);
+    }
+  }
+}
+
+void CaptureNodeComponents(const engine::scene::World& world, engine::scene::NodeId id,
+                           SceneNode* n) {
+  if (!n || !world.valid(id)) {
+    return;
+  }
+  n->components.clear();
+  if (const auto* mesh = world.mesh(id)) {
+    SceneComponent c;
+    c.type = "MeshRenderer";
+    c.mesh = mesh->mesh_id;
+    c.material = mesh->material_id;
+    n->components.push_back(std::move(c));
+  }
+  if (const auto* L = world.light(id)) {
+    SceneComponent c;
+    c.type = "Light";
+    c.kind = L->kind;
+    c.range = L->range;
+    c.intensity = L->intensity;
+    n->components.push_back(std::move(c));
+  }
+  if (const auto* cam = world.camera(id)) {
+    SceneComponent c;
+    c.type = "Camera";
+    c.active = cam->active;
+    c.fovy = cam->fovy_rad;
+    n->components.push_back(std::move(c));
+  }
+  if (const auto* col = world.collider(id)) {
+    SceneComponent c;
+    c.type = "Collider";
+    c.hx = col->hx;
+    c.hy = col->hy;
+    c.hz = col->hz;
+    n->components.push_back(std::move(c));
+  }
+  if (const auto* spr = world.sprite(id)) {
+    SceneComponent c;
+    c.type = "Sprite";
+    c.atlas = spr->atlas_id;
+    c.gid = spr->gid;
+    n->components.push_back(std::move(c));
+  }
+}
+
 void WalkCapture(const engine::scene::World& world, engine::scene::NodeId id,
                  const std::string& parent, SceneDocument& doc) {
   if (!world.valid(id)) {
@@ -39,18 +136,15 @@ void WalkCapture(const engine::scene::World& world, engine::scene::NodeId id,
   n.parent = parent;
   n.transform = world.local_transform(id);
   n.visible = world.visible(id);
-  if (const auto* mesh = world.mesh(id)) {
-    SceneComponent c;
-    c.type = "MeshRenderer";
-    c.mesh = mesh->mesh_id;
-    n.components.push_back(std::move(c));
-  }
+  CaptureNodeComponents(world, id, &n);
   doc.nodes.push_back(std::move(n));
   const std::string self = doc.nodes.back().id;
   for (engine::scene::NodeId c : world.children(id)) {
     WalkCapture(world, c, self, doc);
   }
 }
+
+namespace {
 
 struct Parser {
   std::string_view t;
@@ -205,8 +299,57 @@ SceneComponent ParseComponent(Parser& p) {
       c.type = p.ParseString();
     } else if (key == "mesh") {
       c.mesh = p.ParseString();
+    } else if (key == "material") {
+      c.material = p.ParseString();
+    } else if (key == "materials") {
+      if (p.Expect('[')) {
+        bool first = true;
+        while (!p.Consume(']')) {
+          const std::string m = p.ParseString();
+          if (first && c.material.empty()) {
+            c.material = m;
+            first = false;
+          }
+          p.Consume(',');
+        }
+      }
     } else if (key == "script") {
       c.script = p.ParseString();
+    } else if (key == "kind") {
+      if (p.t.size() > p.i && p.t[p.i] == '"') {
+        const auto s = p.ParseString();
+        c.kind = (s == "spot") ? 1 : (s == "directional" ? 2 : 0);
+      } else {
+        c.kind = static_cast<int>(p.ParseNumber());
+      }
+    } else if (key == "range") {
+      c.range = static_cast<float>(p.ParseNumber());
+    } else if (key == "intensity") {
+      c.intensity = static_cast<float>(p.ParseNumber());
+    } else if (key == "active") {
+      c.active = p.ParseBool();
+    } else if (key == "fovy" || key == "fovy_rad") {
+      c.fovy = static_cast<float>(p.ParseNumber());
+    } else if (key == "hx") {
+      c.hx = static_cast<float>(p.ParseNumber());
+    } else if (key == "hy") {
+      c.hy = static_cast<float>(p.ParseNumber());
+    } else if (key == "hz") {
+      c.hz = static_cast<float>(p.ParseNumber());
+    } else if (key == "gid") {
+      c.gid = static_cast<int>(p.ParseNumber());
+    } else if (key == "atlas") {
+      c.atlas = p.ParseString();
+    } else if (key == "fields") {
+      const std::size_t start = p.i;
+      p.SkipValue();
+      c.fields_json = std::string(p.t.substr(start, p.i - start));
+    } else if (key == "tag") {
+      c.script = p.ParseString();
+    } else if (key == "extra") {
+      const std::size_t start = p.i;
+      p.SkipValue();
+      c.extra_json = std::string(p.t.substr(start, p.i - start));
     } else {
       p.SkipValue();
     }
@@ -263,6 +406,14 @@ SceneNode ParseNode(Parser& p) {
       n.prefab_id = p.ParseString();
     } else if (key == "script_path") {
       n.script_path = p.ParseString();
+    } else if (key == "extra") {
+      const std::size_t start = p.i;
+      p.SkipValue();
+      n.extra_json = std::string(p.t.substr(start, p.i - start));
+    } else if (key == "override") {
+      const std::size_t start = p.i;
+      p.SkipValue();
+      n.override_json = std::string(p.t.substr(start, p.i - start));
     } else {
       p.SkipValue();
     }
@@ -278,7 +429,11 @@ engine::Status SaveSceneDocument(const SceneDocument& doc, const std::filesystem
   if (!out) {
     return engine::Status::Fail("cannot write scene: " + path.string());
   }
-  out << "{\n  \"format_version\": " << doc.format_version << ",\n  \"nodes\": [\n";
+  out << "{\n  \"format_version\": " << doc.format_version;
+  if (!doc.host_api_hint.empty()) {
+    out << ",\n  \"host_api_hint\": \"" << Escape(doc.host_api_hint) << "\"";
+  }
+  out << ",\n  \"nodes\": [\n";
   for (std::size_t i = 0; i < doc.nodes.size(); ++i) {
     const auto& n = doc.nodes[i];
     out << "    {\"id\":\"" << Escape(n.id) << "\",\"name\":\"" << Escape(n.name) << "\",\"parent\":";
@@ -296,15 +451,47 @@ engine::Status SaveSceneDocument(const SceneDocument& doc, const std::filesystem
     if (!n.script_path.empty()) {
       out << ",\"script_path\":\"" << Escape(n.script_path) << "\"";
     }
+    if (!n.extra_json.empty()) {
+      out << ",\"extra\":" << n.extra_json;
+    }
+    if (!n.override_json.empty()) {
+      out << ",\"override\":" << n.override_json;
+    }
     out << ",\"components\":[";
     for (std::size_t c = 0; c < n.components.size(); ++c) {
       const auto& comp = n.components[c];
       out << "{\"type\":\"" << Escape(comp.type) << "\"";
       if (!comp.mesh.empty()) {
-        out << ",\"mesh\":\"" << Escape(comp.mesh) << "\",\"materials\":[]";
+        out << ",\"mesh\":\"" << Escape(comp.mesh) << "\"";
+      }
+      if (!comp.material.empty()) {
+        out << ",\"material\":\"" << Escape(comp.material) << "\",\"materials\":[\""
+            << Escape(comp.material) << "\"]";
       }
       if (!comp.script.empty()) {
         out << ",\"script\":\"" << Escape(comp.script) << "\"";
+      }
+      if (comp.type == "Light") {
+        out << ",\"kind\":" << comp.kind << ",\"range\":" << comp.range
+            << ",\"intensity\":" << comp.intensity;
+      }
+      if (comp.type == "Camera") {
+        out << ",\"active\":" << (comp.active ? "true" : "false") << ",\"fovy\":" << comp.fovy;
+      }
+      if (comp.type == "Collider") {
+        out << ",\"hx\":" << comp.hx << ",\"hy\":" << comp.hy << ",\"hz\":" << comp.hz;
+      }
+      if (comp.type == "Sprite" || comp.type == "Tilemap") {
+        out << ",\"gid\":" << comp.gid;
+        if (!comp.atlas.empty()) {
+          out << ",\"atlas\":\"" << Escape(comp.atlas) << "\"";
+        }
+      }
+      if (!comp.fields_json.empty()) {
+        out << ",\"fields\":" << comp.fields_json;
+      }
+      if (comp.type == "GameTag" && !comp.script.empty()) {
+        out << ",\"tag\":\"" << Escape(comp.script) << "\"";
       }
       if (!comp.extra_json.empty()) {
         out << ",\"extra\":" << comp.extra_json;
@@ -347,6 +534,8 @@ engine::Result<SceneDocument> LoadSceneDocument(const std::filesystem::path& pat
     p.Expect(':');
     if (key == "format_version") {
       doc.format_version = static_cast<int>(p.ParseNumber());
+    } else if (key == "host_api_hint") {
+      doc.host_api_hint = p.ParseString();
     } else if (key == "nodes") {
       if (p.Expect('[')) {
         while (!p.Consume(']')) {
@@ -363,7 +552,7 @@ engine::Result<SceneDocument> LoadSceneDocument(const std::filesystem::path& pat
     }
     p.Consume(',');
   }
-  if (doc.format_version != 1) {
+  if (doc.format_version != 1 && doc.format_version != 2 && doc.format_version != 3) {
     return engine::Result<SceneDocument>::Fail("unsupported format_version");
   }
   return engine::Result<SceneDocument>::Ok(std::move(doc));
@@ -371,10 +560,101 @@ engine::Result<SceneDocument> LoadSceneDocument(const std::filesystem::path& pat
 
 SceneDocument CaptureWorld(const engine::scene::World& world) {
   SceneDocument doc;
+  doc.format_version = kSceneFormatCurrent;
+  doc.host_api_hint = engine::kHostApiVersion;
   for (engine::scene::NodeId r : world.roots()) {
     WalkCapture(world, r, {}, doc);
   }
   return doc;
+}
+
+SceneDocument CaptureWorld(const engine::scene::World& world, const GameRuntime& rt) {
+  SceneDocument doc = CaptureWorld(world);
+  for (auto& n : doc.nodes) {
+    const auto nid = static_cast<engine::scene::NodeId>(std::strtoul(n.id.c_str(), nullptr, 10));
+    const Entity* e = rt.entities().FindByNode(nid);
+    if (!e) {
+      continue;
+    }
+    if (n.script_path.empty() && !e->script_path.empty()) {
+      n.script_path = e->script_path;
+    }
+    bool has_script = false;
+    for (const auto& c : n.components) {
+      if (c.type == "Script") {
+        has_script = true;
+        break;
+      }
+    }
+    if (!has_script && !n.script_path.empty()) {
+      SceneComponent sc;
+      sc.type = "Script";
+      sc.script = n.script_path;
+      n.components.push_back(std::move(sc));
+    }
+    for (const auto& tag : e->tags) {
+      SceneComponent g;
+      g.type = "GameTag";
+      g.script = tag;
+      n.components.push_back(std::move(g));
+    }
+  }
+  return doc;
+}
+
+void BindSceneScripts(GameRuntime& rt, engine::scene::World& world, const SceneDocument& doc,
+                      const std::unordered_map<std::string, engine::scene::NodeId>& ids) {
+  rt.set_world(&world);
+  rt.scripts().AttachHost(&world, &rt);
+  for (const auto& n : doc.nodes) {
+    auto it = ids.find(n.id.empty() ? n.name : n.id);
+    if (it == ids.end()) {
+      continue;
+    }
+    const auto nid = it->second;
+    std::string name = n.name.empty() ? world.name(nid) : n.name;
+    if (name.empty()) {
+      name = "node_" + std::to_string(nid);
+    }
+    Entity* e = rt.entities().FindByNode(nid);
+    if (!e) {
+      const auto eid = rt.entities().Create(name, nid);
+      e = rt.entities().Get(eid);
+    }
+    if (!e) {
+      continue;
+    }
+    std::string path = n.script_path;
+    std::string fields;
+    for (const auto& c : n.components) {
+      if (c.type == "Script" && !c.script.empty()) {
+        path = c.script;
+        fields = c.fields_json;
+      }
+      if (c.type == "GameTag" && !c.script.empty()) {
+        e->AddTag(c.script);
+      }
+    }
+    if (path.empty()) {
+      continue;
+    }
+    e->script_path = path;
+    const auto resolved = rt.ResolveScriptPath(path);
+    const auto sid = rt.scripts().Attach(nid, resolved.string());
+    if (auto* sc = rt.scripts().Get(sid)) {
+      sc->entity = e->id;
+      (void)rt.scripts().LoadFromDisk(*sc);
+      std::ifstream in(resolved, std::ios::binary);
+      std::string src;
+      if (in) {
+        src.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+      }
+      const auto blob = MergeExportsAndPersist(src, fields);
+      if (!blob.empty()) {
+        (void)sc->vm.RestorePersist(blob);
+      }
+    }
+  }
 }
 
 engine::Status ApplyWorld(engine::scene::World& world, const SceneDocument& doc,
@@ -401,13 +681,7 @@ engine::Status ApplyWorld(engine::scene::World& world, const SceneDocument& doc,
       const auto id = world.CreateNode(n.name, parent);
       world.set_local_transform(id, n.transform);
       world.set_visible(id, n.visible);
-      for (const auto& c : n.components) {
-        if (c.type == "MeshRenderer") {
-          engine::scene::MeshRenderer mesh;
-          mesh.mesh_id = c.mesh.empty() ? "cube" : c.mesh;
-          world.set_mesh(id, mesh);
-        }
-      }
+      ApplyNodeComponents(world, id, n);
       ids[n.id.empty() ? std::to_string(id) : n.id] = id;
       done[i] = 1;
       ++placed;

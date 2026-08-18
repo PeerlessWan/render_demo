@@ -39,7 +39,7 @@ inline void SetLuaHost(lua_State* L, LuaHost* host) {
 }
 
 void OpenLuaWhitelist(lua_State* L);
-void InstallLuaDebugHook(lua_State* L, bool enabled);
+void InstallLuaDebugHook(lua_State* L, bool enabled, int instruction_count);
 #endif
 
 }  // namespace game_kit

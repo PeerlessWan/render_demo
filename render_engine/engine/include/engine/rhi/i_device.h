@@ -148,19 +148,18 @@ struct FrameLighting {
   float reflection_intensity = 0.45f;
   bool enable_ibl = false;
   float ibl_intensity = 1.f;
-  // M26/C02: up to 16 local (point/spot) lights in FrameCB (CPU list may be larger).
+  // Mega-W10/C02: up to 32 local (point/spot) lights in FrameCB (CPU list may be larger).
   int local_light_count = 0;
-  std::array<Vec3, 16> local_pos{};
-  std::array<float, 16> local_range{};
-  std::array<ColorRgba, 16> local_color{};
-  std::array<float, 16> local_intensity{};
+  std::array<Vec3, 32> local_pos{};
+  std::array<float, 32> local_range{};
+  std::array<ColorRgba, 32> local_color{};
+  std::array<float, 32> local_intensity{};
   // Spot cone: xyz = world direction, w = cos(outer half-angle). Point/omni → w = -1.
-  std::array<Vec4, 16> local_spot{};
-  // cos(inner half-angle) for lights 0..15 (HLSL: float4[4]).
-  std::array<float, 16> local_spot_inner{-1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f,
-                                         -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f};
-  // C03/W7: IES profile id per light (0=off). Packed as float4[4] in HLSL.
-  std::array<float, 16> local_ies{};
+  std::array<Vec4, 32> local_spot{};
+  // cos(inner half-angle) for lights 0..31 (HLSL: float4[8]).
+  std::array<float, 32> local_spot_inner{};
+  // C03/W7: IES profile id per light (0=off). Packed as float4[8] in HLSL.
+  std::array<float, 32> local_ies{};
   // First casting local lights: cubemap face atlas (up to 2 lights × 6 faces = 12 tiles).
   // Spot lights reuse tile light_index*6 + 0 with a single perspective VP.
   Mat4 local_shadow_vp = Mat4::Identity();  // tile 0 compat (+X of light 0)
@@ -170,12 +169,12 @@ struct FrameLighting {
   int local_shadow_tiles_per_row = 4;
   bool enable_local_shadow = false;
   float local_shadow_bias = 0.002f;
-  // Mega-W8 C02: Forward+ packed tile lists (8×4, ≤8 lights/tile) for lit PS hot path.
-  // Default off so direct SetFrameLighting callers keep full 0..15 scan; RenderSystem
+  // Mega-W10 C02: Forward+ packed tile×Z lists (8×4×4, ≤8 lights/cluster) for lit PS.
+  // Default off so direct SetFrameLighting callers keep full 0..31 scan; RenderSystem
   // enables when EffectTuning::enable_tiled_lights and packs lists each frame.
   bool enable_tiled_lights = false;
-  std::array<int, 32> tile_light_count{};
-  std::array<int, 256> tile_light_index{};  // 32 tiles × 8 slots (-1 = unused)
+  std::array<int, 128> tile_light_count{};   // 32 tiles × 4 Z-slices
+  std::array<int, 1024> tile_light_index{};  // 128 clusters × 8 slots (-1 = unused)
 };
 
 struct LitDrawItem {
@@ -362,7 +361,7 @@ class IDevice {
     return Status::Ok();
   }
 
-  // Mega-W9 C02: light → tile cull CS (8×4, ≤8/tile). Default Unavailable until Setup.
+  // Mega-W10 C02: light → tile×Z cull CS (8×4×4, ≤8/cluster). Default Unavailable until Setup.
   // D3D12/VK: Setup succeeds when CS bytecode exists; Dispatch may fill via CPU
   // SimulateLightTileCullCs fallback (same math as AssignLightsToTiles) until full UAV path.
   virtual Status SetupLightTileCullCompute(const std::filesystem::path& /*cs_path*/) {
@@ -371,8 +370,10 @@ class IDevice {
   virtual Status DispatchLightTileCull(const Mat4& /*view_proj*/,
                                        std::span<const Vec3> /*positions*/,
                                        std::span<const float> /*ranges*/,
-                                       std::array<int, 32>& out_counts,
-                                       std::array<int, 256>& out_indices) {
+                                       std::array<int, 128>& out_counts,
+                                       std::array<int, 1024>& out_indices,
+                                       const Vec3& /*eye*/ = {},
+                                       const Vec3& /*cam_forward*/ = Vec3{0.f, 0.f, -1.f}) {
     out_counts.fill(0);
     out_indices.fill(-1);
     return Status::Fail(ErrorCode::Unavailable, "DispatchLightTileCull not available");

@@ -32,6 +32,9 @@
 #include "engine/render/render_system.h"
 #include "engine/render2d/sprite.h"
 #include "engine/terrain/heightmap.h"
+#include "engine/terrain/chunk_stream.h"
+#include "engine/gameplay/possess_controller.h"
+#include "engine/clothing/garment_cloth.h"
 #include "engine/ui/immediate_ui.h"
 #include "engine/ui/rml_ui.h"
 #include "engine/vfx/particles.h"
@@ -944,6 +947,23 @@ int main(int argc, char** argv) {
   engine::scene::NodeId picked_node = engine::scene::kInvalidNode;
 
   bool panel_open = true;
+  // Mega-W10: default free fly; F toggles possess walk/jump.
+  engine::gameplay::PossessController possess;
+  possess.possess_character = false;
+  possess.position = {0.f, 0.f, 0.f};
+  possess.SetSampleHeight([](float /*x*/, float /*z*/) { return 0.f; });
+  engine::clothing::GarmentCloth cape;
+  {
+    engine::clothing::GarmentMeshDesc cape_desc;
+    cape_desc.kind = engine::clothing::GarmentKind::Cape;
+    cape_desc.rows = 5;
+    cape_desc.cols = 4;
+    cape.Generate(cape_desc, {0.f, 1.55f, 0.f});
+  }
+  bool large_terrain_mode = false;
+  engine::terrain::Heightmap large_hm;
+  bool large_hm_ok = false;
+  bool f_was_down = false;
   bool profiler_open = true;
   bool enable_vsync = desc.enable_vsync;
   int ui_lang_i = static_cast<int>(SandboxUiLang::Zh);
@@ -980,6 +1000,8 @@ int main(int argc, char** argv) {
   engine::LogInfo("Sandbox: LMB/RMB look | Wheel zoom | MMB pan | F1 FX | F3 grid | F4 axes | F5 record BMP");
 
   // C16 / Mega-W9: hot-reload poll → rebuild lit PSO / reload albedo (not log-only).
+  // Mega-W10: optional `engine::assets::TryCompileHlslWithDxc` when dxc.exe is on PATH
+  // (else Unavailable SKIP); offline tools/shader_compile remains the primary path.
   engine::assets::ShaderHotReload shader_hot;
   shader_hot.SetShaderDir(shader_dir);
   engine::assets::AssetHotReload asset_hot;
@@ -1089,6 +1111,50 @@ int main(int argc, char** argv) {
       show_axes = !show_axes;
     }
     f4_was_down = f4_down;
+
+    const bool f_down = snap.keys['F'] || snap.keys['f'];
+    if (f_down && !f_was_down) {
+      possess.possess_character = !possess.possess_character;
+      app_ref.set_fly_locomotion_enabled(!possess.possess_character);
+      engine::LogInfo(possess.possess_character
+                          ? "Possess ON (WASD walk, Space jump; F free cam)"
+                          : "Possess OFF (free fly camera)");
+    }
+    f_was_down = f_down;
+
+    if (possess.possess_character) {
+      engine::gameplay::PossessInput pin;
+      pin.move_x = app_ref.input().axis("MoveX");
+      pin.move_z = app_ref.input().axis("MoveZ");
+      pin.jump = app_ref.input().pressed("Jump") || app_ref.input().key_down(engine::input::Key::Space);
+      pin.yaw = app_ref.camera().yaw;
+      possess.Step(app_ref.delta_time(), pin);
+      app_ref.camera().position = possess.ThirdPersonCameraPosition(pin.yaw);
+      const auto look = possess.ThirdPersonLookAt();
+      const auto eye = app_ref.camera().position;
+      const float dx = look.x - eye.x;
+      const float dy = look.y - eye.y;
+      const float dz = look.z - eye.z;
+      const float horiz = std::sqrt(dx * dx + dz * dz);
+      app_ref.camera().yaw = std::atan2(dx, dz);
+      app_ref.camera().pitch = std::atan2(dy, (std::max)(horiz, 1e-3f));
+
+      std::vector<engine::Vec3> attach;
+      attach.push_back(possess.position + engine::Vec3{-0.2f, 1.45f, 0.f});
+      attach.push_back(possess.position + engine::Vec3{0.2f, 1.45f, 0.f});
+      cape.SetAttachPoints(attach);
+      engine::clothing::CapsuleCollider col;
+      col.center = possess.CapsuleCenter();
+      col.radius = possess.params.capsule_radius * 1.05f;
+      col.half_height = possess.params.capsule_height * 0.35f;
+      cape.Step(app_ref.delta_time(), &col);
+      for (std::size_t i = 1; i < cape.positions.size(); ++i) {
+        app_ref.debug_draw().AddLine(cape.positions[i - 1], cape.positions[i],
+                                     {0.85f, 0.55f, 0.2f, 1.f});
+      }
+    } else {
+      app_ref.set_fly_locomotion_enabled(true);
+    }
 
     auto start_or_stop_record = [&](bool enable) {
       if (enable == record_png) {
@@ -1271,6 +1337,29 @@ int main(int argc, char** argv) {
           imgui.Separator();
           imgui.Checkbox(Su.show_grid, &show_grid);
           imgui.Checkbox(Su.show_axes, &show_axes);
+          if (imgui.Checkbox("Possess character (F)", &possess.possess_character)) {
+            app_ref.set_fly_locomotion_enabled(!possess.possess_character);
+          }
+          if (imgui.Checkbox("Large terrain heightmap", &large_terrain_mode)) {
+            if (large_terrain_mode && !large_hm_ok) {
+              const auto hm_path = std::filesystem::path(ENGINE_CONTENT_DIR_A) /
+                                   "scenes/large_terrain/heightmap_512.png";
+              auto loaded = engine::terrain::LoadHeightmapPng(hm_path, 1.f, 12.f);
+              if (loaded) {
+                large_hm = std::move(loaded.value());
+                large_hm_ok = true;
+                possess.SetSampleHeight([&large_hm](float x, float z) {
+                  return engine::terrain::SampleHeight(large_hm, x, z);
+                });
+                engine::LogInfo("Large terrain loaded: " + hm_path.string());
+              } else {
+                large_terrain_mode = false;
+                engine::LogWarn("Large terrain load failed: " + loaded.status().message());
+              }
+            } else if (!large_terrain_mode) {
+              possess.SetSampleHeight([](float /*x*/, float /*z*/) { return 0.f; });
+            }
+          }
           imgui.Checkbox(Su.probe_gi, &enable_gi);
           if (lightmap_ready) {
             if (imgui.Checkbox(Su.lightmap, &enable_lightmap)) {

@@ -2,6 +2,7 @@
 
 #include "editing/snap.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace editor {
@@ -56,7 +57,7 @@ void AddRing(engine::debug::DebugDraw& draw, const engine::Vec3& center, const e
 }  // namespace
 
 void DrawGizmo(engine::debug::DebugDraw& draw, const engine::scene::World& world,
-               engine::scene::NodeId node, GizmoMode mode) {
+               engine::scene::NodeId node, GizmoMode mode, bool local) {
   if (!world.valid(node)) {
     return;
   }
@@ -66,25 +67,25 @@ void DrawGizmo(engine::debug::DebugDraw& draw, const engine::scene::World& world
   box.max = t.position + engine::Vec3{0.5f, 1.f, 0.5f};
   draw.AddAabb(box, {1.f, 0.85f, 0.2f, 1.f});
   const auto p = t.position;
-  const engine::Vec3 x{kGizmoLength, 0.f, 0.f};
-  const engine::Vec3 y{0.f, kGizmoLength, 0.f};
-  const engine::Vec3 z{0.f, 0.f, kGizmoLength};
+  const engine::Vec3 x = GizmoAxisDir(Axis::X, t.rotation, local) * kGizmoLength;
+  const engine::Vec3 y = GizmoAxisDir(Axis::Y, t.rotation, local) * kGizmoLength;
+  const engine::Vec3 z = GizmoAxisDir(Axis::Z, t.rotation, local) * kGizmoLength;
   AddThickLine(draw, p, p + x, {0.f, 0.03f, 0.f}, {1.f, 0.2f, 0.2f, 1.f});
   AddThickLine(draw, p, p + y, {0.03f, 0.f, 0.f}, {0.2f, 1.f, 0.2f, 1.f});
   AddThickLine(draw, p, p + z, {0.03f, 0.f, 0.f}, {0.3f, 0.5f, 1.f, 1.f});
   if (mode == GizmoMode::Rotate) {
-    AddRing(draw, p, {1.f, 0.f, 0.f}, 0.85f, {1.f, 0.35f, 0.35f, 1.f});
-    AddRing(draw, p, {0.f, 1.f, 0.f}, 0.85f, {0.35f, 1.f, 0.35f, 1.f});
-    AddRing(draw, p, {0.f, 0.f, 1.f}, 0.85f, {0.4f, 0.55f, 1.f, 1.f});
+    AddRing(draw, p, GizmoAxisDir(Axis::X, t.rotation, local), kGizmoRingRadius, {1.f, 0.35f, 0.35f, 1.f});
+    AddRing(draw, p, GizmoAxisDir(Axis::Y, t.rotation, local), kGizmoRingRadius, {0.35f, 1.f, 0.35f, 1.f});
+    AddRing(draw, p, GizmoAxisDir(Axis::Z, t.rotation, local), kGizmoRingRadius, {0.4f, 0.55f, 1.f, 1.f});
   }
 }
 
 void DrawGizmos(engine::debug::DebugDraw& draw, const engine::scene::World& world,
-                std::span<const engine::scene::NodeId> nodes, GizmoMode mode) {
+                std::span<const engine::scene::NodeId> nodes, GizmoMode mode, bool local) {
   if (nodes.empty()) {
     return;
   }
-  DrawGizmo(draw, world, nodes.front(), mode);
+  DrawGizmo(draw, world, nodes.front(), mode, local);
   for (std::size_t i = 1; i < nodes.size(); ++i) {
     if (!world.valid(nodes[i])) {
       continue;
@@ -97,14 +98,44 @@ void DrawGizmos(engine::debug::DebugDraw& draw, const engine::scene::World& worl
   }
 }
 
-bool TranslateSelection(engine::scene::World& world, std::span<const engine::scene::NodeId> nodes,
-                        std::span<const engine::scene::Transform> origins, float acc_x_px,
-                        float acc_z_px, float sensitivity, bool snap, float grid) {
+void DrawBounds(engine::debug::DebugDraw& draw, const engine::scene::World& world,
+                std::span<const engine::scene::NodeId> nodes) {
+  for (auto id : nodes) {
+    if (!world.valid(id)) {
+      continue;
+    }
+    const auto* mesh = world.mesh(id);
+    engine::Aabb local = mesh ? mesh->local_bounds : engine::Aabb{engine::Vec3{-0.5f, -0.5f, -0.5f},
+                                                                  engine::Vec3{0.5f, 0.5f, 0.5f}};
+    const auto& m = world.world_matrix(id);
+    engine::Vec3 corners[8] = {
+        {local.min.x, local.min.y, local.min.z}, {local.max.x, local.min.y, local.min.z},
+        {local.min.x, local.max.y, local.min.z}, {local.max.x, local.max.y, local.min.z},
+        {local.min.x, local.min.y, local.max.z}, {local.max.x, local.min.y, local.max.z},
+        {local.min.x, local.max.y, local.max.z}, {local.max.x, local.max.y, local.max.z},
+    };
+    engine::Aabb box;
+    box.min = {1e9f, 1e9f, 1e9f};
+    box.max = {-1e9f, -1e9f, -1e9f};
+    for (auto c : corners) {
+      const auto w = m.TransformPoint(c);
+      box.min.x = std::min(box.min.x, w.x);
+      box.min.y = std::min(box.min.y, w.y);
+      box.min.z = std::min(box.min.z, w.z);
+      box.max.x = std::max(box.max.x, w.x);
+      box.max.y = std::max(box.max.y, w.y);
+      box.max.z = std::max(box.max.z, w.z);
+    }
+    draw.AddAabb(box, {0.3f, 0.9f, 1.f, 1.f});
+  }
+}
+
+bool TranslateSelectionDelta(engine::scene::World& world, std::span<const engine::scene::NodeId> nodes,
+                             std::span<const engine::scene::Transform> origins, float dx, float dz,
+                             bool snap, float grid) {
   if (nodes.size() != origins.size() || nodes.empty()) {
     return false;
   }
-  const float dx = acc_x_px * sensitivity;
-  const float dz = -acc_z_px * sensitivity;
   bool any = false;
   for (std::size_t i = 0; i < nodes.size(); ++i) {
     if (!world.valid(nodes[i])) {
@@ -122,26 +153,37 @@ bool TranslateSelection(engine::scene::World& world, std::span<const engine::sce
   return any;
 }
 
+bool TranslateSelection(engine::scene::World& world, std::span<const engine::scene::NodeId> nodes,
+                        std::span<const engine::scene::Transform> origins, float acc_x_px,
+                        float acc_z_px, float sensitivity, bool snap, float grid) {
+  return TranslateSelectionDelta(world, nodes, origins, acc_x_px * sensitivity, -acc_z_px * sensitivity,
+                                 snap, grid);
+}
+
 bool ApplyGizmo(engine::scene::World& world, std::span<const engine::scene::NodeId> nodes,
                 std::span<const engine::scene::Transform> origins, GizmoMode mode, Axis axis,
-                float axis_delta, bool snap, float grid) {
+                float axis_delta, bool snap, float grid, bool local) {
   if (nodes.size() != origins.size() || nodes.empty() || axis == Axis::None) {
     return false;
   }
-  const engine::Vec3 dir = AxisDir(axis);
   bool any = false;
   for (std::size_t i = 0; i < nodes.size(); ++i) {
     if (!world.valid(nodes[i])) {
       continue;
     }
     auto t = origins[i];
+    const engine::Vec3 dir = GizmoAxisDir(axis, origins[i].rotation, local);
     if (mode == GizmoMode::Move) {
       t.position = origins[i].position + dir * axis_delta;
       if (snap) {
         SnapTransform(&t, grid);
       }
     } else if (mode == GizmoMode::Rotate) {
-      t.rotation = MulQuat(AxisDelta(axis, axis_delta), origins[i].rotation);
+      if (local) {
+        t.rotation = MulQuat(origins[i].rotation, AxisDelta(axis, axis_delta));
+      } else {
+        t.rotation = MulQuat(AxisDelta(axis, axis_delta), origins[i].rotation);
+      }
     } else {
       float sx = origins[i].scale.x;
       float sy = origins[i].scale.y;

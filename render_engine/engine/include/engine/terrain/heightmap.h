@@ -1,7 +1,9 @@
 #pragma once
 
 #include "engine/core/math.h"
+#include "engine/core/result.h"
 
+#include <filesystem>
 #include <vector>
 
 namespace engine::terrain {
@@ -12,6 +14,11 @@ struct Heightmap {
   float cell = 1.f;
   std::vector<float> samples;  // row-major
 };
+
+// Mega-W10: load grayscale/RGB PNG (stb_image) into float samples in [0, height_scale].
+// Supports 512 / 1024 / larger; R channel (or gray) drives height. Fail if decode unavailable.
+[[nodiscard]] Result<Heightmap> LoadHeightmapPng(const std::filesystem::path& path,
+                                                 float cell = 1.f, float height_scale = 1.f);
 
 float SampleHeight(const Heightmap& map, float x, float z);
 int SelectTerrainLod(float distance, const std::vector<float>& ranges);

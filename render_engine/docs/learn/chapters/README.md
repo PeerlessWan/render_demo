@@ -4,7 +4,7 @@
 
 | 状态 | 说明 |
 |---|---|
-| **当前（Mega-W9）** | **CH00–CH11 全文模板已填**；**CH12–CH36 选修短章已填** |
+| **当前（Mega-W10）** | **CH00–CH11 全文模板已填**；**CH12–CH39 选修短章已填** |
 | Sample | 与 [PATH.md](../PATH.md) / [SAMPLES.md](../SAMPLES.md) 对齐 |
 | 深化 | 随产品里程碑继续加厚原理与 PIX 指引 |
 
@@ -14,3 +14,6 @@
 | CH07b | `CH07b_input_actions.md` | 完整模板（随必修） |
 | CH12–CH35 | 各 `CHXX_*.md` | 选修短章 |
 | CH36 | `CH36_w9_deepen.md` | 选修短章（W9） |
+| CH37 | `CH37_clothing.md` | 选修短章（W10 服装） |
+| CH38 | `CH38_large_terrain.md` | 选修短章（W10 大地形） |
+| CH39 | `CH39_w10_deepen.md` | 选修短章（W10） |

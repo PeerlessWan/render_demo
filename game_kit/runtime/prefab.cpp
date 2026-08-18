@@ -2,6 +2,7 @@
 
 #include "game_kit/runtime.h"
 
+#include <cstdlib>
 #include <unordered_map>
 
 namespace game_kit {
@@ -17,6 +18,24 @@ void AddMesh(SceneNode* n, std::string mesh, engine::Vec3 pos, engine::Vec3 scal
   c.type = "MeshRenderer";
   c.mesh = std::move(mesh);
   n->components.push_back(std::move(c));
+}
+
+bool JsonHas(std::string_view json, std::string_view key, std::string_view needle) {
+  const std::string pat = std::string("\"") + std::string(key) + "\":";
+  const auto i = json.find(pat);
+  if (i == std::string_view::npos) {
+    return false;
+  }
+  return json.substr(i + pat.size()).find(needle) == 0;
+}
+
+float JsonNum(std::string_view json, std::string_view key, float fallback) {
+  const std::string pat = std::string("\"") + std::string(key) + "\":";
+  const auto i = json.find(pat);
+  if (i == std::string_view::npos) {
+    return fallback;
+  }
+  return std::strtof(json.data() + i + pat.size(), nullptr);
 }
 
 }  // namespace
@@ -73,6 +92,15 @@ engine::scene::NodeId Instantiate(engine::scene::World& world, const PrefabDocum
       world.set_name(root, prefab.prefab_id);
     }
   }
+  for (const auto& n : prefab.scene.nodes) {
+    if (n.override_json.empty()) {
+      continue;
+    }
+    auto it = ids.find(n.id);
+    if (it != ids.end()) {
+      MergeOverrideJson(world, it->second, n.override_json);
+    }
+  }
   if (!rt || root == engine::scene::kInvalidNode) {
     return root;
   }
@@ -102,6 +130,80 @@ engine::scene::NodeId Instantiate(engine::scene::World& world, const PrefabDocum
       sc->entity = (nid == root) ? eid : kInvalidEntity;
       (void)rt->scripts().LoadFromDisk(*sc);
     }
+  }
+  return root;
+}
+
+void MergeOverrideJson(engine::scene::World& world, engine::scene::NodeId id,
+                       std::string_view override_json) {
+  if (!world.valid(id) || override_json.empty()) {
+    return;
+  }
+  auto t = world.local_transform(id);
+  const auto tx = JsonNum(override_json, "x", t.position.x);
+  const auto ty = JsonNum(override_json, "y", t.position.y);
+  const auto tz = JsonNum(override_json, "z", t.position.z);
+  if (override_json.find("\"t\":[") != std::string_view::npos) {
+    const auto at = override_json.find("\"t\":[");
+    char* end = nullptr;
+    t.position.x = std::strtof(override_json.data() + at + 5, &end);
+    if (end) {
+      t.position.y = std::strtof(end + 1, &end);
+    }
+    if (end) {
+      t.position.z = std::strtof(end + 1, nullptr);
+    }
+  } else {
+    t.position.x = tx;
+    t.position.y = ty;
+    t.position.z = tz;
+  }
+  t.scale.x = JsonNum(override_json, "sx", t.scale.x);
+  t.scale.y = JsonNum(override_json, "sy", t.scale.y);
+  t.scale.z = JsonNum(override_json, "sz", t.scale.z);
+  world.set_local_transform(id, t);
+  if (JsonHas(override_json, "visible", "false")) {
+    world.set_visible(id, false);
+  } else if (JsonHas(override_json, "visible", "true")) {
+    world.set_visible(id, true);
+  }
+}
+
+void ApplyInstanceToSource(const engine::scene::World& world, engine::scene::NodeId instance,
+                           PrefabDocument* source) {
+  if (!source || !world.valid(instance) || source->scene.nodes.empty()) {
+    return;
+  }
+  auto& root = source->scene.nodes[0];
+  root.transform = world.local_transform(instance);
+  root.visible = world.visible(instance);
+  game_kit::CaptureNodeComponents(world, instance, &root);
+}
+
+engine::scene::NodeId InstantiateNested(engine::scene::World& world, const PrefabDocument& prefab,
+                                        const engine::scene::Transform& world_trs,
+                                        const std::vector<PrefabDocument>& catalog,
+                                        GameRuntime* rt) {
+  const auto root = Instantiate(world, prefab, world_trs, rt);
+  if (root == engine::scene::kInvalidNode) {
+    return root;
+  }
+  std::unordered_map<std::string, const PrefabDocument*> by_id;
+  for (const auto& p : catalog) {
+    if (!p.prefab_id.empty()) {
+      by_id[p.prefab_id] = &p;
+    }
+  }
+  for (const auto& n : prefab.scene.nodes) {
+    if (n.prefab_id.empty() || n.prefab_id == prefab.prefab_id || n.parent.empty()) {
+      continue;
+    }
+    auto it = by_id.find(n.prefab_id);
+    if (it == by_id.end()) {
+      continue;
+    }
+    engine::scene::Transform child_trs = n.transform;
+    (void)Instantiate(world, *it->second, child_trs, rt);
   }
   return root;
 }

@@ -1,5 +1,6 @@
 #include "engine/animation/anim_serialize.h"
 
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -324,6 +325,56 @@ Status DeserializeStateMachine(std::string_view text, AnimationStateMachine& out
     out.SetDefaultCrossfadeDuration(saved_fade);
   }
   return Status::Ok();
+}
+
+Status WriteBlendTreeFile(const std::filesystem::path& path, const BlendTreeNode& root) {
+  if (path.empty()) {
+    return Status::Fail(ErrorCode::InvalidArgument, "WriteBlendTreeFile: empty path");
+  }
+  std::ofstream out(path, std::ios::binary);
+  if (!out) {
+    return Status::Fail(ErrorCode::Failed, "WriteBlendTreeFile: open failed");
+  }
+  out << SerializeBlendTree(root);
+  if (!out) {
+    return Status::Fail(ErrorCode::Failed, "WriteBlendTreeFile: write failed");
+  }
+  return Status::Ok("anim-bt-file");
+}
+
+Status ReadBlendTreeFile(const std::filesystem::path& path, BlendTreeNode& out) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    return Status::Fail(ErrorCode::NotFound, "ReadBlendTreeFile: open failed");
+  }
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  return DeserializeBlendTree(ss.str(), out);
+}
+
+Status WriteStateMachineFile(const std::filesystem::path& path, const AnimationStateMachine& sm) {
+  if (path.empty()) {
+    return Status::Fail(ErrorCode::InvalidArgument, "WriteStateMachineFile: empty path");
+  }
+  std::ofstream out(path, std::ios::binary);
+  if (!out) {
+    return Status::Fail(ErrorCode::Failed, "WriteStateMachineFile: open failed");
+  }
+  out << SerializeStateMachine(sm);
+  if (!out) {
+    return Status::Fail(ErrorCode::Failed, "WriteStateMachineFile: write failed");
+  }
+  return Status::Ok("anim-sm-file");
+}
+
+Status ReadStateMachineFile(const std::filesystem::path& path, AnimationStateMachine& out) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    return Status::Fail(ErrorCode::NotFound, "ReadStateMachineFile: open failed");
+  }
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  return DeserializeStateMachine(ss.str(), out);
 }
 
 }  // namespace engine::animation

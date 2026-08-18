@@ -1,0 +1,7 @@
+{
+  "format_version": 1,
+  "nodes": [
+    {"id":"1","name":"ground","parent":null,"transform":{"t":[0,0,0],"r":[0,0,0,1],"s":[8,1,8]},"visible":true,"components":[{"type":"MeshRenderer","mesh":"ground","materials":[]}]},
+    {"id":"2","name":"player","parent":null,"transform":{"t":[0,0.5,0],"r":[0,0,0,1],"s":[1,1,1]},"visible":true,"components":[{"type":"MeshRenderer","mesh":"cube","materials":[]}]}
+  ]
+}

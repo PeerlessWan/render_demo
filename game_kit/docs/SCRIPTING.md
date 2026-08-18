@@ -23,9 +23,9 @@ Script Source (.lua 等)
 
 绑定只经 [HOST_API.md](../../render_engine/docs/HOST_API.md)。  
 
-默认绑定（Lua 全局函数）：`log`、`set_pos`/`get_pos`（可省略名字则用 self）、`set_visible`、`get_children`、`destroy_entity`、`instantiate`、`request_level`/`current_level`、`publish`/`subscribe`、`delay`/`interval`/`cancel_timer`、`set_paused`/`set_time_scale`/`get_time_scale`、`key_down`/`axis`/`pressed`、`raycast`（无物理则 miss）、`ui_set_text`/`ui_set_visible`、`play_wav`/`stop_audio`、`request_load`/`asset_ready`、`set_ai`/`get_ai`、`play_anim`（无骨骼宿主时 false）、`wait`/`start_coroutine`。  
+默认绑定源：[`script/bindings/api.json`](../script/bindings/api.json) 生成 `lua_api_reg.inc`。含 `ui_label`/`ui_button`、`bake_nav`/`find_path`。  
 
-每 VM 一份 Host（Lua extraspace），多 `ScriptComponent` 不会互相覆盖。  
+每 VM 一份 Host（Lua extraspace）。pcall 走 `luaL_traceback`。`set_instruction_budget` 用 count hook 打断死循环。`set_debug_hooks(true)` 记录 `last_line` / `last_chunk`，`ScriptDebugger` 行断点在 hook 内调 `on_break` 可读 locals。热重载可保留 `persist`。`wait_event(topic)` 挂起协程直到 EventBus 发布该主题。打开 base 后剥掉 `load`/`loadfile`/`dofile`。  
 
 - **不进引擎核心：** 与 ADR 0027 / HOSTING 方案 A 一致；game_kit 实现薄 `GameKitScriptHost`（C19）。  
 - **Host API：** 绑定只经 [HOST_API.md](../../render_engine/docs/HOST_API.md)。  
@@ -34,13 +34,13 @@ Script Source (.lua 等)
 
 | 能力 | 说明 |
 |---|---|
-| 加载/卸载脚本模块 | 按关卡或全局；失败可诊断 |
-| 组件脚本 | `on_init` / `on_update` / `on_destroy`；可选 `on_trigger_*` |
-| 全局服务脚本 | GameMode / 关卡导演 |
-| 调用引擎 | 仅白名单：Node、Handle 加载、Action、UI、Raycast、Audio、Timer、事件 |
-| 热重载 | Debug：改文件 → 重载模块；Release 可关 |
+| 加载/卸载脚本模块 | `import('a.b')` → `script_root/a/b.lua`；`_GK_LOADED` 缓存 |
+| 组件脚本 | `on_init` / `on_update` / `on_destroy`；`on_trigger_*` / `on_collision_*` / `on_anim_notify` |
+| 全局服务脚本 | GameMode / 关卡导演；`on_asset_ready` |
+| 调用引擎 | 仅白名单：Node、Handle 加载、Action、UI、Raycast、Audio、Timer、事件、Anim/Nav/Mixer/Snapshot |
+| 热重载 | Debug：改文件 → 重载模块；可选保留 `persist` |
 | 沙箱 | 禁文件系统乱写、禁加载任意原生库（产品策略可配） |
-| 错误 | pcall 边界；日志 + 可选冻结该组件 |
+| 错误 | pcall + traceback；日志 + 冻结该组件 |
 
 ## 4. 绑定白名单 / 黑名单
 
@@ -48,14 +48,15 @@ Script Source (.lua 等)
 
 - Node：位置/旋转/缩放、父子、显隐、查子节点  
 - 生成/销毁实体（Prefab / 模板）  
-- Animation：`play_anim` 无宿主返回 false（本层不接骨骼）  
-- Audio：Play/Stop/增益（可选注入 `IAudioDevice`，否则 `PlayWavFile`）  
+- Animation：`play_anim` 经 `AnimPlayer`（无骨骼 clip 也可播；Notify / 根运动）  
+- Audio：Play/Stop/增益；`mixer_*` 距离衰减  
 - UI：显隐、文本（可选注入 Retained UI）  
-- Physics：Raycast（可选注入）；Trigger 为本层 AABB 约定  
-- Assets：`request_load`、`asset_ready`  
+- Physics：Raycast（可选注入）；Trigger 为本层 AABB；body AABB 接触 → `on_collision_*`  
+- Assets：`request_load`、`asset_ready`、`on_asset_ready`  
 - Input：读 Action / 轴  
 - Timer / EventBus  
-- LevelFlow：请求切关卡  
+- LevelFlow：请求切关卡（Replace/Additive + delay）  
+- Nav / Timeline / Snapshot / Loopback 薄层  
 
 **禁止：**
 
@@ -75,7 +76,7 @@ Script Source (.lua 等)
 
 ## 6. 约束摘要
 
-见 [CONSTRAINTS.md](CONSTRAINTS.md)。关键：单线程脚本默认；热重载不保证所有游戏状态可迁移。
+见 [CONSTRAINTS.md](CONSTRAINTS.md)。关键：单线程脚本默认；热重载 `persist` 可迁移，不保证任意游戏状态可迁移。
 
 ## 7. 规划
 

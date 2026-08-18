@@ -2,9 +2,37 @@
 
 #include "engine/scene/world.h"
 
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace editor {
+
+struct NodeMeta;
+
+struct NodeSnap {
+  engine::scene::NodeId live = engine::scene::kInvalidNode;
+  int parent_index = -1;
+  engine::scene::NodeId external_parent = engine::scene::kInvalidNode;
+  std::string name;
+  engine::scene::Transform transform{};
+  bool visible = true;
+  bool has_mesh = false;
+  engine::scene::MeshRenderer mesh{};
+  std::string prefab_id;
+  std::string script_path;
+};
+
+struct PropSnap {
+  engine::scene::NodeId id = engine::scene::kInvalidNode;
+  std::string name;
+  bool visible = true;
+  bool has_mesh = false;
+  engine::scene::MeshRenderer mesh{};
+  std::string prefab_id;
+  std::string script_path;
+  std::string parent_name;
+};
 
 class UndoStack {
  public:
@@ -13,17 +41,36 @@ class UndoStack {
   void PushBatch(const std::vector<engine::scene::NodeId>& nodes,
                  const std::vector<engine::scene::Transform>& before,
                  const std::vector<engine::scene::Transform>& after);
-  bool Undo(engine::scene::World& world);
-  bool Redo(engine::scene::World& world);
+  void PushSpawn(std::vector<NodeSnap> snaps);
+  void PushKill(std::vector<NodeSnap> snaps);
+  void PushProps(std::vector<PropSnap> before, std::vector<PropSnap> after);
+
+  bool Undo(engine::scene::World& world,
+            std::unordered_map<engine::scene::NodeId, NodeMeta>* meta = nullptr);
+  bool Redo(engine::scene::World& world,
+            std::unordered_map<engine::scene::NodeId, NodeMeta>* meta = nullptr);
   void Clear();
   [[nodiscard]] bool empty() const { return undo_.empty(); }
 
  private:
+  enum class Kind { Transform, Spawn, Kill, Props };
   struct Cmd {
+    Kind kind = Kind::Transform;
     std::vector<engine::scene::NodeId> nodes;
     std::vector<engine::scene::Transform> before;
     std::vector<engine::scene::Transform> after;
+    std::vector<NodeSnap> snaps;
+    std::vector<PropSnap> prop_before;
+    std::vector<PropSnap> prop_after;
   };
+
+  void ApplySpawn(engine::scene::World& world, Cmd* c,
+                  std::unordered_map<engine::scene::NodeId, NodeMeta>* meta);
+  void ApplyKill(engine::scene::World& world, Cmd* c,
+                 std::unordered_map<engine::scene::NodeId, NodeMeta>* meta);
+  void ApplyProps(engine::scene::World& world, const std::vector<PropSnap>& props,
+                  std::unordered_map<engine::scene::NodeId, NodeMeta>* meta);
+
   std::vector<Cmd> undo_;
   std::vector<Cmd> redo_;
 };

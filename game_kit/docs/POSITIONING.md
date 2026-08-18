@@ -12,7 +12,7 @@
 - 不是第二份 RHI / FrameGraph  
 - **不是品类内容包**（对话/背包/任务/射击循环等 → `genre_kits/*` 或 `games/<title>`）  
 - 不替代 `render_engine` 的物理求解、UI Retained 内核、网络传输  
-- 不做状态同步/匹配服（可用引擎 Net 自建中间件）  
+- 不做状态同步独立服/匹配服（本层 `ReplicationSession` 为进程内占位）  
 - 不内嵌完整可视化关卡编辑器（见 `editor/`）  
 
 ## 与 genre_kits / games

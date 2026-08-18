@@ -12,18 +12,23 @@
 
 namespace engine::render {
 
-// M26 / C02: CPU list may hold more; FrameCB uploads ≤ kMaxLocalLightsGpu.
-inline constexpr int kMaxLocalLightsCpu = 16;
-inline constexpr int kMaxLocalLightsGpu = 16;
+// M26 / Mega-W10 C02: CPU list may hold more; FrameCB uploads ≤ kMaxLocalLightsGpu.
+inline constexpr int kMaxLocalLightsCpu = 32;
+inline constexpr int kMaxLocalLightsGpu = 32;
 inline constexpr int kMaxLocalShadowLights = 2;  // Shadow Atlas cubemap/spot slots
 
 // Coarse screen-tile grid for AssignLightsToTiles (Forward+ style CPU lists).
 inline constexpr int kLightTileGridW = 8;
 inline constexpr int kLightTileGridH = 4;
 inline constexpr int kLightTileCount = kLightTileGridW * kLightTileGridH;
-// Mega-W8 C02: packed into FrameCB / lit PS (max lights accumulated per tile).
+// Mega-W10 C02: coarse view-space Z slices (cluster = slice * tile_count + tile).
+inline constexpr int kLightZSlices = 4;
+inline constexpr int kLightClusterCount = kLightTileCount * kLightZSlices;
+inline constexpr float kLightZNear = 0.5f;
+inline constexpr float kLightZFar = 80.f;
+// Packed into FrameCB / lit PS (max lights accumulated per cluster).
 inline constexpr int kMaxLightsPerTile = 8;
-inline constexpr int kTileLightIndexCount = kLightTileCount * kMaxLightsPerTile;
+inline constexpr int kTileLightIndexCount = kLightClusterCount * kMaxLightsPerTile;
 
 struct LocalLight {
   int id = 0;
@@ -48,36 +53,66 @@ struct LocalLight {
   return light.spot_angle_deg < 179.f;
 }
 
-// Forward+ tile list (CPU reference matching light_tile_cull_cs): bin each light into
-// all screen tiles overlapped by its projected range sphere (axis-offset AABB approx).
-// Not a Z-sliced cluster path — unit tests / RenderSystem CPU fallback / CS parity.
+// Map view-space depth (along cam_forward) into [0, kLightZSlices).
+[[nodiscard]] inline int ViewZToSlice(float view_z, float z_near = kLightZNear,
+                                      float z_far = kLightZFar) {
+  float denom = z_far - z_near;
+  if (denom < 1e-5f) {
+    denom = 1e-5f;
+  }
+  float t = (view_z - z_near) / denom;
+  if (t < 0.f) {
+    t = 0.f;
+  }
+  if (t > 0.999f) {
+    t = 0.999f;
+  }
+  const int slice = static_cast<int>(t * static_cast<float>(kLightZSlices));
+  return slice < kLightZSlices ? slice : (kLightZSlices - 1);
+}
+
+// Forward+ tile+Z list (CPU reference matching light_tile_cull_cs): bin each light into
+// all screen tiles overlapped by its projected range sphere, and all coarse Z slices
+// overlapped by center±range along cam_forward.
+// out_tiles size = grid_w * grid_h * kLightZSlices; index = slice * (gw*gh) + ty*gw + tx.
 void AssignLightsToTiles(const std::vector<LocalLight>& lights, const Mat4& view_proj,
                          int grid_w, int grid_h,
-                         std::vector<std::vector<int>>& out_tiles);
+                         std::vector<std::vector<int>>& out_tiles,
+                         const Vec3& eye = Vec3{0.f, 0.f, 0.f},
+                         const Vec3& cam_forward = Vec3{0.f, 0.f, -1.f},
+                         float z_near = kLightZNear, float z_far = kLightZFar);
 
 // Alias: AssignLightsToTiles IS the CPU reference for the tile CS contract.
 inline void CullLightsToTilesCpuReference(const std::vector<LocalLight>& lights,
                                           const Mat4& view_proj, int grid_w, int grid_h,
-                                          std::vector<std::vector<int>>& out_tiles) {
-  AssignLightsToTiles(lights, view_proj, grid_w, grid_h, out_tiles);
+                                          std::vector<std::vector<int>>& out_tiles,
+                                          const Vec3& eye = Vec3{0.f, 0.f, 0.f},
+                                          const Vec3& cam_forward = Vec3{0.f, 0.f, -1.f},
+                                          float z_near = kLightZNear, float z_far = kLightZFar) {
+  AssignLightsToTiles(lights, view_proj, grid_w, grid_h, out_tiles, eye, cam_forward, z_near,
+                      z_far);
 }
 
 // Flatten AssignLightsToTiles output into fixed FrameCB arrays (≤kMaxLightsPerTile each).
 void PackTileLightLists(const std::vector<std::vector<int>>& tiles,
-                        std::array<int, kLightTileCount>& out_counts,
+                        std::array<int, kLightClusterCount>& out_counts,
                         std::array<int, kTileLightIndexCount>& out_indices);
 
-// CPU stand-in for light_tile_cull_cs: same range-bin + pack as AssignLightsToTiles /
+// CPU stand-in for light_tile_cull_cs: same range-bin + Z-slice + pack as AssignLightsToTiles /
 // PackTileLightLists. Device Dispatch may call this when GPU UAV path is stubbed.
 void SimulateLightTileCullCs(const Mat4& view_proj, std::span<const Vec3> positions,
                              std::span<const float> ranges,
-                             std::array<int, kLightTileCount>& out_counts,
-                             std::array<int, kTileLightIndexCount>& out_indices);
+                             std::array<int, kLightClusterCount>& out_counts,
+                             std::array<int, kTileLightIndexCount>& out_indices,
+                             const Vec3& eye = Vec3{0.f, 0.f, 0.f},
+                             const Vec3& cam_forward = Vec3{0.f, 0.f, -1.f},
+                             float z_near = kLightZNear, float z_far = kLightZFar);
 
-// CPU eval path matching lit PS tile pick from screen UV in [0,1] (NDC mapped).
-void EvalTiledLightList(const std::array<int, kLightTileCount>& counts,
+// CPU eval path matching lit PS cluster pick from screen UV + view-space Z.
+void EvalTiledLightList(const std::array<int, kLightClusterCount>& counts,
                         const std::array<int, kTileLightIndexCount>& indices, float u, float v,
-                        std::vector<int>& out_lights);
+                        float view_z, std::vector<int>& out_lights,
+                        float z_near = kLightZNear, float z_far = kLightZFar);
 
 // Packs local-light shadow maps into ShadowAtlas (CPU schedule; GPU cube/2D writes later).
 class LocalLightShadowScheduler {

@@ -44,6 +44,9 @@ void DrawVoxelUi(engine::ui::ImmediateUi& ui, VoxelEdit& edit, mc::World& /*worl
   if (playing && ui.Button("Pause Play", 220.f, 24.f)) {
     cmd->pause = true;
   }
+  if (playing && ui.Button("Step", 220.f, 24.f)) {
+    cmd->step = true;
+  }
   ui.SliderInt("Y layer", &edit.layer_y, 0, 63);
   ui.SliderInt("Brush radius", &edit.brush_radius, 0, 4);
   ui.Checkbox("Box select", &edit.box_mode);

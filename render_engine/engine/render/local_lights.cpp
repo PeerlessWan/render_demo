@@ -53,15 +53,26 @@ bool LightProjectedUvAabb(const Vec3& position, float range, const Mat4& view_pr
   return accepted > 0;
 }
 
+float ViewDepth(const Vec3& world, const Vec3& eye, const Vec3& forward_n) {
+  return Dot(world - eye, forward_n);
+}
+
 }  // namespace
 
 void AssignLightsToTiles(const std::vector<LocalLight>& lights, const Mat4& view_proj,
                          int grid_w, int grid_h,
-                         std::vector<std::vector<int>>& out_tiles) {
+                         std::vector<std::vector<int>>& out_tiles, const Vec3& eye,
+                         const Vec3& cam_forward, float z_near, float z_far) {
   const int gw = std::max(grid_w, 1);
   const int gh = std::max(grid_h, 1);
   const int tile_count = gw * gh;
-  out_tiles.assign(static_cast<std::size_t>(tile_count), {});
+  const int cluster_count = tile_count * kLightZSlices;
+  out_tiles.assign(static_cast<std::size_t>(cluster_count), {});
+  Vec3 fwd = cam_forward;
+  if (fwd.length_squared() < 1e-12f) {
+    fwd = Vec3{0.f, 0.f, -1.f};
+  }
+  fwd = Normalize(fwd);
   for (std::size_t i = 0; i < lights.size(); ++i) {
     float u0 = 0.f;
     float u1 = 0.f;
@@ -82,20 +93,28 @@ void AssignLightsToTiles(const std::vector<LocalLight>& lights, const Mat4& view
     const int tx1 = std::min(static_cast<int>(cu1 * static_cast<float>(gw)), gw - 1);
     const int ty0 = std::min(static_cast<int>(cv0 * static_cast<float>(gh)), gh - 1);
     const int ty1 = std::min(static_cast<int>(cv1 * static_cast<float>(gh)), gh - 1);
-    for (int ty = ty0; ty <= ty1; ++ty) {
-      for (int tx = tx0; tx <= tx1; ++tx) {
-        out_tiles[static_cast<std::size_t>(ty * gw + tx)].push_back(static_cast<int>(i));
+
+    const float r = std::max(lights[i].range, 0.f);
+    const float vz = ViewDepth(lights[i].position, eye, fwd);
+    const int sz0 = ViewZToSlice(vz - r, z_near, z_far);
+    const int sz1 = ViewZToSlice(vz + r, z_near, z_far);
+    for (int sz = sz0; sz <= sz1; ++sz) {
+      for (int ty = ty0; ty <= ty1; ++ty) {
+        for (int tx = tx0; tx <= tx1; ++tx) {
+          const int cluster = sz * tile_count + ty * gw + tx;
+          out_tiles[static_cast<std::size_t>(cluster)].push_back(static_cast<int>(i));
+        }
       }
     }
   }
 }
 
 void PackTileLightLists(const std::vector<std::vector<int>>& tiles,
-                        std::array<int, kLightTileCount>& out_counts,
+                        std::array<int, kLightClusterCount>& out_counts,
                         std::array<int, kTileLightIndexCount>& out_indices) {
   out_counts.fill(0);
   out_indices.fill(-1);
-  const std::size_t n = (std::min)(tiles.size(), static_cast<std::size_t>(kLightTileCount));
+  const std::size_t n = (std::min)(tiles.size(), static_cast<std::size_t>(kLightClusterCount));
   for (std::size_t t = 0; t < n; ++t) {
     const auto& list = tiles[t];
     const int count =
@@ -110,8 +129,9 @@ void PackTileLightLists(const std::vector<std::vector<int>>& tiles,
 
 void SimulateLightTileCullCs(const Mat4& view_proj, std::span<const Vec3> positions,
                              std::span<const float> ranges,
-                             std::array<int, kLightTileCount>& out_counts,
-                             std::array<int, kTileLightIndexCount>& out_indices) {
+                             std::array<int, kLightClusterCount>& out_counts,
+                             std::array<int, kTileLightIndexCount>& out_indices, const Vec3& eye,
+                             const Vec3& cam_forward, float z_near, float z_far) {
   const std::size_t n =
       (std::min)((std::min)(positions.size(), ranges.size()),
                  static_cast<std::size_t>(kMaxLocalLightsGpu));
@@ -121,13 +141,14 @@ void SimulateLightTileCullCs(const Mat4& view_proj, std::span<const Vec3> positi
     lights[i].range = ranges[i];
   }
   std::vector<std::vector<int>> tiles;
-  AssignLightsToTiles(lights, view_proj, kLightTileGridW, kLightTileGridH, tiles);
+  AssignLightsToTiles(lights, view_proj, kLightTileGridW, kLightTileGridH, tiles, eye,
+                      cam_forward, z_near, z_far);
   PackTileLightLists(tiles, out_counts, out_indices);
 }
 
-void EvalTiledLightList(const std::array<int, kLightTileCount>& counts,
+void EvalTiledLightList(const std::array<int, kLightClusterCount>& counts,
                         const std::array<int, kTileLightIndexCount>& indices, float u, float v,
-                        std::vector<int>& out_lights) {
+                        float view_z, std::vector<int>& out_lights, float z_near, float z_far) {
   out_lights.clear();
   const float cu = std::clamp(u, 0.f, 0.999f);
   const float cv = std::clamp(v, 0.f, 0.999f);
@@ -136,11 +157,13 @@ void EvalTiledLightList(const std::array<int, kLightTileCount>& counts,
   const int ty =
       std::min(static_cast<int>(cv * static_cast<float>(kLightTileGridH)), kLightTileGridH - 1);
   const int tile = ty * kLightTileGridW + tx;
-  const int count = std::clamp(counts[static_cast<std::size_t>(tile)], 0, kMaxLightsPerTile);
+  const int slice = ViewZToSlice(view_z, z_near, z_far);
+  const int cluster = slice * kLightTileCount + tile;
+  const int count = std::clamp(counts[static_cast<std::size_t>(cluster)], 0, kMaxLightsPerTile);
   out_lights.reserve(static_cast<std::size_t>(count));
   for (int s = 0; s < count; ++s) {
     const int idx =
-        indices[static_cast<std::size_t>(tile * kMaxLightsPerTile + s)];
+        indices[static_cast<std::size_t>(cluster * kMaxLightsPerTile + s)];
     if (idx >= 0) {
       out_lights.push_back(idx);
     }

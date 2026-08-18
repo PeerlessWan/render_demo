@@ -19,6 +19,9 @@ void EventBus::Unsubscribe(std::uint32_t id) {
 }
 
 void EventBus::Publish(std::string_view topic, std::string_view payload) {
+  if (on_publish_) {
+    on_publish_(topic, payload);
+  }
   std::vector<Handler> copy;
   for (const auto& s : subs_) {
     if (s.topic == topic && s.handler) {
