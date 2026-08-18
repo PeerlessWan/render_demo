@@ -10,15 +10,19 @@ class UndoStack {
  public:
   void Push(engine::scene::NodeId node, const engine::scene::Transform& before,
             const engine::scene::Transform& after);
+  void PushBatch(const std::vector<engine::scene::NodeId>& nodes,
+                 const std::vector<engine::scene::Transform>& before,
+                 const std::vector<engine::scene::Transform>& after);
   bool Undo(engine::scene::World& world);
   bool Redo(engine::scene::World& world);
   void Clear();
+  [[nodiscard]] bool empty() const { return undo_.empty(); }
 
  private:
   struct Cmd {
-    engine::scene::NodeId node = engine::scene::kInvalidNode;
-    engine::scene::Transform before{};
-    engine::scene::Transform after{};
+    std::vector<engine::scene::NodeId> nodes;
+    std::vector<engine::scene::Transform> before;
+    std::vector<engine::scene::Transform> after;
   };
   std::vector<Cmd> undo_;
   std::vector<Cmd> redo_;

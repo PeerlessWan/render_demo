@@ -5,11 +5,20 @@ add_executable(editor_app
   editing/undo.cpp
   editing/voxel_undo.cpp
   editing/gizmo.cpp
+  editing/ray.cpp
+  editing/snap.cpp
+  editing/ops.cpp
   io/scene_io.cpp
+  io/content_browser.cpp
+  play/scene_play.cpp
   ui/editor_ui.cpp
   ui/voxel_ui.cpp
+  ../games/minecraft/ui/hud.cpp
 )
-target_include_directories(editor_app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(editor_app PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/../games/minecraft
+)
 target_link_libraries(editor_app PRIVATE
   game_kit
   minecraft_core
@@ -28,19 +37,25 @@ if(WIN32)
   target_link_libraries(editor_app PRIVATE user32)
 endif()
 
-# ED0–ED5 smoke: no Device / Application — scene IO, undo, Play snapshot restore.
+# ED0–ED6 smoke: no Device / Application — scene IO, undo, snap, gizmo, content.
 add_executable(editor_smoke_tests
   tests/main.cpp
   tests/test_smoke.cpp
   editing/undo.cpp
+  editing/snap.cpp
+  editing/ops.cpp
+  editing/ray.cpp
+  editing/gizmo.cpp
   io/scene_io.cpp
+  io/content_browser.cpp
+  play/scene_play.cpp
 )
 target_include_directories(editor_smoke_tests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../game_kit/tests
 )
-target_link_libraries(editor_smoke_tests PRIVATE game_kit engine_scene engine_core)
+target_link_libraries(editor_smoke_tests PRIVATE game_kit engine_scene engine_core engine_debug)
 target_compile_features(editor_smoke_tests PRIVATE cxx_std_20)
 if(MSVC)
   target_compile_options(editor_smoke_tests PRIVATE /W4)

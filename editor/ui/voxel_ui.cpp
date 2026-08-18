@@ -4,22 +4,17 @@
 
 namespace editor {
 
-void DrawVoxelUi(engine::ui::ImmediateUi& ui, VoxelEdit& edit, mc::World& /*world*/, bool* save,
-                 bool* load, bool* play, bool playing) {
-  if (save) {
-    *save = false;
+void DrawVoxelUi(engine::ui::ImmediateUi& ui, VoxelEdit& edit, mc::World& /*world*/, VoxelCommands* cmd,
+                 bool playing) {
+  VoxelCommands local{};
+  if (!cmd) {
+    cmd = &local;
   }
-  if (load) {
-    *load = false;
-  }
-  if (play) {
-    *play = false;
-  }
+  *cmd = {};
   if (!ui.BeginWindow("Voxel", 280.f, 12.f, 280.f, 520.f)) {
     return;
   }
-  if (ui.Checkbox("Voxel mode", &edit.enabled)) {
-  }
+  (void)ui.Checkbox("Voxel mode", &edit.enabled);
   ui.Text(edit.dirty ? "DIRTY" : "clean");
   const std::string dir_text = edit.dir.string();
   ui.Text(dir_text.c_str());
@@ -35,22 +30,28 @@ void DrawVoxelUi(engine::ui::ImmediateUi& ui, VoxelEdit& edit, mc::World& /*worl
     edit.dir_slot = 2;
     edit.dir = "worlds/editor";
   }
-  if (ui.Button("Save world", 220.f, 24.f) && save) {
-    *save = true;
+  if (ui.Button("Save world", 220.f, 24.f)) {
+    cmd->save = true;
     edit.dirty = false;
   }
-  if (ui.Button("Load world", 220.f, 24.f) && load) {
-    *load = true;
+  if (ui.Button("Load world", 220.f, 24.f)) {
+    cmd->load = true;
     edit.dirty = false;
   }
-  if (ui.Button(playing ? "Stop Play" : "Play voxel", 220.f, 24.f) && play) {
-    *play = true;
+  if (ui.Button(playing ? "Stop Play" : "Play voxel", 220.f, 24.f)) {
+    cmd->play = true;
+  }
+  if (playing && ui.Button("Pause Play", 220.f, 24.f)) {
+    cmd->pause = true;
   }
   ui.SliderInt("Y layer", &edit.layer_y, 0, 63);
   ui.SliderInt("Brush radius", &edit.brush_radius, 0, 4);
   ui.Checkbox("Box select", &edit.box_mode);
   if (edit.box_has_a) {
     ui.Text("box corner A set");
+  }
+  if (ui.Button("Fill Y layer", 220.f, 24.f)) {
+    cmd->fill_layer = true;
   }
   ui.Separator();
   const mc::Id palette[] = {mc::Id::Stone,         mc::Id::Dirt,          mc::Id::Grass,

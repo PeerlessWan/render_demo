@@ -4,7 +4,16 @@ namespace editor {
 
 void UndoStack::Push(engine::scene::NodeId node, const engine::scene::Transform& before,
                      const engine::scene::Transform& after) {
-  undo_.push_back(Cmd{node, before, after});
+  PushBatch({node}, {before}, {after});
+}
+
+void UndoStack::PushBatch(const std::vector<engine::scene::NodeId>& nodes,
+                          const std::vector<engine::scene::Transform>& before,
+                          const std::vector<engine::scene::Transform>& after) {
+  if (nodes.empty() || nodes.size() != before.size() || nodes.size() != after.size()) {
+    return;
+  }
+  undo_.push_back(Cmd{nodes, before, after});
   redo_.clear();
 }
 
@@ -14,10 +23,12 @@ bool UndoStack::Undo(engine::scene::World& world) {
   }
   Cmd c = undo_.back();
   undo_.pop_back();
-  if (world.valid(c.node)) {
-    world.set_local_transform(c.node, c.before);
+  for (std::size_t i = 0; i < c.nodes.size(); ++i) {
+    if (world.valid(c.nodes[i])) {
+      world.set_local_transform(c.nodes[i], c.before[i]);
+    }
   }
-  redo_.push_back(c);
+  redo_.push_back(std::move(c));
   return true;
 }
 
@@ -27,10 +38,12 @@ bool UndoStack::Redo(engine::scene::World& world) {
   }
   Cmd c = redo_.back();
   redo_.pop_back();
-  if (world.valid(c.node)) {
-    world.set_local_transform(c.node, c.after);
+  for (std::size_t i = 0; i < c.nodes.size(); ++i) {
+    if (world.valid(c.nodes[i])) {
+      world.set_local_transform(c.nodes[i], c.after[i]);
+    }
   }
-  undo_.push_back(c);
+  undo_.push_back(std::move(c));
   return true;
 }
 

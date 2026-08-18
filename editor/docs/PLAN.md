@@ -45,9 +45,9 @@
 | 里程碑 | 状态 |
 |---|---|
 | ED0–ED3 | 已写 |
-| ED4 Play | 同进程快照 Play，退出恢复 |
-| ED5 Prefab | 内容列表放置实例 + 脚本路径字符串 |
-| ED6 | 未开始 |
+| ED4 Play | 同进程快照 Play；场景 player WASD + 脚本 tick；体素 HUD；退出恢复 |
+| ED5 Prefab | 内容扫描放置实例 + 选中存 Prefab + 脚本 Combo |
+| ED6 | 吸附/批量/Gizmo 轴命中已写；多视口不做 |
 
 ## 4. 相关
 

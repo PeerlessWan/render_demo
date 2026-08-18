@@ -24,7 +24,15 @@ struct VoxelEdit {
   std::filesystem::path dir{"worlds/slot0"};
 };
 
-void DrawVoxelUi(engine::ui::ImmediateUi& ui, VoxelEdit& edit, mc::World& world, bool* save, bool* load,
-                 bool* play, bool playing);
+struct VoxelCommands {
+  bool save = false;
+  bool load = false;
+  bool play = false;
+  bool pause = false;
+  bool fill_layer = false;
+};
+
+void DrawVoxelUi(engine::ui::ImmediateUi& ui, VoxelEdit& edit, mc::World& world, VoxelCommands* cmd,
+                 bool playing);
 
 }  // namespace editor

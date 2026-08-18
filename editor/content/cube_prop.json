@@ -1,0 +1,7 @@
+{
+  "format_version": 1,
+  "nodes": [
+    {"id":"root","name":"cube_prop","parent":null,"transform":{"t":[0,0.5,0],"r":[0,0,0,1],"s":[1,1,1]},"visible":true,"prefab_id":"cube_prop","components":[{"type":"MeshRenderer","mesh":"cube","materials":[]}]}
+  ],
+  "extensions":{"game_kit":{"prefab_id":"cube_prop"}}
+}
