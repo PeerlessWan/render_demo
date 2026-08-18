@@ -54,24 +54,29 @@ Input → Net.Pump → Asset.PumpAsync
 ```
 
 - 脚本默认 **主线程**；重活可线程池，回写 Scene 必须入队到 Update。  
-- 若引擎日后提供 `IScriptHost`（C19），可被本层实现。
+- game_kit 提供 `GameKitScriptHost` 实现引擎 `IScriptHost`（C19）；默认引擎侧仍是 `NullScriptHost`。
 
-## 4. 目标目录（代码未开始）
+## 4. 目录
 
 ```text
 game_kit/
 ├── CMakeLists.txt
 ├── include/game_kit/…      # 公开头
 ├── runtime/
-│   ├── LevelFlow/
-│   ├── Entity/
-│   ├── Timer/
-│   ├── EventBus/
-│   └── Save/
+│   ├── level_flow.cpp
+│   ├── entity.cpp
+│   ├── timer.cpp
+│   ├── event_bus.cpp
+│   ├── save.cpp
+│   ├── trigger.cpp
+│   ├── player_controller.cpp
+│   ├── prefab.cpp
+│   └── runtime.cpp
 ├── script/
-│   ├── vm/                 # 语言运行时封装
-│   └── bindings/           # 绑定白名单
-├── samples/hello_playable/
+│   ├── vm/lua_vm.cpp
+│   ├── bindings/lua_api.cpp
+│   └── …
+├── samples/
 └── docs/
 ```
 

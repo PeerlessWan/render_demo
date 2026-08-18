@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace game_kit {
@@ -38,7 +39,8 @@ engine::Status SaveSceneDocument(const SceneDocument& doc, const std::filesystem
 engine::Result<SceneDocument> LoadSceneDocument(const std::filesystem::path& path);
 
 SceneDocument CaptureWorld(const engine::scene::World& world);
-engine::Status ApplyWorld(engine::scene::World& world, const SceneDocument& doc);
+engine::Status ApplyWorld(engine::scene::World& world, const SceneDocument& doc,
+                          std::unordered_map<std::string, engine::scene::NodeId>* out_ids = nullptr);
 void ClearWorld(engine::scene::World& world);
 
 }  // namespace game_kit

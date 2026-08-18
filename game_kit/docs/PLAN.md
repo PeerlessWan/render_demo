@@ -25,7 +25,7 @@
 | **GK2** 脚本 MVP | 脚本驱动 | Lua（或选定语言）、白名单绑定、ScriptComponent、错误隔离 | 脚本改位置/播音效；异常不毁 Device |
 | **GK3** 可玩 Demo | 垂直切片 | 移动、触发器、UI HUD、热重载（Debug） | 第三人称或 2D 小关可走完 |
 | **GK4** Prefab + 打磨 | 内容友好 | Prefab 实例化、与 Manifest 依赖、文档与 Sample | editor/C20 可消费同一 Prefab |
-| **GK5** 可选加深 | 按需 | 协程、`IScriptHost` 对接（C19）、简单 AI 骨架 | 单独立项 |
+| **GK5** 可选加深 | 按需 | 协程、`IScriptHost` 对接（C19）、简单 AI 骨架 | 单独立项（已接线） |
 
 ## 2. 与引擎里程碑建议对齐
 
@@ -42,8 +42,8 @@
 | 里程碑 | 状态 |
 |---|---|
 | GK0–GK3 | 已写；`game_kit_tests` / samples 可 headless |
-| GK4 Prefab | `PrefabDocument` + `Instantiate` + `samples/prefab_place` |
-| GK5 | 未开始 |
+| GK4 Prefab | `PrefabDocument` + `Instantiate`（可挂脚本）+ `samples/prefab_place` |
+| GK5 | 已写接线：Lua 协程 `wait`/`start_coroutine`、`AiState` 挂实体、`GameKitScriptHost` |
 
 ## 4. 相关
 

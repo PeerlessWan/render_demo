@@ -1,5 +1,6 @@
 #include "game_kit/module.h"
 #include "game_kit/prefab.h"
+#include "game_kit/runtime.h"
 #include "host_bootstrap.h"
 
 #include "engine/core/log.h"
@@ -13,16 +14,25 @@ class PrefabPlaceModule final : public game_kit::IGameModule {
   PrefabPlaceModule() : IGameModule("prefab_place") {}
 
   engine::Status OnInit(engine::Application& app) override {
+#ifdef GAME_KIT_SAMPLE_DIR
+    rt_.set_script_root(GAME_KIT_SAMPLE_DIR);
+#endif
+    rt_.set_world(&app.world());
     game_kit::ClearWorld(app.world());
     engine::scene::Transform t;
     t.position = {0.f, 0.f, 0.f};
-    (void)game_kit::Instantiate(app.world(), game_kit::MakeChestTagPrefab(), t);
+    (void)game_kit::Instantiate(app.world(), game_kit::MakeChestTagPrefab(), t, &rt_);
     t.position = {3.f, 0.f, 0.f};
-    (void)game_kit::Instantiate(app.world(), game_kit::MakeTreePrefab(), t);
+    (void)game_kit::Instantiate(app.world(), game_kit::MakeTreePrefab(), t, &rt_);
     app.camera().position = {0.f, 2.5f, 8.f};
     app.camera().pitch = -0.2f;
     return engine::Status::Ok();
   }
+
+  void OnUpdate(engine::Application& app, float dt) override { rt_.Tick(app, dt); }
+
+ private:
+  game_kit::GameRuntime rt_;
 };
 
 }  // namespace

@@ -2,6 +2,8 @@
 
 #include "engine/scene/world.h"
 
+#include "game_kit/ai_state.h"
+
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -18,6 +20,7 @@ struct Entity {
   std::string name;
   std::string script_path;
   bool script_frozen = false;
+  AiStateMachine ai;
 };
 
 class EntityWorld {
@@ -27,6 +30,7 @@ class EntityWorld {
   [[nodiscard]] Entity* Get(EntityId id);
   [[nodiscard]] const Entity* Get(EntityId id) const;
   [[nodiscard]] Entity* FindByName(std::string_view name);
+  [[nodiscard]] Entity* FindByNode(engine::scene::NodeId node);
   [[nodiscard]] const std::vector<Entity>& all() const { return entities_; }
   void Clear();
 

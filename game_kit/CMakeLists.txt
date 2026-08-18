@@ -44,15 +44,22 @@ add_library(game_kit STATIC
   runtime/scene_document.cpp
   runtime/prefab.cpp
   runtime/runtime.cpp
+  runtime/trigger.cpp
+  runtime/player_controller.cpp
   script/vm/lua_vm.cpp
+  script/bindings/lua_api.cpp
   script/script_hot_reload.cpp
   script/script_component.cpp
   script/coroutine_scheduler.cpp
+  script/script_host.cpp
 )
 target_include_directories(game_kit PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_link_libraries(game_kit PUBLIC engine_app engine_scene engine_core)
+target_include_directories(game_kit PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/script
+)
+target_link_libraries(game_kit PUBLIC engine_app engine_scene engine_core engine_physics engine_ui engine_media)
 target_compile_features(game_kit PUBLIC cxx_std_20)
 if(_lua_ok)
   target_link_libraries(game_kit PUBLIC lua_static)
@@ -65,16 +72,19 @@ endif()
 add_executable(hello_playable samples/hello_playable/main.cpp)
 target_include_directories(hello_playable PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/samples)
 target_link_libraries(hello_playable PRIVATE game_kit engine_d3d12)
+target_compile_definitions(hello_playable PRIVATE "GAME_KIT_SAMPLE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/samples\"")
 kit_use_shaders(hello_playable)
 
 add_executable(third_person samples/third_person/main.cpp)
 target_include_directories(third_person PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/samples)
 target_link_libraries(third_person PRIVATE game_kit engine_d3d12 engine_physics engine_ui)
+target_compile_definitions(third_person PRIVATE "GAME_KIT_SAMPLE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/samples\"")
 kit_use_shaders(third_person)
 
 add_executable(prefab_place samples/prefab_place/main.cpp)
 target_include_directories(prefab_place PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/samples)
 target_link_libraries(prefab_place PRIVATE game_kit engine_d3d12)
+target_compile_definitions(prefab_place PRIVATE "GAME_KIT_SAMPLE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/samples\"")
 kit_use_shaders(prefab_place)
 
 add_executable(game_kit_tests

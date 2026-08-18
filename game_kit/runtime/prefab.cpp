@@ -1,6 +1,8 @@
 #include "game_kit/prefab.h"
 
-#include <algorithm>
+#include "game_kit/runtime.h"
+
+#include <unordered_map>
 
 namespace game_kit {
 namespace {
@@ -49,20 +51,56 @@ engine::Result<PrefabDocument> LoadPrefabDocument(const std::filesystem::path& p
 }
 
 engine::scene::NodeId Instantiate(engine::scene::World& world, const PrefabDocument& prefab,
-                                  const engine::scene::Transform& world_trs) {
-  const auto before = world.roots();
-  if (auto st = ApplyWorld(world, prefab.scene); !st) {
+                                  const engine::scene::Transform& world_trs, GameRuntime* rt) {
+  std::unordered_map<std::string, engine::scene::NodeId> ids;
+  if (auto st = ApplyWorld(world, prefab.scene, &ids); !st) {
     return engine::scene::kInvalidNode;
   }
   engine::scene::NodeId root = engine::scene::kInvalidNode;
-  for (auto r : world.roots()) {
-    if (std::find(before.begin(), before.end(), r) == before.end()) {
-      root = r;
-      world.set_local_transform(r, world_trs);
-      if (!prefab.prefab_id.empty()) {
-        world.set_name(r, prefab.prefab_id);
-      }
+  for (const auto& n : prefab.scene.nodes) {
+    if (!n.parent.empty()) {
+      continue;
+    }
+    auto it = ids.find(n.id);
+    if (it != ids.end()) {
+      root = it->second;
       break;
+    }
+  }
+  if (root != engine::scene::kInvalidNode) {
+    world.set_local_transform(root, world_trs);
+    if (!prefab.prefab_id.empty()) {
+      world.set_name(root, prefab.prefab_id);
+    }
+  }
+  if (!rt || root == engine::scene::kInvalidNode) {
+    return root;
+  }
+
+  rt->set_world(&world);
+  rt->scripts().AttachHost(&world, rt);
+  const auto eid = rt->entities().Create(
+      prefab.prefab_id.empty() ? world.name(root) : prefab.prefab_id, root);
+
+  for (const auto& n : prefab.scene.nodes) {
+    std::string path = n.script_path;
+    for (const auto& c : n.components) {
+      if (c.type == "Script" && !c.script.empty()) {
+        path = c.script;
+      }
+    }
+    if (path.empty()) {
+      continue;
+    }
+    auto it = ids.find(n.id);
+    if (it == ids.end()) {
+      continue;
+    }
+    const auto nid = it->second;
+    const auto sid = rt->scripts().Attach(nid, rt->ResolveScriptPath(path).string());
+    if (auto* sc = rt->scripts().Get(sid)) {
+      sc->entity = (nid == root) ? eid : kInvalidEntity;
+      (void)rt->scripts().LoadFromDisk(*sc);
     }
   }
   return root;

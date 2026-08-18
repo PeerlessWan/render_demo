@@ -22,6 +22,7 @@ ScriptComponentId ScriptComponentWorld::Attach(engine::scene::NodeId node, std::
 void ScriptComponentWorld::Detach(ScriptComponentId id) {
   for (auto it = comps_.begin(); it != comps_.end(); ++it) {
     if (it->id == id) {
+      CallDestroy(*it);
       comps_.erase(it);
       return;
     }
@@ -37,6 +38,53 @@ ScriptComponent* ScriptComponentWorld::Get(ScriptComponentId id) {
   return nullptr;
 }
 
+ScriptComponent* ScriptComponentWorld::FindByNode(engine::scene::NodeId node) {
+  for (auto& c : comps_) {
+    if (c.node == node) {
+      return &c;
+    }
+  }
+  return nullptr;
+}
+
+void ScriptComponentWorld::Bind(ScriptComponent& c) {
+  if (world_ || rt_) {
+    c.vm.Attach(world_, rt_);
+  }
+  EntityId eid = c.entity;
+  if (eid == kInvalidEntity && rt_) {
+    if (auto* e = rt_->entities().FindByNode(c.node)) {
+      eid = e->id;
+      c.entity = eid;
+    }
+  }
+  c.vm.BindSelf(c.node, eid);
+  if (rt_) {
+    c.vm.set_debug_hooks(rt_->script_debug());
+  }
+}
+
+void ScriptComponentWorld::CallDestroy(ScriptComponent& c) {
+  if (!c.inited_) {
+    return;
+  }
+  Bind(c);
+  (void)c.vm.CallNamed("on_destroy");
+  c.inited_ = false;
+}
+
+engine::Status ScriptComponentWorld::LoadFromString(ScriptComponent& c, std::string_view source,
+                                                    std::string_view chunk_name) {
+  Bind(c);
+  auto st = c.vm.LoadString(source, chunk_name);
+  if (!st) {
+    return st;
+  }
+  st = c.vm.CallNamed("on_init");
+  c.inited_ = st.ok();
+  return st;
+}
+
 engine::Status ScriptComponentWorld::LoadFromDisk(ScriptComponent& c) {
   if (c.path.empty()) {
     return engine::Status::Fail("empty script path");
@@ -47,18 +95,12 @@ engine::Status ScriptComponentWorld::LoadFromDisk(ScriptComponent& c) {
   }
   std::ostringstream ss;
   ss << in.rdbuf();
-  if (world_ || rt_) {
-    c.vm.Attach(world_, rt_);
-  }
-  return c.vm.LoadString(ss.str(), c.path);
+  return LoadFromString(c, ss.str(), c.path);
 }
 
 engine::Status ScriptComponentWorld::Reload(ScriptComponent& c) {
-  // Device-safe: only reset Lua state and re-load source.
+  CallDestroy(c);
   c.vm.Reset();
-  if (world_ || rt_) {
-    c.vm.Attach(world_, rt_);
-  }
   auto st = LoadFromDisk(c);
   if (!st) {
     engine::LogError("script reload failed: " + c.path + " — " + st.message());
@@ -87,7 +129,7 @@ void ScriptComponentWorld::AttachHost(engine::scene::World* world, GameRuntime* 
   world_ = world;
   rt_ = rt;
   for (auto& c : comps_) {
-    c.vm.Attach(world_, rt_);
+    Bind(c);
   }
 }
 
@@ -96,14 +138,26 @@ void ScriptComponentWorld::Tick(float dt) {
     if (!c.enabled || c.vm.frozen()) {
       continue;
     }
-    if (world_ || rt_) {
-      c.vm.Attach(world_, rt_);
-    }
+    Bind(c);
     (void)c.vm.CallUpdate(dt);
   }
 }
 
+void ScriptComponentWorld::DispatchTrigger(engine::scene::NodeId node, bool enter,
+                                           std::string_view other) {
+  for (auto& c : comps_) {
+    if (c.node != node || !c.enabled || c.vm.frozen()) {
+      continue;
+    }
+    Bind(c);
+    (void)c.vm.CallTrigger(enter, other);
+  }
+}
+
 void ScriptComponentWorld::Clear() {
+  for (auto& c : comps_) {
+    CallDestroy(c);
+  }
   comps_.clear();
   next_id_ = 1;
 }

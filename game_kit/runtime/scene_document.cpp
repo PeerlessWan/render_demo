@@ -377,7 +377,8 @@ SceneDocument CaptureWorld(const engine::scene::World& world) {
   return doc;
 }
 
-engine::Status ApplyWorld(engine::scene::World& world, const SceneDocument& doc) {
+engine::Status ApplyWorld(engine::scene::World& world, const SceneDocument& doc,
+                          std::unordered_map<std::string, engine::scene::NodeId>* out_ids) {
   std::unordered_map<std::string, engine::scene::NodeId> ids;
   // Parents before children: multiple passes.
   std::vector<char> done(doc.nodes.size(), 0);
@@ -415,6 +416,9 @@ engine::Status ApplyWorld(engine::scene::World& world, const SceneDocument& doc)
     if (!progress) {
       return engine::Status::Fail("scene parent cycle or missing parent");
     }
+  }
+  if (out_ids) {
+    *out_ids = std::move(ids);
   }
   return engine::Status::Ok();
 }

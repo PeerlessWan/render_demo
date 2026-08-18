@@ -47,6 +47,15 @@ Entity* EntityWorld::FindByName(std::string_view name) {
   return nullptr;
 }
 
+Entity* EntityWorld::FindByNode(engine::scene::NodeId node) {
+  for (auto& e : entities_) {
+    if (e.node == node) {
+      return &e;
+    }
+  }
+  return nullptr;
+}
+
 void EntityWorld::Clear() { entities_.clear(); }
 
 }  // namespace game_kit

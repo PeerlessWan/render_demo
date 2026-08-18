@@ -21,7 +21,13 @@ Script Source (.lua 等)
 
 默认语言：**Lua 5.4**（可换 Luau）；更换 = 换 `script/vm` + 绑定，Facade 不变。实现前若改语言，补 game_kit ADR。  
 
-- **不进引擎核心：** 与 ADR 0027 / HOSTING 方案 A 一致；可选实现引擎 `IScriptHost`（C19）。  
+绑定只经 [HOST_API.md](../../render_engine/docs/HOST_API.md)。  
+
+默认绑定（Lua 全局函数）：`log`、`set_pos`/`get_pos`（可省略名字则用 self）、`set_visible`、`get_children`、`destroy_entity`、`instantiate`、`request_level`/`current_level`、`publish`/`subscribe`、`delay`/`interval`/`cancel_timer`、`set_paused`/`set_time_scale`/`get_time_scale`、`key_down`/`axis`/`pressed`、`raycast`（无物理则 miss）、`ui_set_text`/`ui_set_visible`、`play_wav`/`stop_audio`、`request_load`/`asset_ready`、`set_ai`/`get_ai`、`play_anim`（无骨骼宿主时 false）、`wait`/`start_coroutine`。  
+
+每 VM 一份 Host（Lua extraspace），多 `ScriptComponent` 不会互相覆盖。  
+
+- **不进引擎核心：** 与 ADR 0027 / HOSTING 方案 A 一致；game_kit 实现薄 `GameKitScriptHost`（C19）。  
 - **Host API：** 绑定只经 [HOST_API.md](../../render_engine/docs/HOST_API.md)。  
 
 ## 3. 功能
@@ -42,11 +48,11 @@ Script Source (.lua 等)
 
 - Node：位置/旋转/缩放、父子、显隐、查子节点  
 - 生成/销毁实体（Prefab / 模板）  
-- Animation：播放片段、停  
-- Audio：Play/Stop/增益  
-- UI：显隐、文本、简单属性（Retained）  
-- Physics：Raycast / ShapeCast、Trigger 订阅  
-- Assets：`RequestLoad(AssetId)`、查询是否就绪  
+- Animation：`play_anim` 无宿主返回 false（本层不接骨骼）  
+- Audio：Play/Stop/增益（可选注入 `IAudioDevice`，否则 `PlayWavFile`）  
+- UI：显隐、文本（可选注入 Retained UI）  
+- Physics：Raycast（可选注入）；Trigger 为本层 AABB 约定  
+- Assets：`request_load`、`asset_ready`  
 - Input：读 Action / 轴  
 - Timer / EventBus  
 - LevelFlow：请求切关卡  

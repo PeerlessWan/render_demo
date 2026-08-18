@@ -12,47 +12,39 @@
 
 namespace {
 
-void ClearScene(engine::scene::World& world) {
-  const auto roots = world.roots();
-  for (auto r : roots) {
-    (void)world.DestroyNode(r);
-  }
-}
+void ClearScene(engine::scene::World& world) { game_kit::ClearWorld(world); }
 
 class PlayableModule final : public game_kit::IGameModule {
  public:
   PlayableModule() : IGameModule("hello_playable") {}
 
   engine::Status OnInit(engine::Application& app) override {
-    rt_.levels().Register("start", [](engine::Application& a, game_kit::GameRuntime& rt) {
-      rt.entities().Clear();
-      ClearScene(a.world());
-      const auto n = a.world().CreateNode("marker");
-      engine::scene::Transform t;
-      t.position = {0.f, 0.5f, 0.f};
-      a.world().set_local_transform(n, t);
-      engine::scene::MeshRenderer mesh;
-      mesh.mesh_id = "cube";
-      a.world().set_mesh(n, mesh);
-      rt.entities().Create("marker", n);
-    });
-    rt_.levels().Register("next", [](engine::Application& a, game_kit::GameRuntime& rt) {
-      rt.entities().Clear();
-      ClearScene(a.world());
-      const auto n = a.world().CreateNode("marker2");
-      engine::scene::Transform t;
-      t.position = {2.f, 0.5f, 0.f};
-      a.world().set_local_transform(n, t);
-      engine::scene::MeshRenderer mesh;
-      mesh.mesh_id = "cube";
-      a.world().set_mesh(n, mesh);
-      rt.entities().Create("marker", n);
-    });
+#ifdef GAME_KIT_SAMPLE_DIR
+    rt_.set_script_root(GAME_KIT_SAMPLE_DIR);
+#endif
+    auto load_marker = [](const char* node_name, engine::Vec3 pos) {
+      return [node_name, pos](engine::Application& a, game_kit::GameRuntime& rt) {
+        ClearScene(a.world());
+        const auto n = a.world().CreateNode(node_name);
+        engine::scene::Transform t;
+        t.position = pos;
+        a.world().set_local_transform(n, t);
+        engine::scene::MeshRenderer mesh;
+        mesh.mesh_id = "cube";
+        a.world().set_mesh(n, mesh);
+        rt.entities().Create("marker", n);
+      };
+    };
+    rt_.levels().Register("start", load_marker("marker", {0.f, 0.5f, 0.f}),
+                          [](engine::Application& a, game_kit::GameRuntime&) { ClearScene(a.world()); });
+    rt_.levels().Register("next", load_marker("marker2", {2.f, 0.5f, 0.f}),
+                          [](engine::Application& a, game_kit::GameRuntime&) { ClearScene(a.world()); });
     (void)rt_.levels().Request("start");
     (void)rt_.saves().Write(0, "hello_playable");
     if (auto* vm = rt_.script()) {
       (void)vm->LoadString(R"(
         log("hello_playable script")
+        delay(0.0, function() log("hello delay fired") end)
         function on_update(dt) end
       )",
                            "hello");
@@ -72,6 +64,12 @@ class PlayableModule final : public game_kit::IGameModule {
       (void)rt_.levels().Request(next);
     }
     e_held_ = app.input().key_down(engine::input::Key::E);
+    if (app.input().key_down(engine::input::Key::Space) && !space_held_) {
+      const float next = rt_.time_scale() > 0.9f ? 0.25f : (rt_.time_scale() > 0.01f ? 0.f : 1.f);
+      rt_.set_time_scale(next);
+      engine::LogInfo("time_scale " + std::to_string(rt_.time_scale()));
+    }
+    space_held_ = app.input().key_down(engine::input::Key::Space);
     rt_.Tick(app, dt);
   }
 
@@ -79,6 +77,7 @@ class PlayableModule final : public game_kit::IGameModule {
   game_kit::GameRuntime rt_;
   bool q_held_ = false;
   bool e_held_ = false;
+  bool space_held_ = false;
 };
 
 }  // namespace

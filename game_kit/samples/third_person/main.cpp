@@ -11,7 +11,6 @@
 #include "engine/ui/retained_ui.h"
 #include "engine/ui/rml_ui.h"
 
-#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -40,16 +39,22 @@ class CorridorModule final : public game_kit::IGameModule {
     app.set_look_with_lmb(false);
     app.set_look_with_rmb(false);
 
+#ifdef GAME_KIT_SAMPLE_DIR
+    rt_.set_script_root(GAME_KIT_SAMPLE_DIR);
+#endif
+
     phys_ = engine::physics::CreateDefaultPhysicsWorld();
     if (!phys_) {
       return engine::Status::Fail("physics world");
     }
+    rt_.set_physics(phys_.get());
 
     hud_ = engine::ui::CreateRetainedUiBackend();
     (void)engine::ui::LoadRmlDocumentFromMemory(*hud_,
                                                 "<rml><head></head><body>GK3</body></rml>");
     hud_->Panel("hud", 16.f, 16.f, 280.f, 72.f);
     hud_->Label("msg", "Reach the far cube", 28.f, 36.f);
+    rt_.set_ui(hud_.get());
 
     engine::physics::RigidBodyDesc floor;
     floor.position = {0.f, -0.5f, 8.f};
@@ -62,16 +67,35 @@ class CorridorModule final : public game_kit::IGameModule {
     player.half_extents = {0.4f, 0.9f, 0.4f};
     player.mass = 1.f;
     player_body_ = phys_->CreateBox(player);
+    rt_.player().physics_body = player_body_;
+    rt_.player().entity_name = "player";
 
     goal_pos_ = {0.f, 1.f, 16.f};
 
-    rt_.levels().Register("corridor", [this](engine::Application& a, game_kit::GameRuntime& rt) {
-      rt.entities().Clear();
-      MakeBox(a.world(), "floor", {0.f, -0.05f, 8.f}, {8.f, 0.1f, 24.f});
-      const auto p = MakeBox(a.world(), "player", {0.f, 1.f, 0.f}, {0.8f, 1.8f, 0.8f});
-      MakeBox(a.world(), "goal", goal_pos_, {1.f, 1.f, 1.f});
-      rt.entities().Create("player", p);
+    rt_.events().Subscribe("level.complete", [this](std::string_view) {
+      done_ = true;
+      if (hud_) {
+        hud_->set_text("msg", "Done");
+      }
+      engine::LogInfo("GK3 corridor complete");
     });
+
+    rt_.levels().Register(
+        "corridor",
+        [this](engine::Application& a, game_kit::GameRuntime& rt) {
+          MakeBox(a.world(), "floor", {0.f, -0.05f, 8.f}, {8.f, 0.1f, 24.f});
+          const auto p = MakeBox(a.world(), "player", {0.f, 1.f, 0.f}, {0.8f, 1.8f, 0.8f});
+          const auto goal = MakeBox(a.world(), "goal", goal_pos_, {1.f, 1.f, 1.f});
+          rt.entities().Create("player", p);
+          rt.entities().Create("goal", goal);
+          rt.triggers().Add("goal", goal, {1.6f, 1.6f, 1.6f}, "player");
+          const auto sid =
+              rt.scripts().Attach(goal, rt.ResolveScriptPath("scripts/goal.lua").string());
+          if (auto* sc = rt.scripts().Get(sid)) {
+            (void)rt.scripts().LoadFromDisk(*sc);
+          }
+        },
+        [](engine::Application& a, game_kit::GameRuntime&) { game_kit::ClearWorld(a.world()); });
     (void)rt_.levels().Request("corridor");
     return engine::Status::Ok();
   }
@@ -82,44 +106,9 @@ class CorridorModule final : public game_kit::IGameModule {
       return;
     }
 
-    engine::Vec3 move{};
-    if (app.input().key_down(engine::input::Key::W)) {
-      move.z += 1.f;
-    }
-    if (app.input().key_down(engine::input::Key::S)) {
-      move.z -= 1.f;
-    }
-    if (app.input().key_down(engine::input::Key::A)) {
-      move.x -= 1.f;
-    }
-    if (app.input().key_down(engine::input::Key::D)) {
-      move.x += 1.f;
-    }
-    if (move.length_squared() > 0.f) {
-      move = engine::Normalize(move) * (6.f * dt);
-      (void)phys_->MoveCharacter(player_body_, move);
-    }
+    rt_.player().TickMove(app, rt_, dt);
     phys_->Step(dt);
-
-    const auto pos = phys_->body_position(player_body_);
-    if (auto* e = rt_.entities().FindByName("player")) {
-      if (app.world().valid(e->node)) {
-        auto t = app.world().local_transform(e->node);
-        t.position = pos;
-        app.world().set_local_transform(e->node, t);
-      }
-    }
-    app.camera().position = pos + engine::Vec3{0.f, 3.5f, -6.f};
-    app.camera().pitch = -0.35f;
-    app.camera().yaw = 0.f;
-
-    const auto delta = pos - goal_pos_;
-    if (delta.length() < 1.6f) {
-      done_ = true;
-      hud_->set_text("msg", "Done");
-      rt_.events().Publish("level.complete", "corridor");
-      engine::LogInfo("GK3 corridor complete");
-    }
+    rt_.player().TickView(app, rt_);
   }
 
   std::vector<engine::rhi::ScreenQuad> HudQuads() const {

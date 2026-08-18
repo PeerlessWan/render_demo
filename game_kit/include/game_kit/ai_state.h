@@ -33,6 +33,25 @@ enum class AiState : std::uint8_t {
   return "Unknown";
 }
 
+[[nodiscard]] inline AiState ParseAiState(std::string_view s) {
+  if (s == "Patrol") {
+    return AiState::Patrol;
+  }
+  if (s == "Chase") {
+    return AiState::Chase;
+  }
+  if (s == "Attack") {
+    return AiState::Attack;
+  }
+  if (s == "Flee") {
+    return AiState::Flee;
+  }
+  if (s == "Dead") {
+    return AiState::Dead;
+  }
+  return AiState::Idle;
+}
+
 struct AiStateMachine {
   AiState state = AiState::Idle;
   AiState previous = AiState::Idle;
