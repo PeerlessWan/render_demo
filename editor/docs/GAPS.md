@@ -38,7 +38,7 @@
 | ID | 缺什么 | 主流对照 | 里程碑 | FEATURES |
 |---|---|---|---|---|
 | ED-G10 | 进程空壳 | 能启动的 Editor 窗口 | ED0 | — |
-| ED-G11 | 3D/2D 视口 + 编辑相机 | Scene 视口、飞行/轨道，与游戏相机分离 | ED1 | EDVP01–02 |
+| ED-G11 | 3D/2D 视口 + 编辑相机 | 3D 透视 + 2D 正交；右键飞；与游戏相机分离 | ED1 | EDVP01–02 **已闭环** |
 | ED-G12 | 点选、Gizmo、选中高亮、Undo | 移物体可撤销 | ED2 | EDVP03–04、EDIO05 已加深（创建/删除/属性 Undo；局部轴） |
 | ED-G13 | 打开/保存场景 | 与 Runtime **同一套**格式 | ED2–ED3 | EDIO01 |
 | ED-G14 | 场景树、检视器、创建/删除节点 | Hierarchy + Inspector | ED3 | EDHI01–03 已加深（改名/重父级/搜索/多选/灯相机碰撞） |
@@ -63,7 +63,7 @@
 | ED-G32 | Prefab 源 vs 实例覆盖 | 属性级 override JSON；Apply 写回源文件 | **已闭环**（TRS/visible/material/light/fields + nested Place） |
 | ED-G33 | 动画状态机 / 曲线 | 可增删状态与转移；4 键曲线驱动选中 AnimPlayer | **已闭环**（不绑骨骼蒙皮编辑） |
 | ED-G34 | 地形雕刻套件 | Raise/Lower/Smooth；Undo；随场景存盘 | **已闭环** |
-| ED-G35 | 2D Tilemap / 图集编辑 | 图集路径 + GID；Sprite/Tile 可见可点选 | **已闭环** |
+| ED-G35 | 2D Tilemap / 图集编辑 | 图集路径 + GID；世界投影后 Sprite/Tile 可见可点选 | **已闭环** |
 | ED-G36 | 光照烘焙 UI | 读场景灯 CPU 烘 lightmap 并套地面/地形；失败 isError | **已闭环** |
 | ED-G37 | 资源/脚本热重载 | 贴图 + 网格 Upload；Play 中脚本 ReloadPath | **已闭环** |
 

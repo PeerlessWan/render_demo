@@ -60,6 +60,19 @@ void ApplyPaneCamera(int pane, engine::render::Camera* cam, const engine::render
   cam->fovy_rad = 0.7f;
 }
 
+void ApplyOrtho2DCamera(engine::render::Camera* cam) {
+  if (!cam) {
+    return;
+  }
+  cam->position.y = 20.f;
+  cam->yaw = 0.f;
+  cam->pitch = -1.55f;
+  cam->ortho = true;
+  if (cam->ortho_height < 0.5f) {
+    cam->ortho_height = 16.f;
+  }
+}
+
 float PaneAspect(const ViewportPane& pane) {
   const float w = pane.x1 - pane.x0;
   const float h = pane.y1 - pane.y0;

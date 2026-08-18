@@ -19,6 +19,9 @@ void LayoutViewports(int mode, float width, float height, ViewportPane out[4], i
 
 void ApplyPaneCamera(int pane, engine::render::Camera* cam, const engine::render::Camera& persp);
 
+// Top-down XZ orthographic scene view (editor Viewport "2D").
+void ApplyOrtho2DCamera(engine::render::Camera* cam);
+
 [[nodiscard]] float PaneAspect(const ViewportPane& pane);
 
 }  // namespace editor

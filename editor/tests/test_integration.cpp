@@ -1,7 +1,9 @@
 #include "cmd/session.h"
 #include "editing/light_bake.h"
+#include "editing/sprite_view.h"
 #include "editing/terrain_edit.h"
 #include "editing/undo.h"
+#include "editing/viewport_layout.h"
 #include "io/content_browser.h"
 #include "play/scene_play.h"
 
@@ -10,6 +12,7 @@
 
 #include "kit_test.h"
 
+#include "engine/render/camera.h"
 #include "engine/scene/world.h"
 
 #include <cmath>
@@ -240,5 +243,28 @@ TEST_CASE("screenshot without device is error", "[integration]") {
   const auto r = editor::ApplyOp(host.Bind(), shot);
   REQUIRE(r.is_error);
   REQUIRE(r.message.find("gpu") != std::string::npos);
+}
+
+TEST_CASE("create sprite projects to screen rect larger than 2px", "[integration]") {
+  engine::scene::World world;
+  const auto id = world.CreateNode("sprite");
+  engine::scene::SpriteComponent spr;
+  spr.gid = 2;
+  world.set_sprite(id, spr);
+  engine::scene::Transform t;
+  t.position = {8.f, 0.f, 8.f};
+  world.set_local_transform(id, t);
+  world.UpdateTransforms();
+  engine::render::Camera cam;
+  editor::ApplyOrtho2DCamera(&cam);
+  cam.position.x = 8.f;
+  cam.position.z = 8.f;
+  std::vector<engine::render2d::Sprite> out;
+  std::vector<engine::scene::NodeId> ids;
+  editor::CollectProjectedSprites(world, {}, cam.view_proj_matrix(16.f / 9.f), 1280.f, 720.f, &out, &ids);
+  REQUIRE(out.size() == 1);
+  REQUIRE(out.front().size.x > 2.f);
+  REQUIRE(out.front().size.y > 2.f);
+  REQUIRE(ids.front() == id);
 }
 

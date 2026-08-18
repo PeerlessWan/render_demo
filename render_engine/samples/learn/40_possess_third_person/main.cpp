@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
                   (ctrl.possess_character ? "true" : "false (free camera)"));
 
   engine::gameplay::PossessInput input;
-  input.yaw = 0.4f;
+  input.move_yaw = 0.4f;
   input.move_z = 1.f;
   for (int i = 0; i < 45; ++i) {
     if (i == 20) {
@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
                   std::to_string(ctrl.position.y) + "," + std::to_string(ctrl.position.z) +
                   ") on_ground=" + (ctrl.on_ground ? "true" : "false"));
 
-  const auto eye = ctrl.ThirdPersonCameraPosition(input.yaw);
+  const auto eye = ctrl.ThirdPersonCameraPosition(input.move_yaw);
   const auto look = ctrl.ThirdPersonLookAt();
   engine::LogInfo("ThirdPerson eye=(" + std::to_string(eye.x) + "," + std::to_string(eye.y) +
                   "," + std::to_string(eye.z) + ")");

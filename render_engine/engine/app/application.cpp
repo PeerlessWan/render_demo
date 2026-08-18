@@ -159,8 +159,13 @@ Status Application::Run(FrameCallback on_frame) {
     SyncInputFromWindow();
     input_.EvaluateActions();
 
-    if (input_.key_down(input::Key::Escape)) {
-      window_->RequestClose();
+    if (input_.key_pressed(input::Key::Escape)) {
+      if (always_look_ && !cursor_unlocked_) {
+        // Possess / FPS: first Esc releases the pointer for UI (does not quit).
+        cursor_unlocked_ = true;
+      } else {
+        window_->RequestClose();
+      }
     }
 
     const auto& snap = window_->input_snapshot();
@@ -173,24 +178,29 @@ Status Application::Run(FrameCallback on_frame) {
     const bool lmb = snap.mouse_left;
     const bool rmb = snap.mouse_right;
     const bool mmb = snap.mouse_middle;
-    const bool want_look =
-        !ui_want_capture_ && ((look_with_lmb_ && lmb) || (look_with_rmb_ && rmb));
-    const bool want_pan = !ui_want_capture_ && mmb;
+    // Click game view to re-lock after Esc unlock (FPS-style).
+    if (always_look_ && cursor_unlocked_ && !ui_want_capture_ && lmb) {
+      cursor_unlocked_ = false;
+    }
+    const bool pointer_ok = !ui_want_capture_ && !cursor_unlocked_;
+    const bool drag_look = pointer_ok && ((look_with_lmb_ && lmb) || (look_with_rmb_ && rmb));
+    const bool want_look = pointer_ok && (always_look_ || drag_look);
+    const bool want_pan = pointer_ok && mmb && !always_look_;
 
     if (want_look || want_pan) {
       window_->SetCursorCaptured(true);
-      if (hide_cursor_on_look_ && want_look) {
+      if ((hide_cursor_on_look_ || always_look_) && want_look) {
         window_->SetCursorLocked(true);
       }
     } else {
-      if (was_looking_) {
+      if (was_looking_ || cursor_unlocked_) {
         window_->SetCursorLocked(false);
         window_->SetCursorCaptured(false);
       }
     }
     was_looking_ = want_look || want_pan;
 
-    if (!ui_want_capture_) {
+    if (pointer_ok) {
       if (fly_locomotion_enabled_ && (!fly_requires_look_ || want_look)) {
         camera_.MoveLocal(input_.axis("MoveZ") * move_speed, input_.axis("MoveX") * move_speed,
                           input_.axis("MoveY") * move_speed);
@@ -206,8 +216,11 @@ Status Application::Run(FrameCallback on_frame) {
                             input_.axis("LookY") * pan_sensitivity_);
         }
       } else if (want_look && !camera_.ortho) {
-        camera_.AddYawPitch(-input_.axis("LookX") * look_sensitivity_,
-                            -input_.axis("LookY") * look_sensitivity_);
+        const float dyaw = -input_.axis("LookX") * look_sensitivity_;
+        float dpitch = -input_.axis("LookY") * look_sensitivity_;
+        camera_.yaw += dyaw;
+        const float lim = (std::max)(0.1f, look_pitch_limit_);
+        camera_.pitch = std::clamp(camera_.pitch + dpitch, -lim, lim);
       }
       // Wheel zoom applied after on_frame so UI WantCapture (this frame) wins.
     } else {

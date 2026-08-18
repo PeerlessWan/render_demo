@@ -279,6 +279,7 @@ int main(int argc, char** argv) {
   a.camera().z_near = 0.35f;
 
   auto ground = a.world().CreateNode("ground");
+  engine::scene::NodeId terrain_node = engine::scene::kInvalidNode;
   {
     engine::scene::Transform t;
     t.position = {0, 0.f, 0};
@@ -315,7 +316,8 @@ int main(int argc, char** argv) {
     auto helmet = a.world().CreateNode("helmet");
     engine::scene::Transform t;
     // Mesh already includes glTF node world xform (see LoadGltfMeshFile).
-    t.position = {0.f, 1.05f, 0.4f};
+    // Keep off the suburb block (centered near z=-18).
+    t.position = {26.f, 1.05f, 16.f};
     t.scale = {1.f, 1.f, 1.f};
     t.rotation = engine::Quat::FromEulerYxz(0.35f, 0.f, 0.f);
     a.world().set_local_transform(helmet, t);
@@ -562,6 +564,72 @@ int main(int argc, char** argv) {
       engine::LogError(std::string("Helmet load failed: ") + mesh.status().message());
       return 1;
     }
+
+    // CC0 Kenney City Kit (Suburban): assemble a real low-poly town block into mesh slot 6.
+    {
+      const auto models = content / "scenes" / "suburb" / "models";
+      const auto place = [](float x, float z, float yaw = 0.f, float s = 1.f) {
+        return engine::Mat4::TRS({x, 0.f, z}, engine::Quat::FromEulerYxz(yaw, 0.f, 0.f),
+                                 {s, s, s});
+      };
+      std::vector<engine::assets::GltfMeshInstance> parts;
+      const char* buildings[] = {"building-type-a.glb", "building-type-b.glb", "building-type-c.glb",
+                                 "building-type-d.glb", "building-type-e.glb", "building-type-h.glb",
+                                 "building-type-l.glb", "building-type-t.glb"};
+      const float spacing = 14.f;
+      for (int i = 0; i < 8; ++i) {
+        const int row = i / 4;
+        const int col = i % 4;
+        parts.push_back({models / buildings[i],
+                         place((static_cast<float>(col) - 1.5f) * spacing,
+                               (static_cast<float>(row) - 0.5f) * spacing, 0.f, 1.f)});
+      }
+      parts.push_back({models / "tree-large.glb", place(-22.f, -8.f)});
+      parts.push_back({models / "tree-large.glb", place(22.f, 6.f)});
+      parts.push_back({models / "tree-small.glb", place(-6.f, 12.f)});
+      parts.push_back({models / "tree-small.glb", place(8.f, -14.f)});
+      parts.push_back({models / "fence.glb", place(-28.f, 0.f, 1.5708f, 1.2f)});
+      parts.push_back({models / "fence.glb", place(28.f, 0.f, 1.5708f, 1.2f)});
+      parts.push_back({models / "path-long.glb", place(0.f, 0.f, 0.f, 1.5f)});
+      parts.push_back({models / "driveway-short.glb", place(-7.f, -7.f)});
+      parts.push_back({models / "planter.glb", place(4.f, 4.f)});
+      if (auto scene = engine::assets::AssembleGltfMeshes(parts, *loader)) {
+        std::vector<engine::rhi::LitVertex> verts(scene->vertices.size());
+        for (std::size_t i = 0; i < scene->vertices.size(); ++i) {
+          const auto& v = scene->vertices[i];
+          verts[i] = {v.px, v.py, v.pz, v.nx, v.ny, v.nz, v.u, v.v};
+        }
+        if (auto st = a.device().UploadLitGeometry(6, verts, scene->indices); !st) {
+          engine::LogWarn(std::string("Suburb mesh upload failed: ") + st.message());
+        } else {
+          // Classic lit path only has albedo slots 0/1 (t1/t4). Prefer suburb colormap on slot1.
+          const auto cmap = models / "Textures" / "colormap.png";
+          if (auto alb = loader->LoadFile(cmap)) {
+            (void)a.device().UploadLitAlbedoRgba(alb->rgba.data(), alb->width, alb->height, 1);
+            engine::LogInfo("Suburb colormap uploaded (tex slot1)");
+          } else if (scene->has_albedo) {
+            (void)a.device().UploadLitAlbedoRgba(scene->albedo.rgba.data(), scene->albedo.width,
+                                                  scene->albedo.height, 1);
+          }
+          auto suburb = a.world().CreateNode("suburb");
+          engine::scene::Transform suburb_xf;
+          suburb_xf.position = {0.f, 0.f, -18.f};
+          a.world().set_local_transform(suburb, suburb_xf);
+          engine::scene::MeshRenderer sm;
+          sm.mesh_id = "suburb";
+          sm.never_cull = true;
+          sm.local_bounds = {{-40.f, -1.f, -40.f}, {40.f, 25.f, 40.f}};
+          a.world().set_mesh(suburb, sm);
+          // Default camera overlooks the town block.
+          a.camera().position = {0.f, 22.f, 28.f};
+          a.camera().pitch = -0.55f;
+          a.camera().yaw = 0.f;
+          engine::LogInfo("Suburb city scene ready (Kenney City Kit Suburban, CC0)");
+        }
+      } else {
+        engine::LogWarn(std::string("Suburb assemble skipped: ") + scene.status().message());
+      }
+    }
   }
   std::vector<engine::render::LocalLight> sandbox_local_lights;
   {
@@ -712,7 +780,7 @@ int main(int argc, char** argv) {
                    terrain_mesh.uvs[i * 2 + 0], terrain_mesh.uvs[i * 2 + 1]};
     }
     if (auto st = a.device().UploadLitGeometry(2, tverts, terrain_mesh.indices); st) {
-      auto terrain_node = a.world().CreateNode("terrain");
+      terrain_node = a.world().CreateNode("terrain");
       engine::scene::Transform tt;
       tt.position = {0, 0, 0};
       a.world().set_local_transform(terrain_node, tt);
@@ -957,10 +1025,14 @@ int main(int argc, char** argv) {
   bool panel_open = true;
   // Mega-W10: default free fly; F toggles possess walk/jump.
   // Mega-W11: prefer content/characters/*.glb, else capsule mesh.
+  // Character spawn: map center (suburb block origin at z=-18).
   engine::gameplay::PossessController possess;
   possess.possess_character = false;
-  possess.position = {0.f, 0.f, 0.f};
+  possess.position = {0.f, 0.f, -18.f};
+  possess.facing_yaw = 0.f;
   possess.SetSampleHeight([](float /*x*/, float /*z*/) { return 0.f; });
+  bool possess_third_person = false;
+  bool possess_was = false;
   engine::assets::CharacterLoadResult possess_character_mesh;
   {
     auto char_images = engine::assets::CreateDefaultImageLoader();
@@ -1021,7 +1093,8 @@ int main(int argc, char** argv) {
 
   auto audio = engine::media::CreateDefaultAudioDevice();
   engine::LogInfo(std::string("Audio backend: ") + audio->backend_name());
-  engine::LogInfo("Sandbox: LMB/RMB look | Wheel zoom | MMB pan | F1 FX | F3 grid | F4 axes | F5 record BMP");
+  engine::LogInfo(
+      "Sandbox: free cam LMB/RMB look | F Character (FPS mouse look, Esc unlock) | TP toggle in UI");
 
   // C16 / Mega-W9: hot-reload poll → rebuild lit PSO / reload albedo (not log-only).
   // Mega-W10: optional `engine::assets::TryCompileHlslWithDxc` when dxc.exe is on PATH
@@ -1139,33 +1212,64 @@ int main(int argc, char** argv) {
     const bool f_down = snap.keys['F'] || snap.keys['f'];
     if (f_down && !f_was_down) {
       possess.possess_character = !possess.possess_character;
-      app_ref.set_fly_locomotion_enabled(!possess.possess_character);
-      engine::LogInfo(possess.possess_character
-                          ? "Possess ON (WASD walk, Space jump; F free cam)"
-                          : "Possess OFF (free fly camera)");
     }
     f_was_down = f_down;
 
+    auto apply_possess_mode = [&](bool on) {
+      app_ref.set_fly_locomotion_enabled(!on);
+      app_ref.set_always_look(on);
+      app_ref.set_look_pitch_limit(1.2f);  // ~69° look up/down clamp
+      if (on) {
+        app_ref.RelockCursor();
+        // Enter: default first-person; sync body + camera yaw.
+        possess_third_person = false;
+        possess.facing_yaw = app_ref.camera().yaw;
+        app_ref.camera().pitch = 0.f;
+        app_ref.camera().position = possess.FirstPersonCameraPosition();
+        engine::LogInfo(
+            "Character ON — FPS (WASD/Space, mouse look, Esc unlock UI; enable Third-person in panel)");
+      } else {
+        app_ref.set_cursor_unlocked(false);
+        app_ref.set_always_look(false);
+        app_ref.set_look_pitch_limit(1.5f);
+        engine::LogInfo("Character OFF — free fly camera (LMB/RMB look)");
+      }
+    };
+
+    if (possess.possess_character != possess_was) {
+      apply_possess_mode(possess.possess_character);
+      possess_was = possess.possess_character;
+    }
+
     if (possess.possess_character) {
+      const bool rmb = snap.mouse_right;
+      // Mainstream TP: WASD vs camera; mouse orbits camera; RMB syncs body facing to camera yaw.
+      if (possess_third_person && rmb && !app_ref.cursor_unlocked() && !app_ref.ui_want_capture()) {
+        possess.facing_yaw = app_ref.camera().yaw;
+      }
+      if (!possess_third_person) {
+        // First-person: body follows look yaw.
+        possess.facing_yaw = app_ref.camera().yaw;
+      }
+
       engine::gameplay::PossessInput pin;
       pin.move_x = app_ref.input().axis("MoveX");
       pin.move_z = app_ref.input().axis("MoveZ");
       pin.jump = app_ref.input().pressed("Jump") || app_ref.input().key_down(engine::input::Key::Space);
-      pin.yaw = app_ref.camera().yaw;
+      pin.move_yaw = app_ref.camera().yaw;
       possess.Step(app_ref.delta_time(), pin);
-      app_ref.camera().position = possess.ThirdPersonCameraPosition(pin.yaw);
-      const auto look = possess.ThirdPersonLookAt();
-      const auto eye = app_ref.camera().position;
-      const float dx = look.x - eye.x;
-      const float dy = look.y - eye.y;
-      const float dz = look.z - eye.z;
-      const float horiz = std::sqrt(dx * dx + dz * dz);
-      app_ref.camera().yaw = std::atan2(dx, dz);
-      app_ref.camera().pitch = std::atan2(dy, (std::max)(horiz, 1e-3f));
+
+      if (possess_third_person) {
+        app_ref.camera().position =
+            possess.ThirdPersonCameraPosition(app_ref.camera().yaw, app_ref.camera().pitch);
+      } else {
+        app_ref.camera().position = possess.FirstPersonCameraPosition();
+      }
 
       std::vector<engine::Vec3> attach;
-      attach.push_back(possess.position + engine::Vec3{-0.2f, 1.45f, 0.f});
-      attach.push_back(possess.position + engine::Vec3{0.2f, 1.45f, 0.f});
+      const engine::Quat fq_attach = engine::Quat::FromEulerYxz(possess.facing_yaw, 0.f, 0.f);
+      attach.push_back(possess.position + fq_attach.Rotate({-0.2f, 1.45f, 0.f}));
+      attach.push_back(possess.position + fq_attach.Rotate({0.2f, 1.45f, 0.f}));
       cape.SetAttachPoints(attach);
       engine::clothing::CapsuleCollider col;
       col.center = possess.CapsuleCenter();
@@ -1176,12 +1280,13 @@ int main(int argc, char** argv) {
         app_ref.debug_draw().AddLine(cape.positions[i - 1], cape.positions[i],
                                      {0.85f, 0.55f, 0.2f, 1.f});
       }
-      // Mega-W11: preview loaded glTF / capsule character at possess feet.
-      {
+      // Third-person (or unlocked cursor): draw character mesh rotated by facing_yaw.
+      if (possess_third_person || app_ref.cursor_unlocked()) {
         const auto& cm = possess_character_mesh.mesh;
         const engine::Vec3 origin = possess.position;
         const std::size_t tri_budget =
             (std::min)(cm.indices.size() / 3, static_cast<std::size_t>(48));
+        const engine::Quat fq = engine::Quat::FromEulerYxz(possess.facing_yaw, 0.f, 0.f);
         for (std::size_t t = 0; t < tri_budget; ++t) {
           const auto i0 = cm.indices[t * 3 + 0];
           const auto i1 = cm.indices[t * 3 + 1];
@@ -1190,12 +1295,13 @@ int main(int argc, char** argv) {
               i2 >= cm.vertices.size()) {
             continue;
           }
-          const engine::Vec3 a{cm.vertices[i0].px + origin.x, cm.vertices[i0].py + origin.y,
-                               cm.vertices[i0].pz + origin.z};
-          const engine::Vec3 b{cm.vertices[i1].px + origin.x, cm.vertices[i1].py + origin.y,
-                               cm.vertices[i1].pz + origin.z};
-          const engine::Vec3 c{cm.vertices[i2].px + origin.x, cm.vertices[i2].py + origin.y,
-                               cm.vertices[i2].pz + origin.z};
+          auto xf = [&](std::size_t ii) {
+            const engine::Vec3 lp{cm.vertices[ii].px, cm.vertices[ii].py, cm.vertices[ii].pz};
+            return fq.Rotate(lp) + origin;
+          };
+          const engine::Vec3 a = xf(i0);
+          const engine::Vec3 b = xf(i1);
+          const engine::Vec3 c = xf(i2);
           const engine::ColorRgba tint = possess_character_mesh.used_capsule_fallback
                                             ? engine::ColorRgba{0.45f, 0.75f, 0.95f, 1.f}
                                             : engine::ColorRgba{0.55f, 0.9f, 0.55f, 1.f};
@@ -1394,27 +1500,128 @@ int main(int argc, char** argv) {
           imgui.Checkbox("Physics debug (AABB/SoftBody)", &show_physics_debug);
           imgui.Checkbox("World text debug (W7)", &show_world_text_debug);
           imgui.Checkbox("Scale instances (1024)", &show_scale_instances);
-          if (imgui.Checkbox("Possess character (F)", &possess.possess_character)) {
-            app_ref.set_fly_locomotion_enabled(!possess.possess_character);
+          if (imgui.Checkbox("Character (F)", &possess.possess_character)) {
+            // Edge applied next frame via possess_was; force sync now.
+            apply_possess_mode(possess.possess_character);
+            possess_was = possess.possess_character;
+          }
+          if (possess.possess_character) {
+            if (imgui.Checkbox("Third-person camera", &possess_third_person)) {
+              if (possess_third_person) {
+                const auto& o = possess.params.camera_offset;
+                app_ref.camera().pitch =
+                    std::atan2(-std::abs(o.y), (std::max)(std::abs(o.z), 1e-3f));
+                app_ref.camera().position = possess.ThirdPersonCameraPosition(
+                    app_ref.camera().yaw, app_ref.camera().pitch);
+                engine::LogInfo("Third-person ON — mouse look camera; hold RMB to turn body");
+              } else {
+                app_ref.camera().pitch = 0.f;
+                app_ref.camera().position = possess.FirstPersonCameraPosition();
+                possess.facing_yaw = app_ref.camera().yaw;
+                engine::LogInfo("First-person ON — mouse look");
+              }
+            }
           }
           if (imgui.Checkbox("Large terrain heightmap", &large_terrain_mode)) {
-            if (large_terrain_mode && !large_hm_ok) {
-              const auto hm_path = std::filesystem::path(ENGINE_CONTENT_DIR_A) /
-                                   "scenes/large_terrain/heightmap_512.png";
-              auto loaded = engine::terrain::LoadHeightmapPng(hm_path, 1.f, 12.f);
-              if (loaded) {
-                large_hm = std::move(loaded.value());
-                large_hm_ok = true;
-                possess.SetSampleHeight([&large_hm](float x, float z) {
-                  return engine::terrain::SampleHeight(large_hm, x, z);
-                });
-                engine::LogInfo("Large terrain loaded: " + hm_path.string());
-              } else {
-                large_terrain_mode = false;
-                engine::LogWarn("Large terrain load failed: " + loaded.status().message());
+            auto show_large_terrain_view = [&]() {
+              possess.SetSampleHeight([&large_hm](float x, float z) {
+                return engine::terrain::SampleHeight(large_hm, x, z);
+              });
+              // Display mesh: subsample so upload stays interactive (full map still for height).
+              engine::terrain::Heightmap display = large_hm;
+              constexpr int kStep = 4;
+              if (large_hm.width > kStep + 1 && large_hm.height > kStep + 1) {
+                const int dw = (large_hm.width - 1) / kStep + 1;
+                const int dh = (large_hm.height - 1) / kStep + 1;
+                display.width = dw;
+                display.height = dh;
+                display.cell = large_hm.cell * static_cast<float>(kStep);
+                display.samples.resize(static_cast<std::size_t>(dw * dh));
+                for (int z = 0; z < dh; ++z) {
+                  for (int x = 0; x < dw; ++x) {
+                    const int sx = (std::min)(x * kStep, large_hm.width - 1);
+                    const int sz = (std::min)(z * kStep, large_hm.height - 1);
+                    display.samples[static_cast<std::size_t>(z * dw + x)] =
+                        large_hm.samples[static_cast<std::size_t>(sz * large_hm.width + sx)];
+                  }
+                }
               }
-            } else if (!large_terrain_mode) {
+              const engine::Vec3 origin{0.f, 0.f, 0.f};
+              const auto mesh = engine::terrain::BuildTerrainMesh(display, origin);
+              if (mesh.indices.empty()) {
+                return false;
+              }
+              std::vector<engine::rhi::LitVertex> verts(mesh.positions.size() / 3);
+              for (std::size_t i = 0; i < verts.size(); ++i) {
+                verts[i] = {mesh.positions[i * 3 + 0], mesh.positions[i * 3 + 1],
+                            mesh.positions[i * 3 + 2], mesh.normals[i * 3 + 0],
+                            mesh.normals[i * 3 + 1], mesh.normals[i * 3 + 2],
+                            mesh.uvs[i * 2 + 0], mesh.uvs[i * 2 + 1]};
+              }
+              if (auto st = app_ref.device().UploadLitGeometry(2, verts, mesh.indices); !st) {
+                return false;
+              }
+              if (terrain_node == engine::scene::kInvalidNode ||
+                  !app_ref.world().valid(terrain_node)) {
+                terrain_node = app_ref.world().CreateNode("terrain");
+              }
+              engine::scene::Transform tt;
+              tt.position = {0, 0, 0};
+              app_ref.world().set_local_transform(terrain_node, tt);
+              engine::scene::MeshRenderer tm;
+              tm.mesh_id = "terrain";
+              tm.never_cull = true;
+              const float wx = engine::terrain::HeightmapWorldSizeX(display);
+              const float wz = engine::terrain::HeightmapWorldSizeZ(display);
+              tm.local_bounds = {{0.f, -2.f, 0.f}, {wx, 60.f, wz}};
+              app_ref.world().set_mesh(terrain_node, tm);
+              app_ref.world().set_visible(terrain_node, true);
+              app_ref.world().set_visible(ground, false);
+              for (const auto id : veg_nodes) {
+                app_ref.world().set_visible(id, false);
+              }
+              const float mid_x = 0.5f * wx;
+              const float mid_z = 0.5f * wz;
+              const float mid_y = engine::terrain::SampleHeight(large_hm, mid_x, mid_z) + 55.f;
+              app_ref.camera().position = {mid_x, mid_y, mid_z + 120.f};
+              app_ref.camera().yaw = 0.f;
+              app_ref.camera().pitch = -0.45f;
+              engine::LogInfo("Large terrain mesh uploaded " + std::to_string(display.width) + "x" +
+                              std::to_string(display.height) + " world≈" + std::to_string(wx) +
+                              "m");
+              return true;
+            };
+
+            if (large_terrain_mode) {
+              if (!large_hm_ok) {
+                const auto hm_path = std::filesystem::path(ENGINE_CONTENT_DIR_A) /
+                                     "scenes/large_terrain/heightmap_512.png";
+                auto loaded = engine::terrain::LoadHeightmapPng(hm_path, 2.f, 48.f);
+                if (!loaded) {
+                  large_terrain_mode = false;
+                  engine::LogWarn("Large terrain load failed: " + loaded.status().message());
+                } else {
+                  large_hm = std::move(loaded.value());
+                  large_hm_ok = true;
+                  engine::LogInfo("Large terrain loaded: " + hm_path.string());
+                  if (!show_large_terrain_view()) {
+                    large_terrain_mode = false;
+                    engine::LogWarn("Large terrain mesh upload failed");
+                  }
+                }
+              } else if (!show_large_terrain_view()) {
+                large_terrain_mode = false;
+              }
+            } else {
               possess.SetSampleHeight([](float /*x*/, float /*z*/) { return 0.f; });
+              app_ref.world().set_visible(ground, true);
+              if (terrain_node != engine::scene::kInvalidNode &&
+                  app_ref.world().valid(terrain_node)) {
+                app_ref.world().set_visible(terrain_node, true);
+              }
+              app_ref.camera().position = {0.f, 2.2f, 6.2f};
+              app_ref.camera().yaw = 0.f;
+              app_ref.camera().pitch = -0.22f;
             }
           }
           imgui.Checkbox(Su.probe_gi, &enable_gi);

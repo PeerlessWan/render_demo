@@ -847,22 +847,16 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
       return Ok("revert prefab");
     }
     case EditorOp::Kind::Screenshot: {
+      if (!s.device) {
+        return Fail("no gpu");
+      }
       const auto path = op.path.empty() ? std::filesystem::temp_directory_path() / "editor_shot.ppm"
                                         : std::filesystem::path(op.path);
       std::vector<std::uint8_t> rgba;
       int rw = 0;
       int rh = 0;
-      if (s.device) {
-        if (auto st = s.device->ReadbackTextureStub(rgba, rw, rh); !st) {
-          return Fail(st.message());
-        }
-      } else {
-        rw = 4;
-        rh = 4;
-        rgba.assign(static_cast<std::size_t>(rw * rh * 4), 180);
-        for (int i = 0; i < rw * rh; ++i) {
-          rgba[static_cast<std::size_t>(i) * 4 + 3] = 255;
-        }
+      if (auto st = s.device->ReadbackTextureStub(rgba, rw, rh); !st) {
+        return Fail(st.message());
       }
       if (!WritePpm(path, rgba, rw, rh)) {
         return Fail("screenshot readback too small or write failed");

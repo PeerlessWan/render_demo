@@ -79,18 +79,19 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
   }
   *cmd = {};
 
-  if (ui.BeginWindow("Hierarchy", 12.f, 12.f, 260.f, 320.f)) {
-    ui.Text(settings.dirty ? "DIRTY" : "clean");
-    const char* spaces[] = {"Scene", "Voxel"};
-    (void)ui.Combo("Workspace", &settings.workspace, spaces, 2);
-    const char* filters[] = {"All", "Mesh", "Empty"};
-    (void)ui.Combo("Filter", &settings.hierarchy_filter, filters, 3);
-    (void)ui.InputText("Search", settings.search, sizeof(settings.search));
+  if (ui.BeginWindow("层级", 12.f, 12.f, 270.f, 520.f)) {
+    ui.Text(settings.dirty ? "已修改" : "未改");
+    const char* spaces[] = {"场景", "体素"};
+    (void)ui.Combo("工作区", &settings.workspace, spaces, 2);
+    const char* filters[] = {"全部", "网格", "空节点"};
+    (void)ui.Combo("筛选", &settings.hierarchy_filter, filters, 3);
+    (void)ui.InputText("搜索", settings.search, sizeof(settings.search));
     std::vector<engine::scene::NodeId> nodes;
     std::vector<int> depths;
     for (auto r : world.roots()) {
       CollectNodesDeep(world, r, &nodes, &depths, 0);
     }
+    if (ui.BeginChild("hierarchy_list", 250.f, 140.f)) {
     for (std::size_t i = 0; i < nodes.size(); ++i) {
       const auto id = nodes[i];
       if (!PassesFilter(world, id, settings.hierarchy_filter)) {
@@ -143,46 +144,48 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
         ui.EndDragDropTarget();
       }
     }
+    }
+    ui.EndChild();
     ui.Separator();
-    if (ui.Button("Create Cube", 220.f, 24.f)) {
+    if (ui.Button("创建立方体", 220.f, 24.f)) {
       cmd->create_kind = 0;
     }
-    if (ui.Button("Create Empty", 220.f, 24.f)) {
+    if (ui.Button("创建空节点", 220.f, 24.f)) {
       cmd->create_kind = 1;
     }
-    if (ui.Button("Create Ground", 220.f, 24.f)) {
+    if (ui.Button("创建地面", 220.f, 24.f)) {
       cmd->create_kind = 2;
     }
-    if (ui.Button("Create Player", 220.f, 24.f)) {
+    if (ui.Button("创建玩家", 220.f, 24.f)) {
       cmd->create_kind = 3;
     }
-    if (ui.Button("Create Light", 220.f, 24.f)) {
+    if (ui.Button("创建灯光", 220.f, 24.f)) {
       cmd->create_kind = 4;
     }
-    if (ui.Button("Create Camera", 220.f, 24.f)) {
+    if (ui.Button("创建相机", 220.f, 24.f)) {
       cmd->create_kind = 5;
     }
-    if (ui.Button("Create Collider", 220.f, 24.f)) {
+    if (ui.Button("创建碰撞体", 220.f, 24.f)) {
       cmd->create_kind = 6;
     }
-    if (ui.Button("Create Sprite", 220.f, 24.f)) {
+    if (ui.Button("创建精灵", 220.f, 24.f)) {
       cmd->create_kind = 7;
     }
-    if (ui.Button("Duplicate", 220.f, 24.f)) {
+    if (ui.Button("复制", 220.f, 24.f)) {
       cmd->duplicate = true;
     }
-    if (ui.Button("Delete", 220.f, 24.f)) {
+    if (ui.Button("删除", 220.f, 24.f)) {
       cmd->destroy = true;
     }
-    if (ui.Button(playing ? "Stop Play" : "Play scene", 220.f, 24.f)) {
+    if (ui.Button(playing ? "停止播放" : "播放场景", 220.f, 24.f)) {
       cmd->play = true;
     }
   }
   ui.EndWindow();
 
-  if (ui.BeginWindow("Inspector", 12.f, 340.f, 260.f, 420.f)) {
+  if (ui.BeginWindow("检视器", 12.f, 540.f, 270.f, 170.f)) {
     if (!world.valid(sel.node)) {
-      ui.Text("No selection");
+      ui.Text("未选中");
     } else {
       auto t = world.local_transform(sel.node);
       ui.Text(world.name(sel.node).c_str());
@@ -194,7 +197,7 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
         const auto& nm = world.name(sel.node);
         std::memcpy(name_buf, nm.c_str(), std::min(nm.size(), sizeof(name_buf) - 1));
       }
-      if (ui.InputText("Name", name_buf, sizeof(name_buf))) {
+      if (ui.InputText("名称", name_buf, sizeof(name_buf))) {
         const auto empty_meta = std::unordered_map<engine::scene::NodeId, NodeMeta>{};
         const auto& mm = meta ? *meta : empty_meta;
         auto before = CaptureProp(world, sel.node, mm);
@@ -209,7 +212,7 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
           CollectNodesDeep(world, r, &all, nullptr, 0);
         }
         std::vector<std::string> plabels;
-        plabels.emplace_back("(root)");
+        plabels.emplace_back("(根)");
         std::vector<engine::scene::NodeId> pids{engine::scene::kInvalidNode};
         const auto cur_p = FindParent(world, sel.node);
         int psel = 0;
@@ -230,7 +233,7 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
           pitems.push_back(s.c_str());
         }
         if (!pitems.empty() &&
-            ui.Combo("Parent", &psel, pitems.data(), static_cast<int>(pitems.size()))) {
+            ui.Combo("父级", &psel, pitems.data(), static_cast<int>(pitems.size()))) {
           const auto empty_meta = std::unordered_map<engine::scene::NodeId, NodeMeta>{};
           const auto& mm = meta ? *meta : empty_meta;
           auto before = CaptureProp(world, sel.node, mm);
@@ -241,7 +244,7 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
         }
       }
       const auto ids = sel.All();
-      const std::string count = "selected " + std::to_string(ids.size());
+      const std::string count = "已选 " + std::to_string(ids.size());
       ui.Text(count.c_str());
       bool mixed = false;
       for (auto id : ids) {
@@ -253,49 +256,104 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
         }
       }
       if (mixed) {
-        ui.Text("mixed");
+        ui.Text("混合");
       }
       std::vector<engine::scene::Transform> befores;
       befores.reserve(ids.size());
       for (auto id : ids) {
         befores.push_back(world.local_transform(id));
       }
-      bool changed = false;
-      changed = ui.SliderFloat("x", &t.position.x, -20.f, 20.f) || changed;
-      changed = ui.SliderFloat("y", &t.position.y, -5.f, 10.f) || changed;
-      changed = ui.SliderFloat("z", &t.position.z, -20.f, 20.f) || changed;
+      static bool inspector_drag = false;
+      static std::vector<engine::scene::NodeId> drag_ids;
+      static std::vector<engine::scene::Transform> drag_origins;
+      auto begin_inspector_drag = [&] {
+        if (!inspector_drag) {
+          inspector_drag = true;
+          drag_ids = ids;
+          drag_origins = befores;
+        }
+      };
+      auto write_axis = [&](auto&& apply_one) {
+        begin_inspector_drag();
+        for (std::size_t i = 0; i < drag_ids.size(); ++i) {
+          if (!world.valid(drag_ids[i]) || i >= drag_origins.size()) {
+            continue;
+          }
+          auto n = drag_origins[i];
+          apply_one(n);
+          if (settings.snap) {
+            SnapTransform(&n, settings.grid);
+          }
+          world.set_local_transform(drag_ids[i], n);
+        }
+        settings.dirty = true;
+        if (meta) {
+          for (auto id : drag_ids) {
+            WriteInstanceOverride(world, id, &(*meta)[id]);
+          }
+        }
+      };
+      if (ui.SliderFloat("X##pos", &t.position.x, -20.f, 20.f)) {
+        write_axis([&](engine::scene::Transform& n) { n.position.x = t.position.x; });
+      }
+      if (ui.SliderFloat("Y##pos", &t.position.y, -5.f, 10.f)) {
+        write_axis([&](engine::scene::Transform& n) { n.position.y = t.position.y; });
+      }
+      if (ui.SliderFloat("Z##pos", &t.position.z, -20.f, 20.f)) {
+        write_axis([&](engine::scene::Transform& n) { n.position.z = t.position.z; });
+      }
       float yaw = 0.f;
       float pitch = 0.f;
       float roll = 0.f;
       EulerFromQuat(t.rotation, &yaw, &pitch, &roll);
-      bool rot = false;
-      rot = ui.SliderFloat("yaw", &yaw, -3.14f, 3.14f) || rot;
-      rot = ui.SliderFloat("pitch", &pitch, -1.57f, 1.57f) || rot;
-      rot = ui.SliderFloat("roll", &roll, -3.14f, 3.14f) || rot;
-      if (rot) {
-        t.rotation = engine::Quat::FromEulerYxz(yaw, pitch, roll);
-        changed = true;
+      if (ui.SliderFloat("偏航##yaw", &yaw, -3.14f, 3.14f)) {
+        write_axis([&](engine::scene::Transform& n) {
+          float y = 0.f;
+          float p = 0.f;
+          float r = 0.f;
+          EulerFromQuat(n.rotation, &y, &p, &r);
+          n.rotation = engine::Quat::FromEulerYxz(yaw, p, r);
+        });
       }
-      changed = ui.SliderFloat("sx", &t.scale.x, 0.1f, 8.f) || changed;
-      changed = ui.SliderFloat("sy", &t.scale.y, 0.1f, 8.f) || changed;
-      changed = ui.SliderFloat("sz", &t.scale.z, 0.1f, 8.f) || changed;
-      if (changed) {
-        if (settings.snap) {
-          SnapTransform(&t, settings.grid);
-        }
+      if (ui.SliderFloat("俯仰##pitch", &pitch, -1.57f, 1.57f)) {
+        write_axis([&](engine::scene::Transform& n) {
+          float y = 0.f;
+          float p = 0.f;
+          float r = 0.f;
+          EulerFromQuat(n.rotation, &y, &p, &r);
+          n.rotation = engine::Quat::FromEulerYxz(y, pitch, r);
+        });
+      }
+      if (ui.SliderFloat("滚转##roll", &roll, -3.14f, 3.14f)) {
+        write_axis([&](engine::scene::Transform& n) {
+          float y = 0.f;
+          float p = 0.f;
+          float r = 0.f;
+          EulerFromQuat(n.rotation, &y, &p, &r);
+          n.rotation = engine::Quat::FromEulerYxz(y, p, roll);
+        });
+      }
+      if (ui.SliderFloat("缩放X##sx", &t.scale.x, 0.1f, 8.f)) {
+        write_axis([&](engine::scene::Transform& n) { n.scale.x = t.scale.x; });
+      }
+      if (ui.SliderFloat("缩放Y##sy", &t.scale.y, 0.1f, 8.f)) {
+        write_axis([&](engine::scene::Transform& n) { n.scale.y = t.scale.y; });
+      }
+      if (ui.SliderFloat("缩放Z##sz", &t.scale.z, 0.1f, 8.f)) {
+        write_axis([&](engine::scene::Transform& n) { n.scale.z = t.scale.z; });
+      }
+      if (inspector_drag && ui.IsMouseReleased(0)) {
         std::vector<engine::scene::Transform> afters;
-        afters.reserve(ids.size());
-        for (auto id : ids) {
-          world.set_local_transform(id, t);
-          afters.push_back(t);
-        }
-        undo.PushBatch(ids, befores, afters);
-        settings.dirty = true;
-        if (meta) {
-          for (auto id : ids) {
-            WriteInstanceOverride(world, id, &(*meta)[id]);
+        afters.reserve(drag_ids.size());
+        for (auto id : drag_ids) {
+          if (world.valid(id)) {
+            afters.push_back(world.local_transform(id));
           }
         }
+        if (!drag_origins.empty() && afters.size() == drag_origins.size()) {
+          undo.PushBatch(drag_ids, drag_origins, afters);
+        }
+        inspector_drag = false;
       }
       int mesh_i = 0;
       if (const auto* mesh = world.mesh(sel.node)) {
@@ -305,8 +363,8 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
           mesh_i = 2;
         }
       }
-      const char* meshes[] = {"(none)", "cube", "ground"};
-      if (ui.Combo("Mesh", &mesh_i, meshes, 3)) {
+      const char* meshes[] = {"(无)", "cube", "ground"};
+      if (ui.Combo("网格", &mesh_i, meshes, 3)) {
         if (mesh_i == 1 || mesh_i == 2) {
           const auto empty_meta = std::unordered_map<engine::scene::NodeId, NodeMeta>{};
           const auto& mm = meta ? *meta : empty_meta;
@@ -328,7 +386,7 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
         }
       }
       bool vis = world.visible(sel.node);
-      if (ui.Checkbox("Visible", &vis)) {
+      if (ui.Checkbox("可见", &vis)) {
         const auto empty_meta = std::unordered_map<engine::scene::NodeId, NodeMeta>{};
         const auto& mm = meta ? *meta : empty_meta;
         std::vector<PropSnap> pb;
@@ -343,7 +401,7 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
       }
       if (meta) {
         auto& mm = (*meta)[sel.node];
-        std::vector<std::string> mat_names{"(default)"};
+        std::vector<std::string> mat_names{"(默认)"};
         if (content) {
           for (const auto& it : content->items) {
             if (it.asset_id.empty()) {
@@ -376,37 +434,37 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
         for (const auto& n : mat_names) {
           mat_items.push_back(n.c_str());
         }
-        if (ui.Combo("Material", &mat_i, mat_items.data(), static_cast<int>(mat_items.size()))) {
+        if (ui.Combo("材质", &mat_i, mat_items.data(), static_cast<int>(mat_items.size()))) {
           mm.material_id = mat_i == 0 ? "" : mat_names[static_cast<std::size_t>(mat_i)];
           settings.dirty = true;
           SyncMetaToWorld(world, *meta);
           WriteInstanceOverride(world, sel.node, &mm);
         }
-        if (ui.Checkbox("Light", &mm.has_light)) {
+        if (ui.Checkbox("灯光", &mm.has_light)) {
           settings.dirty = true;
           SyncMetaToWorld(world, *meta);
           WriteInstanceOverride(world, sel.node, &mm);
         }
         if (mm.has_light) {
           bool light_ch = false;
-          light_ch = ui.SliderInt("Kind", &mm.light_kind, 0, 2) || light_ch;
-          light_ch = ui.SliderFloat("Range", &mm.light_range, 1.f, 32.f) || light_ch;
-          light_ch = ui.SliderFloat("Intensity", &mm.light_intensity, 0.f, 8.f) || light_ch;
-          light_ch = ui.SliderFloat("LcR", &mm.light_r, 0.f, 1.f) || light_ch;
-          light_ch = ui.SliderFloat("LcG", &mm.light_g, 0.f, 1.f) || light_ch;
-          light_ch = ui.SliderFloat("LcB", &mm.light_b, 0.f, 1.f) || light_ch;
+          light_ch = ui.SliderInt("类型##lkind", &mm.light_kind, 0, 2) || light_ch;
+          light_ch = ui.SliderFloat("范围##lrange", &mm.light_range, 1.f, 32.f) || light_ch;
+          light_ch = ui.SliderFloat("强度##lint", &mm.light_intensity, 0.f, 8.f) || light_ch;
+          light_ch = ui.SliderFloat("红##LcR", &mm.light_r, 0.f, 1.f) || light_ch;
+          light_ch = ui.SliderFloat("绿##LcG", &mm.light_g, 0.f, 1.f) || light_ch;
+          light_ch = ui.SliderFloat("蓝##LcB", &mm.light_b, 0.f, 1.f) || light_ch;
           if (light_ch) {
             settings.dirty = true;
             SyncMetaToWorld(world, *meta);
             WriteInstanceOverride(world, sel.node, &mm);
           }
         }
-        if (ui.Checkbox("Camera", &mm.has_camera)) {
+        if (ui.Checkbox("相机", &mm.has_camera)) {
           settings.dirty = true;
           SyncMetaToWorld(world, *meta);
         }
         if (mm.has_camera) {
-          if (ui.Checkbox("Active cam", &mm.active_camera)) {
+          if (ui.Checkbox("活动相机", &mm.active_camera)) {
             if (mm.active_camera) {
               for (auto& kv : *meta) {
                 if (kv.first != sel.node) {
@@ -422,22 +480,22 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
             SyncMetaToWorld(world, *meta);
           }
         }
-        if (ui.Checkbox("Collider", &mm.has_collider)) {
+        if (ui.Checkbox("碰撞体", &mm.has_collider)) {
           settings.dirty = true;
           SyncMetaToWorld(world, *meta);
         }
         if (mm.has_collider) {
           bool col_ch = false;
-          col_ch = ui.SliderFloat("hx", &mm.collider_hx, 0.1f, 4.f) || col_ch;
-          col_ch = ui.SliderFloat("hy", &mm.collider_hy, 0.1f, 4.f) || col_ch;
-          col_ch = ui.SliderFloat("hz", &mm.collider_hz, 0.1f, 4.f) || col_ch;
+          col_ch = ui.SliderFloat("hx##col", &mm.collider_hx, 0.1f, 4.f) || col_ch;
+          col_ch = ui.SliderFloat("hy##col", &mm.collider_hy, 0.1f, 4.f) || col_ch;
+          col_ch = ui.SliderFloat("hz##col", &mm.collider_hz, 0.1f, 4.f) || col_ch;
           if (col_ch) {
             settings.dirty = true;
             SyncMetaToWorld(world, *meta);
           }
         }
         bool has_spr = world.sprite(sel.node) != nullptr;
-        if (ui.Checkbox("Sprite", &has_spr)) {
+        if (ui.Checkbox("精灵", &has_spr)) {
           if (has_spr) {
             engine::scene::SpriteComponent spr;
             world.set_sprite(sel.node, spr);
@@ -448,7 +506,7 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
         }
         if (const auto* spr = world.sprite(sel.node)) {
           auto copy = *spr;
-          if (ui.SliderInt("gid", &copy.gid, 0, 16)) {
+          if (ui.SliderInt("GID##spr", &copy.gid, 0, 16)) {
             world.set_sprite(sel.node, copy);
             settings.dirty = true;
           }
@@ -504,7 +562,7 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
               std::memcpy(fields_buf, mm.script_fields.c_str(),
                           std::min(mm.script_fields.size(), sizeof(fields_buf) - 1));
             }
-            if (ui.InputText("Fields", fields_buf, sizeof(fields_buf))) {
+            if (ui.InputText("字段", fields_buf, sizeof(fields_buf))) {
               mm.script_fields = fields_buf;
               settings.dirty = true;
             }
@@ -516,27 +574,27 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
             anim_i = i + 1;
           }
         }
-        std::vector<std::string> anim_names{"(none)"};
+        std::vector<std::string> anim_names{"(无)"};
         anim_names.insert(anim_names.end(), settings.anim.states.begin(), settings.anim.states.end());
         std::vector<const char*> anim_items;
         for (const auto& n : anim_names) {
           anim_items.push_back(n.c_str());
         }
-        if (ui.Combo("Anim", &anim_i, anim_items.data(), static_cast<int>(anim_items.size()))) {
+        if (ui.Combo("动画", &anim_i, anim_items.data(), static_cast<int>(anim_items.size()))) {
           mm.anim_state = anim_i == 0 ? "" : anim_names[static_cast<std::size_t>(anim_i)];
           settings.dirty = true;
         }
         if (!mm.prefab_id.empty() || !mm.source_prefab.empty()) {
           ui.Text(mm.prefab_id.empty() ? mm.source_prefab.c_str() : mm.prefab_id.c_str());
-          if (ui.Button("Apply prefab", 220.f, 22.f)) {
+          if (ui.Button("应用预制体", 220.f, 22.f)) {
             cmd->apply_prefab = true;
           }
-          if (ui.Button("Revert prefab", 220.f, 22.f)) {
+          if (ui.Button("还原预制体", 220.f, 22.f)) {
             cmd->revert_prefab = true;
           }
         }
       }
-      if (ui.Button("Snap to grid", 220.f, 22.f)) {
+      if (ui.Button("吸附网格", 220.f, 22.f)) {
         auto snapped = t;
         SnapTransform(&snapped, settings.grid);
         std::vector<engine::scene::Transform> afters;
@@ -547,13 +605,13 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
         undo.PushBatch(ids, befores, afters);
         settings.dirty = true;
       }
-      if (ui.Button("Frame camera", 220.f, 22.f)) {
+      if (ui.Button("框选到相机", 220.f, 22.f)) {
         cmd->frame = true;
       }
       if (script_path) {
         int si = 0;
         std::vector<std::string> labels;
-        labels.push_back("(none)");
+        labels.push_back("(无)");
         for (const auto& p : scripts) {
           labels.push_back(p);
         }
@@ -576,7 +634,7 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
         for (const auto& s : labels) {
           items.push_back(s.c_str());
         }
-        if (ui.Combo("Script", &si, items.data(), static_cast<int>(items.size()))) {
+        if (ui.Combo("脚本", &si, items.data(), static_cast<int>(items.size()))) {
           if (si <= 0) {
             *script_path = {};
           } else {
@@ -600,33 +658,33 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
   }
   ui.EndWindow();
 
-  if (ui.BeginWindow("Content", 12.f, 648.f, 260.f, 220.f)) {
+  if (ui.BeginWindow("内容", 290.f, 12.f, 270.f, 260.f)) {
     ui.Text(scene_path.string().c_str());
-    if (ui.Button("Save", 100.f, 24.f)) {
+    if (ui.Button("保存", 100.f, 24.f)) {
       cmd->save = true;
     }
-    if (ui.Button("Load", 100.f, 24.f)) {
+    if (ui.Button("加载", 100.f, 24.f)) {
       cmd->load = true;
     }
-    if (ui.Button("Undo", 100.f, 22.f)) {
+    if (ui.Button("撤销", 100.f, 22.f)) {
       cmd->undo = true;
     }
-    if (ui.Button("Redo", 100.f, 22.f)) {
+    if (ui.Button("重做", 100.f, 22.f)) {
       cmd->redo = true;
     }
     ui.Separator();
-    ui.Text("Prefabs (click then LMB viewport)");
-    if (ui.Button("Place chest_tag", 220.f, 22.f)) {
+    ui.Text("预制体（点选后在视口左键放置）");
+    if (ui.Button("放置 chest_tag", 220.f, 22.f)) {
       cmd->place_prefab = 0;
     }
-    if (ui.Button("Place tree", 220.f, 22.f)) {
+    if (ui.Button("放置 tree", 220.f, 22.f)) {
       cmd->place_prefab = 1;
     }
-    if (ui.Button("Place hut", 220.f, 22.f)) {
+    if (ui.Button("放置 hut", 220.f, 22.f)) {
       cmd->place_prefab = 2;
     }
     ui.Separator();
-    ui.Text("Project (drag prefab to viewport)");
+    ui.Text("项目（拖预制体到视口）");
     if (content) {
       const bool list_open = ui.BeginChild("content_list", 240.f, 120.f);
       if (list_open) {
@@ -665,44 +723,44 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
       }
       ui.EndChild();
     }
-    if (ui.Button("Save Prefab from selection", 220.f, 22.f)) {
+    if (ui.Button("从选中保存预制体", 220.f, 22.f)) {
       cmd->save_prefab = true;
     }
-    if (ui.Button("Rescan content", 220.f, 22.f)) {
+    if (ui.Button("重新扫描内容", 220.f, 22.f)) {
       cmd->rescan = true;
     }
-    if (ui.Button("Cook", 220.f, 22.f)) {
+    if (ui.Button("烘焙清单", 220.f, 22.f)) {
       cmd->cook = true;
     }
-    if (ui.Button("Bake lightmap", 220.f, 22.f)) {
+    if (ui.Button("烘焙光照", 220.f, 22.f)) {
       cmd->bake = true;
     }
-    if (ui.Button("Lint (C20)", 220.f, 22.f)) {
+    if (ui.Button("校验 (C20)", 220.f, 22.f)) {
       cmd->lint = true;
     }
   }
   ui.EndWindow();
 
-  if (ui.BeginWindow("Settings", 280.f, 540.f, 280.f, 380.f)) {
-    const char* modes[] = {"Move", "Rotate", "Scale"};
-    (void)ui.Combo("Gizmo", &settings.gizmo_mode, modes, 3);
-    ui.Checkbox("Local gizmo", &settings.gizmo_local);
-    ui.Checkbox("Snap", &settings.snap);
-    ui.SliderFloat("Grid", &settings.grid, 0.25f, 4.f);
-    ui.Checkbox("Show grid", &settings.show_grid);
-    ui.Checkbox("Show gizmo", &settings.show_gizmo);
-    ui.Checkbox("Show bounds", &settings.show_bounds);
-    ui.Checkbox("Show collision", &settings.show_collision);
-    ui.Checkbox("Show profiler", &settings.show_profiler);
-    ui.Checkbox("Hot reload", &settings.hot_reload);
-    const char* views[] = {"Persp", "Top", "Front", "Side", "Node cam"};
-    (void)ui.Combo("Viewport", &settings.viewport, views, 5);
-    ui.Checkbox("Split 2x2", &settings.split_view);
-    (void)ui.SliderInt("Pane", &settings.active_pane, 0, 3);
-    const char* brushes[] = {"Raise", "Lower", "Smooth"};
-    (void)ui.Combo("Brush", &settings.sculpt_mode, brushes, 3);
-    (void)ui.SliderFloat("Sculpt", &settings.sculpt, 0.05f, 1.f);
-    if (ui.Button("Sculpt apply", 220.f, 22.f)) {
+  if (ui.BeginWindow("设置", 290.f, 280.f, 270.f, 430.f)) {
+    const char* modes[] = {"移动", "旋转", "缩放"};
+    (void)ui.Combo("操纵器", &settings.gizmo_mode, modes, 3);
+    ui.Checkbox("局部轴", &settings.gizmo_local);
+    ui.Checkbox("吸附", &settings.snap);
+    ui.SliderFloat("网格", &settings.grid, 0.25f, 4.f);
+    ui.Checkbox("显示网格", &settings.show_grid);
+    ui.Checkbox("显示操纵器", &settings.show_gizmo);
+    ui.Checkbox("显示包围盒", &settings.show_bounds);
+    ui.Checkbox("显示碰撞", &settings.show_collision);
+    ui.Checkbox("显示性能", &settings.show_profiler);
+    ui.Checkbox("热重载", &settings.hot_reload);
+    const char* views[] = {"透视", "俯视", "前视", "侧视", "节点相机", "2D"};
+    (void)ui.Combo("视口", &settings.viewport, views, 6);
+    ui.Checkbox("四分屏", &settings.split_view);
+    (void)ui.SliderInt("格", &settings.active_pane, 0, 3);
+    const char* brushes[] = {"抬高", "降低", "平滑"};
+    (void)ui.Combo("笔刷", &settings.sculpt_mode, brushes, 3);
+    (void)ui.SliderFloat("雕刻", &settings.sculpt, 0.05f, 1.f);
+    if (ui.Button("应用雕刻", 220.f, 22.f)) {
       cmd->sculpt = true;
     }
     static char atlas_buf[64]{};
@@ -712,48 +770,48 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
                   std::min(settings.tile_atlas.size(), sizeof(atlas_buf) - 1));
       atlas_init = true;
     }
-    if (ui.InputText("Atlas", atlas_buf, sizeof(atlas_buf))) {
+    if (ui.InputText("图集", atlas_buf, sizeof(atlas_buf))) {
       settings.tile_atlas = atlas_buf;
       settings.dirty = true;
     }
-    (void)ui.SliderInt("Tile X", &settings.tile_x, 0, 15);
-    (void)ui.SliderInt("Tile Y", &settings.tile_y, 0, 15);
+    (void)ui.SliderInt("格子X", &settings.tile_x, 0, 15);
+    (void)ui.SliderInt("格子Y", &settings.tile_y, 0, 15);
     (void)ui.SliderInt("GID", &settings.tile_gid, 0, 8);
-    if (ui.Button("Paint tile", 220.f, 22.f)) {
+    if (ui.Button("绘制格子", 220.f, 22.f)) {
       cmd->tile_paint = true;
     }
-    if (playing && ui.Button(paused ? "Resume Play" : "Pause Play", 220.f, 24.f)) {
+    if (playing && ui.Button(paused ? "继续播放" : "暂停播放", 220.f, 24.f)) {
       cmd->pause = true;
     }
-    if (playing && paused && ui.Button("Step", 220.f, 24.f)) {
+    if (playing && paused && ui.Button("单步", 220.f, 24.f)) {
       cmd->step = true;
     }
-    ui.Text("1/2/3 gizmo  Ctrl+Z/Y undo  Ctrl+D dup  Del  F");
+    ui.Text("右键观察；右键+WASD飞；中键平移；滚轮缩放；左键点选；拖轴移动；F框选");
   }
   ui.EndWindow();
 
-  if (ui.BeginWindow("Anim / Bake", 580.f, 540.f, 280.f, 260.f)) {
-    ui.Text("State graph");
+  if (ui.BeginWindow("动画 / 烘焙", 570.f, 12.f, 280.f, 280.f)) {
+    ui.Text("状态图");
     std::vector<const char*> anims;
     for (const auto& s : settings.anim.states) {
       anims.push_back(s.c_str());
     }
     if (!anims.empty()) {
-      if (ui.Combo("State", &settings.anim.current, anims.data(), static_cast<int>(anims.size()))) {
+      if (ui.Combo("状态", &settings.anim.current, anims.data(), static_cast<int>(anims.size()))) {
         cmd->anim_state = settings.anim.current;
       }
     }
     static char new_state[32]{"jump"};
-    if (ui.InputText("New state", new_state, sizeof(new_state))) {
+    if (ui.InputText("新状态", new_state, sizeof(new_state))) {
     }
-    if (ui.Button("Add state", 105.f, 22.f)) {
+    if (ui.Button("添加状态", 105.f, 22.f)) {
       auto a0 = settings.anim;
       AddState(&settings.anim, new_state);
       undo.PushGrid(settings.heights, settings.tiles, a0, settings.heights, settings.tiles,
                     settings.anim);
       settings.dirty = true;
     }
-    if (ui.Button("Remove state", 105.f, 22.f)) {
+    if (ui.Button("删除状态", 105.f, 22.f)) {
       auto a0 = settings.anim;
       RemoveState(&settings.anim, settings.anim.current);
       undo.PushGrid(settings.heights, settings.tiles, a0, settings.heights, settings.tiles,
@@ -762,36 +820,36 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
     }
     static char from_st[32]{"idle"};
     static char to_st[32]{"walk"};
-    (void)ui.InputText("From", from_st, sizeof(from_st));
-    (void)ui.InputText("To", to_st, sizeof(to_st));
-    if (ui.Button("Add transition", 220.f, 22.f)) {
+    (void)ui.InputText("从", from_st, sizeof(from_st));
+    (void)ui.InputText("到", to_st, sizeof(to_st));
+    if (ui.Button("添加转移", 220.f, 22.f)) {
       auto a0 = settings.anim;
       AddTransition(&settings.anim, from_st, to_st);
       undo.PushGrid(settings.heights, settings.tiles, a0, settings.heights, settings.tiles,
                     settings.anim);
       settings.dirty = true;
     }
-    ui.Text("Curve keys 0..1");
+    ui.Text("曲线关键点 0..1");
     (void)ui.SliderFloat("k0", &settings.anim.keys[0], 0.f, 1.f);
     (void)ui.SliderFloat("k1", &settings.anim.keys[1], 0.f, 1.f);
     (void)ui.SliderFloat("k2", &settings.anim.keys[2], 0.f, 1.f);
     (void)ui.SliderFloat("k3", &settings.anim.keys[3], 0.f, 1.f);
-    if (ui.Button("Lint graph", 220.f, 22.f)) {
+    if (ui.Button("校验图", 220.f, 22.f)) {
       cmd->lint = true;
     }
   }
   ui.EndWindow();
 
-  if (ui.BeginWindow("Debug", 280.f, 790.f, 280.f, 120.f)) {
-    const std::string n = "nodes " + std::to_string(world.roots().size());
+  if (ui.BeginWindow("调试", 570.f, 300.f, 280.f, 140.f)) {
+    const std::string n = "节点 " + std::to_string(world.roots().size());
     ui.Text(n.c_str());
     if (world.valid(sel.node)) {
       ui.Text(world.name(sel.node).c_str());
     } else {
-      ui.Text("(no selection)");
+      ui.Text("(未选中)");
     }
-    ui.Text(playing ? (paused ? "Play PAUSED" : "Play RUN") : "Edit");
-    const std::string fps_s = "fps " + std::to_string(static_cast<int>(fps + 0.5f));
+    ui.Text(playing ? (paused ? "播放 暂停" : "播放 运行") : "编辑");
+    const std::string fps_s = "帧率 " + std::to_string(static_cast<int>(fps + 0.5f));
     ui.Text(fps_s.c_str());
   }
   ui.EndWindow();

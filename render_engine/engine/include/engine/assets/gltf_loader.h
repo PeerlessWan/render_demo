@@ -48,4 +48,16 @@ struct GltfMeshAsset {
 Result<GltfMeshAsset> LoadGltfMeshFile(const std::filesystem::path& path,
                                        const IImageLoader& images);
 
+// Append src into dst with a world transform (positions + normals).
+void AppendTransformedMesh(GltfMeshAsset& dst, const GltfMeshAsset& src, const Mat4& world);
+
+struct GltfMeshInstance {
+  std::filesystem::path path;
+  Mat4 world = Mat4::Identity();
+};
+
+// Load many glTF/GLB parts and merge into one mesh (for modular CC0 kits / mini scenes).
+Result<GltfMeshAsset> AssembleGltfMeshes(const std::vector<GltfMeshInstance>& instances,
+                                         const IImageLoader& images);
+
 }  // namespace engine::assets

@@ -59,6 +59,8 @@ class InputSystem {
   const ActionMap& action_map() const { return actions_; }
 
   [[nodiscard]] bool key_down(Key key) const;
+  // True on the frame the key transitions down (uses keys_prev_ from EndFrame).
+  [[nodiscard]] bool key_pressed(Key key) const;
   [[nodiscard]] Vec2 mouse_delta() const { return mouse_delta_; }
   [[nodiscard]] float mouse_wheel() const { return mouse_wheel_; }
   [[nodiscard]] float axis(std::string_view action) const;

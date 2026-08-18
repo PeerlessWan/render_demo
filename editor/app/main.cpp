@@ -6,6 +6,7 @@
 #include "editing/settings.h"
 #include "editing/snap.h"
 #include "editing/terrain_edit.h"
+#include "editing/sprite_view.h"
 #include "editing/tile_edit.h"
 #include "editing/undo.h"
 #include "editing/viewport_layout.h"
@@ -224,7 +225,7 @@ void FillLayer(mc::World& world, editor::VoxelUndo& undo, int y, mc::Id id) {
 
 int main(int argc, char** argv) {
   engine::ApplicationDesc desc{};
-  desc.window.title = "editor — viewport";
+  desc.window.title = "编辑器 — 视口";
   bool start_voxel = false;
   ParseHeadless(argc, argv, desc, &start_voxel);
 
@@ -236,6 +237,7 @@ int main(int argc, char** argv) {
   auto& a = *app.value();
   a.set_look_with_lmb(false);
   a.set_look_with_rmb(true);
+  a.set_fly_requires_look(true);
   a.camera().position = {0.f, 2.5f, 6.f};
   a.camera().pitch = -0.25f;
   SeedScene(a.world());
@@ -345,9 +347,11 @@ int main(int argc, char** argv) {
       settings.dirty = true;
     }
     voxel.enabled = settings.workspace == 1;
-    editor::DrawVoxelUi(imgui, voxel, vox.world, &vcmd, playing && voxel.enabled);
+    if (voxel.enabled) {
+      editor::DrawVoxelUi(imgui, voxel, vox.world, &vcmd, playing && voxel.enabled);
+    }
     imgui.RefreshCapture();
-    app_ref.set_ui_want_capture(imgui.want_capture_mouse() || imgui.want_capture_keyboard());
+    app_ref.set_ui_want_capture(imgui.want_capture_mouse());
 
     if (cmd.place_prefab >= 0) {
       pending_prefab = cmd.place_prefab;
@@ -692,6 +696,91 @@ int main(int argc, char** argv) {
     k2_prev = k2;
     k3_prev = k3;
 
+    const bool view_2d = !settings.split_view && settings.viewport == 5;
+    const bool gizmo_busy = sel.dragging || sel.gizmo_axis != 0;
+    app_ref.set_fly_requires_look(true);
+    app_ref.set_fly_locomotion_enabled(!playing && !view_2d && !gizmo_busy && !voxel.enabled);
+    app_ref.set_look_with_rmb(!view_2d);
+
+    {
+      static int last_vp = 0;
+      if (settings.split_view) {
+        if (!app_ref.ui_want_capture() && (GetAsyncKeyState(VK_LBUTTON) & 0x8000)) {
+          editor::ViewportPane panes[4];
+          int n = 0;
+          editor::LayoutViewports(1, w, h, panes, &n);
+          settings.active_pane = editor::PaneAt(panes, n, snap.mouse_x, snap.mouse_y);
+        }
+        editor::ApplyPaneCamera(settings.active_pane, &app_ref.camera(), edit_cam);
+        app_ref.camera().ortho = false;
+        settings.viewport = settings.active_pane;
+      } else if (settings.viewport == 0) {
+        if (last_vp != 0) {
+          if (last_vp == 5) {
+            edit_cam.position.x = app_ref.camera().position.x;
+            edit_cam.position.z = app_ref.camera().position.z;
+          }
+          app_ref.camera() = edit_cam;
+          app_ref.camera().ortho = false;
+        } else if (!playing) {
+          edit_cam = app_ref.camera();
+          edit_cam.ortho = false;
+        }
+      } else if (settings.viewport == 1) {
+        app_ref.camera().position = {0.f, 18.f, 0.01f};
+        app_ref.camera().yaw = 0.f;
+        app_ref.camera().pitch = -1.55f;
+        app_ref.camera().ortho = false;
+      } else if (settings.viewport == 2) {
+        app_ref.camera().position = {0.f, 2.f, 16.f};
+        app_ref.camera().yaw = 0.f;
+        app_ref.camera().pitch = 0.f;
+        app_ref.camera().ortho = false;
+      } else if (settings.viewport == 3) {
+        app_ref.camera().position = {16.f, 2.f, 0.f};
+        app_ref.camera().yaw = -1.57f;
+        app_ref.camera().pitch = 0.f;
+        app_ref.camera().ortho = false;
+      } else if (settings.viewport == 4) {
+        app_ref.camera().ortho = false;
+        for (const auto& kv : meta) {
+          if (kv.second.active_camera && app_ref.world().valid(kv.first)) {
+            const auto p = app_ref.world().local_transform(kv.first).position;
+            app_ref.camera().position = p + engine::Vec3{0.f, 1.6f, 0.f};
+            if (const auto* cam = app_ref.world().camera(kv.first)) {
+              app_ref.camera().fovy_rad = cam->fovy_rad;
+            } else {
+              app_ref.camera().fovy_rad = kv.second.camera_fovy;
+            }
+            break;
+          }
+        }
+      } else if (settings.viewport == 5) {
+        if (last_vp != 5) {
+          app_ref.camera() = edit_cam;
+          editor::ApplyOrtho2DCamera(&app_ref.camera());
+        } else {
+          editor::ApplyOrtho2DCamera(&app_ref.camera());
+        }
+        if (!playing && !app_ref.ui_want_capture()) {
+          const float sp = app_ref.camera().ortho_height * app_ref.delta_time() * 0.55f;
+          if (snap.keys['W']) {
+            app_ref.camera().position.z -= sp;
+          }
+          if (snap.keys['S'] && !ctrl) {
+            app_ref.camera().position.z += sp;
+          }
+          if (snap.keys['A']) {
+            app_ref.camera().position.x -= sp;
+          }
+          if (snap.keys['D'] && !ctrl) {
+            app_ref.camera().position.x += sp;
+          }
+        }
+      }
+      last_vp = settings.viewport;
+    }
+
     auto store_origins = [&] {
       sel.drag_origins.clear();
       for (auto id : sel.All()) {
@@ -854,12 +943,14 @@ int main(int argc, char** argv) {
         const auto rot = app_ref.world().local_transform(sel.node).rotation;
         const bool local = settings.gizmo_local;
         const auto mode = static_cast<editor::GizmoMode>(settings.gizmo_mode);
+        const float gs = editor::GizmoWorldScale(app_ref.camera().position, origin);
+        const float glen = editor::kGizmoLength * gs;
+        const float ghit = editor::kGizmoHitRadius * gs;
         const auto hit_ax =
             mode == editor::GizmoMode::Rotate
-                ? editor::HitGizmoRotate(ray, origin, editor::kGizmoLength, editor::kGizmoHitRadius,
-                                         editor::kGizmoRingRadius, editor::kGizmoRingHit, rot, local)
-                : editor::HitGizmoAxes(ray, origin, editor::kGizmoLength, editor::kGizmoHitRadius, rot,
-                                       local);
+                ? editor::HitGizmoRotate(ray, origin, glen, ghit, editor::kGizmoRingRadius * gs,
+                                         editor::kGizmoRingHit * gs, rot, local)
+                : editor::HitGizmoAxes(ray, origin, glen, ghit, rot, local);
         if (hit_ax != editor::Axis::None) {
           sel.gizmo_axis = static_cast<int>(hit_ax);
           sel.axis_u0 = editor::AxisParamDir(ray, origin, editor::GizmoAxisDir(hit_ax, rot, local));
@@ -896,8 +987,9 @@ int main(int argc, char** argv) {
         auto pick_scene =
             engine::render::RenderSceneExtractor::Extract(live_world, pick_cam, ph > 1.f ? pw / ph : 1.f);
         std::vector<engine::render2d::Sprite> pick_sprites;
-        editor::ExpandTilesToSprites(tiles, &pick_sprites, settings.tile_atlas);
-        editor::CollectWorldSprites(live_world, &pick_sprites);
+        std::vector<engine::scene::NodeId> pick_sprite_nodes;
+        editor::CollectProjectedSprites(live_world, settings.tiles, pick_cam.view_proj_matrix(ph > 1.f ? pw / ph : 1.f),
+                                        pw, ph, &pick_sprites, &pick_sprite_nodes);
         const auto hit = engine::mixed::Pick(pick_scene.instances, pick_sprites, q);
         if (hit.kind == engine::mixed::PickHit::Kind::Scene3D) {
           if (ctrl) {
@@ -911,13 +1003,16 @@ int main(int argc, char** argv) {
           sel.plane_drag = false;
           store_origins();
         } else if (hit.kind == engine::mixed::PickHit::Kind::Sprite2D) {
-          std::vector<engine::scene::NodeId> nodes;
-          editor::CollectAllNodes(live_world, &nodes);
-          for (auto id : nodes) {
-            if (live_world.sprite(id)) {
-              sel.Set(id);
+          if (hit.sprite_index >= 0 &&
+              static_cast<std::size_t>(hit.sprite_index) < pick_sprite_nodes.size()) {
+            const auto id = pick_sprite_nodes[static_cast<std::size_t>(hit.sprite_index)];
+            if (live_world.valid(id) && live_world.sprite(id)) {
+              if (ctrl) {
+                sel.Toggle(id);
+              } else {
+                sel.Set(id);
+              }
               store_origins();
-              break;
             }
           }
         }
@@ -989,8 +1084,13 @@ int main(int argc, char** argv) {
     }
     if (!voxel.enabled && !playing && settings.show_gizmo) {
       const auto ids = sel.All();
+      float gs = 1.f;
+      if (!ids.empty() && live_world.valid(ids.front())) {
+        gs = editor::GizmoWorldScale(app_ref.camera().position,
+                                     live_world.local_transform(ids.front()).position);
+      }
       editor::DrawGizmos(app_ref.debug_draw(), live_world, ids,
-                         static_cast<editor::GizmoMode>(settings.gizmo_mode), settings.gizmo_local);
+                         static_cast<editor::GizmoMode>(settings.gizmo_mode), settings.gizmo_local, gs);
     }
     if (!voxel.enabled && settings.show_bounds) {
       live_world.UpdateTransforms();
@@ -999,52 +1099,6 @@ int main(int argc, char** argv) {
         editor::CollectAllNodes(live_world, &ids);
       }
       editor::DrawBounds(app_ref.debug_draw(), live_world, ids);
-    }
-
-    {
-      static int last_vp = 0;
-      if (settings.split_view) {
-        if (!app_ref.ui_want_capture() && (GetAsyncKeyState(VK_LBUTTON) & 0x8000)) {
-          editor::ViewportPane panes[4];
-          int n = 0;
-          editor::LayoutViewports(1, w, h, panes, &n);
-          settings.active_pane = editor::PaneAt(panes, n, snap.mouse_x, snap.mouse_y);
-        }
-        editor::ApplyPaneCamera(settings.active_pane, &app_ref.camera(), edit_cam);
-        settings.viewport = settings.active_pane;
-      } else if (settings.viewport == 0) {
-        if (last_vp != 0) {
-          app_ref.camera() = edit_cam;
-        } else if (!playing) {
-          edit_cam = app_ref.camera();
-        }
-      } else if (settings.viewport == 1) {
-        app_ref.camera().position = {0.f, 18.f, 0.01f};
-        app_ref.camera().yaw = 0.f;
-        app_ref.camera().pitch = -1.55f;
-      } else if (settings.viewport == 2) {
-        app_ref.camera().position = {0.f, 2.f, 16.f};
-        app_ref.camera().yaw = 0.f;
-        app_ref.camera().pitch = 0.f;
-      } else if (settings.viewport == 3) {
-        app_ref.camera().position = {16.f, 2.f, 0.f};
-        app_ref.camera().yaw = -1.57f;
-        app_ref.camera().pitch = 0.f;
-      } else if (settings.viewport == 4) {
-        for (const auto& kv : meta) {
-          if (kv.second.active_camera && app_ref.world().valid(kv.first)) {
-            const auto p = app_ref.world().local_transform(kv.first).position;
-            app_ref.camera().position = p + engine::Vec3{0.f, 1.6f, 0.f};
-            if (const auto* cam = app_ref.world().camera(kv.first)) {
-              app_ref.camera().fovy_rad = cam->fovy_rad;
-            } else {
-              app_ref.camera().fovy_rad = kv.second.camera_fovy;
-            }
-            break;
-          }
-        }
-      }
-      last_vp = settings.viewport;
     }
 
     {
@@ -1214,16 +1268,17 @@ int main(int argc, char** argv) {
       voxel_hud_hits = std::move(hud_hits);
     }
     live_world.UpdateTransforms();
-    std::vector<engine::render2d::Sprite> tile_sprites;
-    editor::ExpandTilesToSprites(tiles, &tile_sprites, settings.tile_atlas);
-    editor::CollectWorldSprites(live_world, &tile_sprites);
     auto submit_view = [&](const engine::render::Camera& cam, float asp,
                            const engine::render::RenderSystem::ColorViewport* vp,
                            const std::vector<engine::rhi::ScreenQuad>* quads) {
       auto draw_scene = engine::render::RenderSceneExtractor::Extract(live_world, cam, asp);
+      const float vw = vp && vp->enabled ? vp->w : w;
+      const float vh = vp && vp->enabled ? vp->h : h;
+      std::vector<engine::render2d::Sprite> spr;
+      editor::CollectProjectedSprites(live_world, settings.tiles, cam.view_proj_matrix(asp), vw, vh, &spr,
+                                      nullptr);
       if (auto st = render.DrawFrame(app_ref.device(), draw_scene, env, asp,
-                                     tile_sprites.empty() ? nullptr : &tile_sprites, quads,
-                                     &app_ref.debug_draw(), vp);
+                                     spr.empty() ? nullptr : &spr, quads, &app_ref.debug_draw(), vp);
           !st) {
         engine::LogError(st.message());
       }
@@ -1264,7 +1319,9 @@ int main(int argc, char** argv) {
       preview.color.a = 1.f;
       (void)app_ref.device().DrawScreenQuads(std::span<const engine::rhi::ScreenQuad>(&preview, 1));
     }
-    (void)imgui.Render(app_ref.device());
+    if (auto st = imgui.Render(app_ref.device()); !st) {
+      engine::LogError("ImmediateUi: " + st.message());
+    }
   });
   return status ? 0 : 1;
 }

@@ -1,50 +1,61 @@
-# Optional: fetch a larger CC0 heightmap for Mega-W10 ChunkStream demos.
-# No passwords / secrets. Review upstream license before redistributing.
+# Optional: refresh / replace the large-terrain heightmap (Mega-W10 / ADR 0037).
+# No passwords / secrets.
 #
-# Usage (from repo root or this folder):
+# Usage:
 #   powershell -ExecutionPolicy Bypass -File content/scenes/large_terrain/download_large_terrain.ps1
 #
-# Default target: this directory. Override with -OutDir.
+# Default: regenerates in-repo CC0 procedural heightmap_512.png (no network required).
+# Pass -FetchUrl to try downloading an alternate grayscale PNG (verify license yourself).
 
 param(
   [string]$OutDir = $PSScriptRoot,
-  # Example public-domain / CC0-style height sources (verify license on the page before use):
-  # - USGS / public domain DEMs (often GeoTIFF; convert offline)
-  # - Poly Haven / community CC0 height packs when available
-  # Placeholder URL documents the workflow; replace with a real CC0 direct link you trust.
-  [string]$Url = "https://cdn.jsdelivr.net/gh/mevedia/terrain-heightmaps@master/README.md"
+  [string]$FetchUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+$outPng = Join-Path $OutDir "heightmap_512.png"
 
-Write-Host "OutDir: $OutDir"
-Write-Host "This script documents how to fetch larger CC0 heightmaps."
-Write-Host "It does NOT embed credentials. Prefer maps <= a few MB for learn samples;"
-Write-Host "keep multi-MB originals gitignored and load via LoadHeightmapPng."
-Write-Host ""
-Write-Host "Suggested workflow:"
-Write-Host "  1. Pick a CC0/public-domain heightmap (PNG 16-bit or 8-bit grayscale, or float raw)."
-Write-Host "  2. Download with Invoke-WebRequest (example below)."
-Write-Host "  3. Place as heightmap_2k.png / heightmap_4k.png next to heightmap_512.png."
-Write-Host "  4. Point sample_38_large_terrain / Sandbox at the new path."
-Write-Host ""
-
-$destReadme = Join-Path $OutDir "UPSTREAM_FETCH_NOTE.txt"
-@"
-Fetched/attempted URL: $Url
-Date: $(Get-Date -Format o)
-Notes: Replace Url with a direct CC0 PNG/TIFF link. Convert GeoTIFF offline if needed.
-Engine loader: engine::terrain::LoadHeightmapPng (8-bit RGBA/gray via stb_image).
-"@ | Set-Content -Path $destReadme -Encoding UTF8
-
-try {
-  $probe = Join-Path $OutDir "_fetch_probe.tmp"
-  Invoke-WebRequest -Uri $Url -OutFile $probe -UseBasicParsing -TimeoutSec 30
-  Write-Host "Probe download OK -> $probe (safe to delete; not a heightmap)."
-} catch {
-  Write-Warning "Network fetch failed or URL is documentation-only: $($_.Exception.Message)"
-  Write-Host "You can still use the in-repo heightmap_512.png (CC0 generated)."
+if ($FetchUrl -ne "") {
+  Write-Host "Fetching $FetchUrl ..."
+  $tmp = Join-Path $OutDir "_heightmap_fetch.tmp"
+  Invoke-WebRequest -Uri $FetchUrl -OutFile $tmp -UseBasicParsing -TimeoutSec 60
+  Move-Item -Force $tmp $outPng
+  Write-Host "Wrote $outPng"
+  exit 0
 }
 
-Write-Host "Done."
+# Procedural CC0 generator (same intent as README): multi-peak grayscale PNG.
+$py = @"
+import math, struct, zlib
+from pathlib import Path
+W=H=512
+peaks=[(0.28,0.32,0.55,0.12),(0.62,0.40,0.70,0.15),(0.45,0.68,0.48,0.18),(0.18,0.72,0.35,0.10),(0.78,0.75,0.42,0.11),(0.52,0.22,0.30,0.20)]
+rows=[]
+for y in range(H):
+  row=[]
+  for x in range(W):
+    u=x/(W-1); v=y/(H-1)
+    h=0.08
+    for cx,cy,amp,sig in peaks:
+      d2=(u-cx)**2+(v-cy)**2
+      h+=amp*math.exp(-d2/(2*sig*sig))
+    h+=0.12*math.sin(u*9.0)*math.sin(v*7.0+0.4)
+    edge=min(u,v,1-u,1-v)
+    h*=min(1.0, edge*6.0)
+    h=max(0.0,min(1.0,h))
+    g=int(h*255+0.5)
+    row.append(bytes((g,g,g,255)))
+  rows.append(b''.join(row))
+def chunk(tag, data):
+  return struct.pack('>I', len(data))+tag+data+struct.pack('>I', zlib.crc32(tag+data)&0xffffffff)
+raw=b''.join(b'\x00'+r for r in rows)
+png=b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR', struct.pack('>IIBBBBB', W,H,8,6,0,0,0))+chunk(b'IDAT', zlib.compress(raw,9))+chunk(b'IEND', b'')
+Path(r'$($outPng -replace '\\','/')').write_bytes(png)
+print('wrote', Path(r'$($outPng -replace '\\','/')'), len(png))
+"@
+$tmpPy = Join-Path $OutDir "_gen_hm.py"
+Set-Content -Path $tmpPy -Value $py -Encoding UTF8
+python $tmpPy
+Remove-Item -Force $tmpPy
+Write-Host "Done (CC0 procedural heightmap_512.png)."

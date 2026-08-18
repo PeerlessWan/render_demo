@@ -6,9 +6,9 @@
 
 | ID | 功能 | 说明 | 状态 |
 |---|---|---|---|
-| EDVP01 | 3D/2D 视口 | 经引擎 Present；质量档可降以保编辑流畅 | 已闭环 |
-| EDVP02 | 编辑相机 | 飞行/轨道；与游戏相机分离 | 已闭环 |
-| EDVP03 | 网格/Gizmo | 平移旋转缩放；吸附可选 | 已闭环（轴/环；Local/World；无轴时 Y 平面拖） |
+| EDVP01 | 3D/2D 视口 | 3D 透视 + 2D 正交（Viewport「2D」：俯视 XZ、滚轮改 ortho_height、平面平移）；经引擎 Present | 已闭环 |
+| EDVP02 | 编辑相机 | 右键观察；右键+WASD 飞；中键平移；滚轮缩放；与游戏相机分离 | 已闭环 |
+| EDVP03 | 网格/Gizmo | 平移旋转缩放；轴长/命中随相机距离放大；吸附可选 | 已闭环（轴/环；Local/World；无轴时 Y 平面拖） |
 | EDVP04 | 选中高亮 | 轮廓或 DebugDraw；复用引擎拣选能力（对齐 M20） | 已闭环 |
 | EDVP05 | 多视口 | Split 勾选后同一帧 Persp/Top/Front/Side 四格提交；点击落到对应格 | 已闭环 |
 
@@ -17,7 +17,7 @@
 | ID | 功能 | 说明 | 状态 |
 |---|---|---|---|
 | EDHI01 | 场景树 | 显隐、重父级、搜索 | 已闭环（DnD 重父级 / 搜索 / 改名 / Ctrl 多选） |
-| EDHI02 | 检视器 | 变换、灯光（kind/color/世界坐标）、相机 fovy、碰撞、Sprite 绘制与点选、材质 Combo 来自 Manifest AssetId | 已闭环 |
+| EDHI02 | 检视器 | 变换（按轴改、松手 Undo）、灯光（kind/color/世界坐标）、相机 fovy、碰撞、Sprite 绘制与点选、材质 Combo 来自 Manifest AssetId | 已闭环 |
 | EDHI03 | 创建/删除节点 | Cube/Empty/Ground/Player/Light/Camera/Collider/Sprite | 已闭环 |
 | EDHI04 | 脚本组件字段 | `--@export` 注入 Lua 全局 + persist | 已闭环 |
 | EDHI05 | Prefab 编辑 | Place=`InstantiateNested`；override 覆盖 TRS/visible/material/light/fields；Apply 写回源；Revert 清 override | 已闭环 |
@@ -48,7 +48,7 @@
 | Prefab | schema 字段 override + Apply/Revert + 嵌套 Place |
 | 动画 | 可增删状态/转移；4 键曲线 `SampleCurve` 预览；驱动选中 `AnimPlayer` |
 | 地形 | Raise/Lower/Smooth；Undo；随场景存盘；视口 Upload |
-| Tilemap | 图集路径 + GID；Sprite 绘制与点选 |
+| Tilemap | 图集路径 + GID；世界坐标投影为 ScreenQuad；Sprite/Tile 可见可点选 |
 | Bake | 读当前场景灯 CPU 烘 lightmap 并 Upload；失败 isError |
 | Lint | 内置 SceneDocument v3 校验 + manifest 依赖图 |
 | 热重载 | 贴图 UploadLitAlbedoRgba + 地形网格 Upload；脚本 ReloadPath |

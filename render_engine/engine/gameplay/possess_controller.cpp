@@ -8,8 +8,9 @@ namespace {
 
 constexpr float kPi = 3.14159265f;
 
+// Match Camera flat axes (FromEulerYxz(yaw,0).Rotate) so walk follows look yaw.
 Vec3 YawForward(float yaw) {
-  return Normalize(Vec3{std::sin(yaw), 0.f, std::cos(yaw)});
+  return Normalize(Vec3{-std::sin(yaw), 0.f, -std::cos(yaw)});
 }
 
 Vec3 YawRight(float yaw) {
@@ -86,12 +87,25 @@ Vec3 PossessController::CapsuleCenter() const {
   return Vec3{position.x, CapsuleCenterY(), position.z};
 }
 
+Vec3 PossessController::FirstPersonCameraPosition() const {
+  return Vec3{position.x, position.y + params.capsule_height * params.eye_height_frac,
+              position.z};
+}
+
 Vec3 PossessController::ThirdPersonCameraPosition(float yaw) const {
-  const Vec3 f = YawForward(yaw);
-  const Vec3 r = YawRight(yaw);
   const Vec3& o = params.camera_offset;
+  const float pitch = std::atan2(-std::abs(o.y), (std::max)(std::abs(o.z), 1e-3f));
+  return ThirdPersonCameraPosition(yaw, pitch);
+}
+
+Vec3 PossessController::ThirdPersonCameraPosition(float yaw, float pitch) const {
   const Vec3 look = ThirdPersonLookAt();
-  return look + r * o.x + Vec3{0.f, o.y, 0.f} + f * o.z;
+  const Quat q = Quat::FromEulerYxz(yaw, pitch, 0.f);
+  const Vec3 forward = q.Rotate(Vec3{0.f, 0.f, -1.f});
+  const Vec3 right = q.Rotate(Vec3{1.f, 0.f, 0.f});
+  const Vec3& o = params.camera_offset;
+  const float dist = std::sqrt(o.y * o.y + o.z * o.z);
+  return look - forward * (std::max)(dist, 0.5f) + right * o.x;
 }
 
 Vec3 PossessController::ThirdPersonLookAt() const {
@@ -148,8 +162,8 @@ void PossessController::Step(float dt, const PossessInput& input) {
   }
   dt = std::max(0.f, dt);
 
-  const Vec3 forward = YawForward(input.yaw);
-  const Vec3 right = YawRight(input.yaw);
+  const Vec3 forward = YawForward(input.move_yaw);
+  const Vec3 right = YawRight(input.move_yaw);
   Vec3 wish = right * input.move_x + forward * input.move_z;
   const float wish_len = wish.length();
   if (wish_len > 1e-4f) {

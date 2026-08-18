@@ -14,6 +14,7 @@ add_executable(editor_app
   editing/viewport_layout.cpp
   editing/terrain_edit.cpp
   editing/tile_edit.cpp
+  editing/sprite_view.cpp
   editing/anim_edit.cpp
   editing/light_bake.cpp
   io/scene_io.cpp
@@ -69,6 +70,7 @@ add_executable(editor_smoke_tests
   editing/viewport_layout.cpp
   editing/terrain_edit.cpp
   editing/tile_edit.cpp
+  editing/sprite_view.cpp
   editing/anim_edit.cpp
   editing/light_bake.cpp
   io/scene_io.cpp

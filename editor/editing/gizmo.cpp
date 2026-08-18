@@ -57,35 +57,41 @@ void AddRing(engine::debug::DebugDraw& draw, const engine::Vec3& center, const e
 }  // namespace
 
 void DrawGizmo(engine::debug::DebugDraw& draw, const engine::scene::World& world,
-               engine::scene::NodeId node, GizmoMode mode, bool local) {
+               engine::scene::NodeId node, GizmoMode mode, bool local, float scale) {
   if (!world.valid(node)) {
     return;
   }
+  const float s = std::clamp(scale, 0.35f, 12.f);
+  const float len = kGizmoLength * s;
   const auto& t = world.local_transform(node);
   engine::Aabb box;
   box.min = t.position + engine::Vec3{-0.5f, 0.f, -0.5f};
   box.max = t.position + engine::Vec3{0.5f, 1.f, 0.5f};
   draw.AddAabb(box, {1.f, 0.85f, 0.2f, 1.f});
   const auto p = t.position;
-  const engine::Vec3 x = GizmoAxisDir(Axis::X, t.rotation, local) * kGizmoLength;
-  const engine::Vec3 y = GizmoAxisDir(Axis::Y, t.rotation, local) * kGizmoLength;
-  const engine::Vec3 z = GizmoAxisDir(Axis::Z, t.rotation, local) * kGizmoLength;
-  AddThickLine(draw, p, p + x, {0.f, 0.03f, 0.f}, {1.f, 0.2f, 0.2f, 1.f});
-  AddThickLine(draw, p, p + y, {0.03f, 0.f, 0.f}, {0.2f, 1.f, 0.2f, 1.f});
-  AddThickLine(draw, p, p + z, {0.03f, 0.f, 0.f}, {0.3f, 0.5f, 1.f, 1.f});
+  const engine::Vec3 x = GizmoAxisDir(Axis::X, t.rotation, local) * len;
+  const engine::Vec3 y = GizmoAxisDir(Axis::Y, t.rotation, local) * len;
+  const engine::Vec3 z = GizmoAxisDir(Axis::Z, t.rotation, local) * len;
+  const float thick = 0.03f * s;
+  AddThickLine(draw, p, p + x, {0.f, thick, 0.f}, {1.f, 0.2f, 0.2f, 1.f});
+  AddThickLine(draw, p, p + y, {thick, 0.f, 0.f}, {0.2f, 1.f, 0.2f, 1.f});
+  AddThickLine(draw, p, p + z, {thick, 0.f, 0.f}, {0.3f, 0.5f, 1.f, 1.f});
   if (mode == GizmoMode::Rotate) {
-    AddRing(draw, p, GizmoAxisDir(Axis::X, t.rotation, local), kGizmoRingRadius, {1.f, 0.35f, 0.35f, 1.f});
-    AddRing(draw, p, GizmoAxisDir(Axis::Y, t.rotation, local), kGizmoRingRadius, {0.35f, 1.f, 0.35f, 1.f});
-    AddRing(draw, p, GizmoAxisDir(Axis::Z, t.rotation, local), kGizmoRingRadius, {0.4f, 0.55f, 1.f, 1.f});
+    AddRing(draw, p, GizmoAxisDir(Axis::X, t.rotation, local), kGizmoRingRadius * s,
+            {1.f, 0.35f, 0.35f, 1.f});
+    AddRing(draw, p, GizmoAxisDir(Axis::Y, t.rotation, local), kGizmoRingRadius * s,
+            {0.35f, 1.f, 0.35f, 1.f});
+    AddRing(draw, p, GizmoAxisDir(Axis::Z, t.rotation, local), kGizmoRingRadius * s,
+            {0.4f, 0.55f, 1.f, 1.f});
   }
 }
 
 void DrawGizmos(engine::debug::DebugDraw& draw, const engine::scene::World& world,
-                std::span<const engine::scene::NodeId> nodes, GizmoMode mode, bool local) {
+                std::span<const engine::scene::NodeId> nodes, GizmoMode mode, bool local, float scale) {
   if (nodes.empty()) {
     return;
   }
-  DrawGizmo(draw, world, nodes.front(), mode, local);
+  DrawGizmo(draw, world, nodes.front(), mode, local, scale);
   for (std::size_t i = 1; i < nodes.size(); ++i) {
     if (!world.valid(nodes[i])) {
       continue;
@@ -96,6 +102,11 @@ void DrawGizmos(engine::debug::DebugDraw& draw, const engine::scene::World& worl
     box.max = t.position + engine::Vec3{0.4f, 0.8f, 0.4f};
     draw.AddAabb(box, {1.f, 0.85f, 0.2f, 0.6f});
   }
+}
+
+float GizmoWorldScale(const engine::Vec3& camera, const engine::Vec3& pivot) {
+  const float d = (camera - pivot).length();
+  return std::clamp(d * 0.12f, 0.6f, 8.f);
 }
 
 void DrawBounds(engine::debug::DebugDraw& draw, const engine::scene::World& world,

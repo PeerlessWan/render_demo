@@ -4,7 +4,9 @@
 
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <string>
+#include <vector>
 
 #if defined(ENGINE_WITH_CGLTF) && ENGINE_WITH_CGLTF
 #define CGLTF_IMPLEMENTATION
@@ -23,7 +25,8 @@ namespace {
 
 #if defined(ENGINE_WITH_CGLTF) && ENGINE_WITH_CGLTF
 
-Result<ImageRgba8> DecodeImageView(const cgltf_image& image, const IImageLoader& images) {
+Result<ImageRgba8> DecodeImageView(const cgltf_image& image, const IImageLoader& images,
+                                   const std::filesystem::path& gltf_dir) {
   if (image.buffer_view && image.buffer_view->buffer && image.buffer_view->buffer->data) {
     const auto* bytes = static_cast<const std::uint8_t*>(image.buffer_view->buffer->data) +
                         image.buffer_view->offset;
@@ -31,8 +34,14 @@ Result<ImageRgba8> DecodeImageView(const cgltf_image& image, const IImageLoader&
     return images.LoadMemory(std::span<const std::uint8_t>(bytes, size));
   }
   if (image.uri && std::strncmp(image.uri, "data:", 5) == 0) {
-    // Rare for DamagedHelmet GLB; skip data-URI here.
     return Result<ImageRgba8>::Fail("gltf data-URI images not supported");
+  }
+  if (image.uri && image.uri[0] != '\0') {
+    const auto path = gltf_dir / image.uri;
+    if (auto img = images.LoadFile(path)) {
+      return img;
+    }
+    return Result<ImageRgba8>::Fail(std::string("gltf image uri load failed: ") + image.uri);
   }
   return Result<ImageRgba8>::Fail("gltf image has no buffer view");
 }
@@ -183,10 +192,11 @@ Result<GltfMeshAsset> LoadWithCgltf(const std::filesystem::path& path, const IIm
     }
   }
 
+  const std::filesystem::path gltf_dir = path.parent_path();
   if (prim.material) {
     const cgltf_pbr_metallic_roughness& pbr = prim.material->pbr_metallic_roughness;
     if (pbr.base_color_texture.texture && pbr.base_color_texture.texture->image) {
-      if (auto img = DecodeImageView(*pbr.base_color_texture.texture->image, images)) {
+      if (auto img = DecodeImageView(*pbr.base_color_texture.texture->image, images, gltf_dir)) {
         out.albedo = std::move(img.value());
         out.has_albedo = true;
       } else {
@@ -195,7 +205,8 @@ Result<GltfMeshAsset> LoadWithCgltf(const std::filesystem::path& path, const IIm
     }
     if (pbr.metallic_roughness_texture.texture &&
         pbr.metallic_roughness_texture.texture->image) {
-      if (auto img = DecodeImageView(*pbr.metallic_roughness_texture.texture->image, images)) {
+      if (auto img =
+              DecodeImageView(*pbr.metallic_roughness_texture.texture->image, images, gltf_dir)) {
         out.orm = MrToOrm(img.value());
         out.has_orm = true;
       } else {
@@ -279,6 +290,56 @@ Result<GltfMeshAsset> LoadGltfMeshFile(const std::filesystem::path& path,
   (void)images;
   return Result<GltfMeshAsset>::Fail("ENGINE_WITH_CGLTF=0");
 #endif
+}
+
+void AppendTransformedMesh(GltfMeshAsset& dst, const GltfMeshAsset& src, const Mat4& world) {
+  const std::uint32_t base = static_cast<std::uint32_t>(dst.vertices.size());
+  dst.vertices.reserve(dst.vertices.size() + src.vertices.size());
+  for (const auto& sv : src.vertices) {
+    MeshVertex v = sv;
+    const Vec3 p = world.TransformPoint(Vec3{sv.px, sv.py, sv.pz});
+    const Vec3 n = Normalize(world.TransformVector(Vec3{sv.nx, sv.ny, sv.nz}));
+    v.px = p.x;
+    v.py = p.y;
+    v.pz = p.z;
+    v.nx = n.x;
+    v.ny = n.y;
+    v.nz = n.z;
+    dst.vertices.push_back(v);
+  }
+  dst.indices.reserve(dst.indices.size() + src.indices.size());
+  for (const auto idx : src.indices) {
+    dst.indices.push_back(base + idx);
+  }
+  if (!dst.has_albedo && src.has_albedo) {
+    dst.albedo = src.albedo;
+    dst.has_albedo = true;
+  }
+  if (!dst.has_orm && src.has_orm) {
+    dst.orm = src.orm;
+    dst.has_orm = true;
+  }
+}
+
+Result<GltfMeshAsset> AssembleGltfMeshes(const std::vector<GltfMeshInstance>& instances,
+                                         const IImageLoader& images) {
+  GltfMeshAsset out;
+  for (const auto& inst : instances) {
+    auto loaded = LoadGltfMeshFile(inst.path, images);
+    if (!loaded) {
+      return Result<GltfMeshAsset>::Fail(std::string("AssembleGltfMeshes: ") +
+                                         loaded.status().message() + " (" +
+                                         inst.path.string() + ")");
+    }
+    AppendTransformedMesh(out, loaded.value(), inst.world);
+  }
+  if (out.vertices.empty() || out.indices.empty()) {
+    return Result<GltfMeshAsset>::Fail("AssembleGltfMeshes: empty");
+  }
+  LogInfo("Assembled glTF scene: " + std::to_string(out.vertices.size()) + " verts, " +
+          std::to_string(out.indices.size()) + " indices from " +
+          std::to_string(instances.size()) + " parts");
+  return Result<GltfMeshAsset>::Ok(std::move(out));
 }
 
 }  // namespace engine::assets

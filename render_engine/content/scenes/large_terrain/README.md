@@ -4,11 +4,14 @@
 
 | 文件 | 说明 |
 |---|---|
-| `heightmap_512.png` | **本仓自带**：512×512 灰度 PNG，程序化多山丘/山脊；约 72KB |
+| `heightmap_512.png` | **本仓自带**：512×512 灰度 PNG，程序化多山丘/山脊（CC0）；约 50KB |
 | `LICENSE.txt` | **CC0**（生成物，无第三方原图） |
-| `download_large_terrain.ps1` | 可选：拉取更大（2k–4k）CC0 高度图说明与命令（**不入仓密码**） |
+| `download_large_terrain.ps1` | 本地再生成；或 `-FetchUrl` 拉取你信任的灰度 PNG |
 
-生成方式：仓库内一次性 Python 程序化噪声（多高斯峰 + 脊线调制），非扫描真实地形。
+## Sandbox
+
+F1 → **Large terrain heightmap**：加载本图、上传可见地形网格、相机移到俯瞰位置。
+此前若只勾选却看不到场景，是因为旧逻辑只改了高度采样、没有画网格，且 PNG 曾漏提交。
 
 ## 引擎用法
 

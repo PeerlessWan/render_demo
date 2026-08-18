@@ -15,12 +15,15 @@ enum class GizmoMode { Move = 0, Rotate = 1, Scale = 2 };
 inline constexpr float kGizmoLength = 1.4f;
 inline constexpr float kGizmoHitRadius = 0.18f;
 
+[[nodiscard]] float GizmoWorldScale(const engine::Vec3& camera, const engine::Vec3& pivot);
+
 void DrawGizmo(engine::debug::DebugDraw& draw, const engine::scene::World& world,
-               engine::scene::NodeId node, GizmoMode mode = GizmoMode::Move, bool local = false);
+               engine::scene::NodeId node, GizmoMode mode = GizmoMode::Move, bool local = false,
+               float scale = 1.f);
 
 void DrawGizmos(engine::debug::DebugDraw& draw, const engine::scene::World& world,
                 std::span<const engine::scene::NodeId> nodes, GizmoMode mode = GizmoMode::Move,
-                bool local = false);
+                bool local = false, float scale = 1.f);
 
 void DrawBounds(engine::debug::DebugDraw& draw, const engine::scene::World& world,
                 std::span<const engine::scene::NodeId> nodes);

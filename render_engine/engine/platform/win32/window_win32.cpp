@@ -123,10 +123,30 @@ class WindowWin32 final : public Window {
     } else if (button == 2) {
       input_.mouse_middle = down;
     }
-    // Avoid first-frame jump when starting a drag.
+    // Keep client coords in sync: button messages can arrive without a prior MOVE.
+    if (hwnd_) {
+      POINT pt{};
+      if (GetCursorPos(&pt) && ScreenToClient(hwnd_, &pt)) {
+        input_.mouse_x = static_cast<float>(pt.x);
+        input_.mouse_y = static_cast<float>(pt.y);
+        last_mouse_x_ = pt.x;
+        last_mouse_y_ = pt.y;
+        have_mouse_ = true;
+      }
+    }
     if (down) {
       input_.mouse_dx = 0.f;
       input_.mouse_dy = 0.f;
+      if (hwnd_) {
+        SetCapture(hwnd_);
+        button_capture_ = true;
+      }
+    } else if (button_capture_ && !input_.mouse_left && !input_.mouse_right &&
+               !input_.mouse_middle) {
+      button_capture_ = false;
+      if (hwnd_ && GetCapture() == hwnd_ && !soft_captured_ && !cursor_locked_) {
+        ReleaseCapture();
+      }
     }
   }
 
@@ -151,7 +171,7 @@ class WindowWin32 final : public Window {
     soft_captured_ = captured;
     if (captured) {
       SetCapture(hwnd_);
-    } else if (GetCapture() == hwnd_ && !cursor_locked_) {
+    } else if (GetCapture() == hwnd_ && !cursor_locked_ && !button_capture_) {
       ReleaseCapture();
     }
   }
@@ -194,6 +214,7 @@ class WindowWin32 final : public Window {
   bool have_mouse_ = false;
   bool soft_captured_ = false;
   bool cursor_locked_ = false;
+  bool button_capture_ = false;
 };
 
 WindowWin32* WindowFromHwnd(HWND hwnd) {

@@ -3144,6 +3144,12 @@ class D3D12Device final : public IDevice {
     command_list_->IASetVertexBuffers(0, 1, &vbv);
     command_list_->IASetIndexBuffer(&ibv);
 
+    D3D12_VIEWPORT ui_vp{};
+    ui_vp.Width = static_cast<float>(width_);
+    ui_vp.Height = static_cast<float>(height_);
+    ui_vp.MaxDepth = 1.f;
+    command_list_->RSSetViewports(1, &ui_vp);
+
     const D3D12_RECT full_scissor{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
     const float vp_w = static_cast<float>(width_);
     const float vp_h = static_cast<float>(height_);

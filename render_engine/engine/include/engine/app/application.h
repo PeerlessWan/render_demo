@@ -88,6 +88,15 @@ class Application {
   }
   // If true, hide+clip cursor while dragging look (FPS). Default false = visible drag.
   void set_hide_cursor_on_look(bool v) { hide_cursor_on_look_ = v; }
+  // FPS/possess: mouse look without holding buttons while pointer is locked.
+  void set_always_look(bool v) { always_look_ = v; }
+  [[nodiscard]] bool always_look() const { return always_look_; }
+  // Esc unlocks pointer when always_look (does not quit). Call RelockCursor() to resume.
+  void set_cursor_unlocked(bool v) { cursor_unlocked_ = v; }
+  [[nodiscard]] bool cursor_unlocked() const { return cursor_unlocked_; }
+  void RelockCursor() { cursor_unlocked_ = false; }
+  // Pitch clamp for AddYawPitch (radians). Defaults match Camera (±~86°).
+  void set_look_pitch_limit(float rad) { look_pitch_limit_ = rad; }
 
   [[nodiscard]] const ColorRgba& clear_color() const { return clear_color_; }
   void set_clear_color(const ColorRgba& color) { clear_color_ = color; }
@@ -131,6 +140,9 @@ class Application {
   bool look_with_rmb_ = true;
   bool look_requires_rmb_ = false;
   bool hide_cursor_on_look_ = false;
+  bool always_look_ = false;
+  bool cursor_unlocked_ = false;
+  float look_pitch_limit_ = 1.5f;
   bool was_looking_ = false;
 };
 

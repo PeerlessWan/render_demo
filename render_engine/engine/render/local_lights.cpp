@@ -253,6 +253,14 @@ material::PbrMaterial ResolveMeshMaterial(std::string_view mesh_id) {
     m.metallic = 0.1f;
     m.mesh_slot = 3;
     m.uv_scale = 1.f;
+  } else if (mesh_id == "suburb") {
+    m.base_color = {1.f, 1.f, 1.f, 1.f};
+    m.roughness = 0.75f;
+    m.metallic = 0.05f;
+    m.albedo_tex = "scenes/suburb/models/Textures/colormap.png";
+    m.mesh_slot = 6;
+    m.tex_slot = 2;
+    m.uv_scale = 1.f;
   } else {
     m.base_color = {1.f, 1.f, 1.f, 1.f};
     m.roughness = 0.4f;

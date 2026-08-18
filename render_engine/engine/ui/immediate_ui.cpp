@@ -61,6 +61,7 @@ Status ImmediateUi::Init(rhi::IDevice& device, const ImmediateUiDesc& desc) {
   ImGui::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+  io.ConfigNavCaptureKeyboard = false;  // don't claim all keys just because a panel is focused
   io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
   io.IniFilename = nullptr;
   io.LogFilename = nullptr;

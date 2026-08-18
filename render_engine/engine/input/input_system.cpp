@@ -105,6 +105,11 @@ bool InputSystem::key_down(Key key) const {
   return i < keys_.size() && keys_[i];
 }
 
+bool InputSystem::key_pressed(Key key) const {
+  const auto i = static_cast<std::size_t>(key);
+  return i < keys_.size() && keys_[i] && !keys_prev_[i];
+}
+
 void InputSystem::InstallFlyCameraDefaults() {
   actions_.Bind("MoveX", "Axis:KeyAD+Pad0");
   actions_.Bind("MoveY", "Axis:KeyQE");

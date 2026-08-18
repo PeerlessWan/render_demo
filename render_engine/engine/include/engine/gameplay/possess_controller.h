@@ -25,15 +25,17 @@ struct PossessParams {
   float jump_speed = 6.5f;
   float gravity = 18.f;
   float ground_skin = 0.04f;
-  // Third-person camera: offset in character yaw space (back + up).
-  Vec3 camera_offset{-0.f, 1.55f, -3.2f};
+  // Eye height fraction of capsule_height (first-person).
+  float eye_height_frac = 0.92f;
+  // Third-person camera: orbit distance from look-at (back + up baked into length).
+  Vec3 camera_offset{0.f, 1.55f, -3.2f};
 };
 
 struct PossessInput {
-  float move_x = 0.f;  // strafe (-1..1), world XZ relative to yaw
+  float move_x = 0.f;  // strafe (-1..1), XZ relative to move_yaw (camera)
   float move_z = 0.f;  // forward (-1..1)
   bool jump = false;
-  float yaw = 0.f;  // radians; facing / camera orbit yaw
+  float move_yaw = 0.f;  // radians; WASD basis (camera yaw)
 };
 
 struct CapsuleCharacterMesh {
@@ -56,16 +58,22 @@ class PossessController {
   Vec3 position{0.f, 0.f, 0.f};  // feet / capsule bottom contact point
   Vec3 velocity{};
   bool on_ground = false;
+  // Body facing (visual / RMB sync). Independent of camera yaw in third-person.
+  float facing_yaw = 0.f;
 
   void SetSampleHeight(SampleHeightFn fn) { sample_height_ = std::move(fn); }
   void ClearObstacles() { obstacles_.clear(); }
   void AddObstacle(const AabbObstacle& box) { obstacles_.push_back(box); }
 
   // When possess_character is false, returns without changing position (free camera mode).
+  // Locomotion uses input.move_yaw (camera-relative WASD).
   void Step(float dt, const PossessInput& input);
 
-  // Camera eye in world space from character pose + yaw (third-person helper).
+  [[nodiscard]] Vec3 FirstPersonCameraPosition() const;
+  // Camera eye: orbit around look-at. Matches engine Camera yaw/pitch.
+  // yaw-only overload uses a mild look-down from camera_offset.
   [[nodiscard]] Vec3 ThirdPersonCameraPosition(float yaw) const;
+  [[nodiscard]] Vec3 ThirdPersonCameraPosition(float yaw, float pitch) const;
   [[nodiscard]] Vec3 ThirdPersonLookAt() const;
 
   [[nodiscard]] float CapsuleCenterY() const;

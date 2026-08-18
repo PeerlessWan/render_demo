@@ -1,4 +1,5 @@
 #include "editing/anim_edit.h"
+#include "editing/sprite_view.h"
 #include "editing/terrain_edit.h"
 #include "editing/tile_edit.h"
 #include "editing/viewport_layout.h"
@@ -145,6 +146,32 @@ TEST_CASE("validate scene document parent cycle", "[unit]") {
   doc.nodes.push_back(a);
   doc.nodes.push_back(b);
   REQUIRE(!game_kit::ValidateSceneDocument(doc).ok());
+}
+
+TEST_CASE("camera ortho projection differs from perspective", "[unit]") {
+  engine::render::Camera cam;
+  cam.position = {0.f, 20.f, 0.01f};
+  cam.yaw = 0.f;
+  cam.pitch = -1.55f;
+  const auto persp = cam.proj_matrix(16.f / 9.f);
+  cam.ortho = true;
+  cam.ortho_height = 16.f;
+  const auto ortho = cam.proj_matrix(16.f / 9.f);
+  REQUIRE(std::fabs(persp.m[0] - ortho.m[0]) > 0.01f);
+  REQUIRE(std::fabs(ortho.m[11]) < 1e-4f);
+}
+
+TEST_CASE("world point projects inside ortho viewport", "[unit]") {
+  engine::render::Camera cam;
+  editor::ApplyOrtho2DCamera(&cam);
+  cam.position.x = 8.f;
+  cam.position.z = 8.f;
+  engine::Vec2 s{};
+  REQUIRE(editor::ProjectWorldToScreen(cam.view_proj_matrix(1.f), {8.f, 0.f, 8.f}, 800.f, 800.f, &s));
+  REQUIRE(s.x > 50.f);
+  REQUIRE(s.x < 750.f);
+  REQUIRE(s.y > 50.f);
+  REQUIRE(s.y < 750.f);
 }
 
 TEST_CASE("content json thumbs are stable not random", "[unit]") {
