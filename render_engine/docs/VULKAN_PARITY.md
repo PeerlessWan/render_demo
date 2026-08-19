@@ -31,7 +31,7 @@
 | Lit FrameCB：jitter / prev_vp | 有 | 有 | 对齐 |
 | GPU 实例化 | `DrawIndexedInstanced` | `vkCmdDrawIndexed` instanceCount | 对齐（失败回退 CPU） |
 | Cull CS + Indirect | 有 | `instance_cull_vk` + `vkCmdDrawIndexedIndirect` | 对齐（默认柱仍可用 CPU count） |
-| Bindless 热路径 | Feature `bindless_hot_path`（默认 OFF） | **W11 SKIP**（见下 §3.4） | 门控对齐黄金图 |
+| Bindless 热路径 | Feature `bindless_hot_path`（默认 OFF） | Feature `bindless`（indexing）+ `bindless_hot_path` 默认 OFF | 门控对齐黄金图 |
 | Light tile cull CS | `light_tile_cull_cs` + Simulate | SPIR-V 校验 + Simulate 同形填充；无 SPIR-V → SKIP | **W11 对齐** |
 | GPU 蒙皮主路径 | `SkinOnDevice` → D3D12 CS | `api_kind=Vulkan` → `gpu_skin_vk`；缺 SPIR-V → CPU/SKIP | **W11 对齐** |
 | Mesh Shader | MS PSO / DispatchMesh | Feature on + `VK_EXT_mesh_shader` → 最小 Ok；否则 SKIP | **W11 尽力** |
@@ -71,10 +71,10 @@ Headless / golden dump 仍关 TAA/SSAO 保稳定；交互可两端同开。
 
 **画质债（W0）**：柱面 CSM 已加 Poisson PCF、tile clamp、法线/斜率 bias、近级联 log 偏置与 overlap；主观残留记看板 `T-csm-pillar-shimmer`（可再录盘绿 mask MAD 对照）。
 
-### 3.4 Bindless（Mega-W11）
+### 3.4 Bindless（W13 / ADR 0039）
 
 - D3D：能力位 `bindless`（Tier≥2）；热路径默认 `pad=-1`（classic）。`bindless_hot_path=true` 且非 `gpu_headless` 时按 `tex_slot` 映射 heap 1/4。  
-- Vulkan：**W11 明确 SKIP** — 即使物理设备有 `VK_EXT_descriptor_indexing`，也不设置 Feature `bindless` / `bindless_hot_path`，`ProbeBindlessMinimalPath` 返回 Unavailable（无 albedo 索引热路径；classic 描述符 only）。不假装可用。  
+- Vulkan（**W13 / ADR 0039**）：有 `VK_EXT_descriptor_indexing` 时设置 Feature `bindless`（能力）；`bindless_hot_path` 默认 OFF（classic 描述符）。无 indexing → 诚实 SKIP。`ProbeBindlessMinimalPath` 在有 indexing 时 Ok。  
 - 黄金图 / C4 默认路径不漂。
 
 ### 3.5 Mega-W11 Win VK Status 路径（摘要）
@@ -85,7 +85,7 @@ Headless / golden dump 仍关 TAA/SSAO 保稳定；交互可两端同开。
 | `SkinOnDevice` | Feature `gpu_skinning` + 对应后端 CS | Feature off → CPU；CS 缺 → CPU message |
 | `TryMeshShaderPath` | Feature on +（D3D12 MS 或 `VK_EXT_mesh_shader`） | Feature off / 无扩展 |
 | `TryVkTraceRaysDemoStub` | `VK_KHR_ray_tracing_pipeline` + `vkCmdTraceRaysKHR` 可解析 | 无 pipeline 扩展 |
-| Bindless | （D3D 见上） | **VK 钉死 SKIP** |
+| Bindless | D3D Tier≥2 / VK indexing → Feature `bindless`；热路径默认 OFF | 无 indexing / Tier<2 → SKIP |
 
 ## 4. Sandbox 行为
 

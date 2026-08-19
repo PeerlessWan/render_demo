@@ -62,6 +62,7 @@ endif()
 
 add_library(engine_platform STATIC
   platform/linux/window_x11.cpp
+  platform/linux/window_wayland.cpp
 )
 if(WIN32)
   target_sources(engine_platform PRIVATE platform/win32/window_win32.cpp)
@@ -72,6 +73,7 @@ if(WIN32)
   target_link_libraries(engine_platform PRIVATE user32 gdi32 imm32)
 endif()
 # Mega-W11: real Xlib path when building on Linux with libX11 (Windows keeps stubs).
+# W15: Wayland optional alongside X11 (X11 remains CI baseline).
 if(UNIX AND NOT APPLE)
   find_package(X11)
   if(X11_FOUND)
@@ -81,6 +83,18 @@ if(UNIX AND NOT APPLE)
     message(STATUS "engine_platform: X11 enabled (ENGINE_HAS_X11); Window::Create → window_x11")
   else()
     message(STATUS "engine_platform: X11 not found; CreateX11WindowStub / Window::Create non-headless Unavailable")
+  endif()
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(WAYLAND_CLIENT QUIET wayland-client)
+    if(WAYLAND_CLIENT_FOUND)
+      target_include_directories(engine_platform PRIVATE ${WAYLAND_CLIENT_INCLUDE_DIRS})
+      target_link_libraries(engine_platform PRIVATE ${WAYLAND_CLIENT_LIBRARIES})
+      target_compile_definitions(engine_platform PRIVATE ENGINE_HAS_WAYLAND=1)
+      message(STATUS "engine_platform: Wayland enabled (ENGINE_HAS_WAYLAND); W15 probe")
+    else()
+      message(STATUS "engine_platform: wayland-client not found; Wayland stub Unavailable")
+    endif()
   endif()
 endif()
 
@@ -223,6 +237,7 @@ endif()
 add_library(engine_media STATIC
   media/media.cpp
   media/upscaler.cpp
+  media/upscaler_backends.cpp
 )
 target_include_directories(engine_media PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_media PUBLIC engine_core)
@@ -329,6 +344,7 @@ target_link_libraries(engine_gameplay PUBLIC engine_core engine_assets)
 
 add_library(engine_vfx STATIC
   vfx/particles.cpp
+  vfx/gpu_particles.cpp
   vfx/trail_ribbon.cpp
 )
 target_include_directories(engine_vfx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

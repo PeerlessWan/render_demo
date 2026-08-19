@@ -60,6 +60,9 @@ class ProbeVolume {
   // `levels` times (each level factor=2). Keeps extents; not a multi-volume cascade stack.
   void CascadeRefine(const Vec3& focus, int levels = 1);
 
+  // W12 product tick: UpdateFromLights within budget, then mild neighborhood blend.
+  void TickProduct(std::span<const ProbeLight> lights, float neighborhood_weight = 0.18f);
+
  private:
   bool enabled_ = true;
   Vec3 origin_{};

@@ -94,7 +94,7 @@ add_dependencies(sample_sandbox sample_sandbox_shaders)
 target_link_libraries(sample_sandbox PRIVATE
   engine_app engine_assets engine_physics engine_media engine_ui engine_mixed engine_render2d
   engine_net engine_gi engine_terrain engine_vfx engine_animation engine_debug engine_gpu_driven
-  engine_gameplay engine_clothing
+  engine_gameplay engine_clothing engine_vt engine_rt engine_ocean engine_hlod
 )
 if(WIN32)
   target_link_libraries(sample_sandbox PRIVATE psapi)

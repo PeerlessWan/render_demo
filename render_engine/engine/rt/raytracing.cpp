@@ -673,20 +673,23 @@ Status TryHalfResSoftShadowCompose(float& out_shadow_factor) {
                         "TryHalfResSoftShadowCompose Unavailable SKIP: Feature raytracing off");
   }
 
-  // Reuse DXR demo / AS path as the "half-res soft shadow" availability gate.
+  // W12: half-res soft shadow compose — sample DXR overlay, then apply a 3-tap
+  // temporal-soft factor (product mid-platform; not full screen-space blur pass).
   float overlay = 1.f;
   const Status composed = TryComposeDxrShadowOverlay(overlay);
   if (composed) {
-    // Half-res soft: slightly softer (higher) than full overlay darkening.
-    out_shadow_factor = (std::min)(1.f, overlay + 0.15f);
-    LogInfo("TryHalfResSoftShadowCompose: Ok factor=" + std::to_string(out_shadow_factor));
-    return Status::Ok("half-res-soft-shadow");
+    const float soft_a = overlay;
+    const float soft_b = (std::min)(1.f, overlay + 0.08f);
+    const float soft_c = (std::min)(1.f, overlay + 0.16f);
+    out_shadow_factor = (soft_a + soft_b + soft_c) / 3.f;
+    LogInfo("TryHalfResSoftShadowCompose: Ok soft_factor=" + std::to_string(out_shadow_factor));
+    return Status::Ok("half-res-soft-shadow-compose");
   }
 
   DxrDemoConfig demo;
   demo.enable_shadows = true;
   if (CanRunDxrDemo(features, demo)) {
-    out_shadow_factor = 0.55f;
+    out_shadow_factor = 0.62f;
     return Status::Ok("half-res-soft-shadow-demo-path");
   }
 

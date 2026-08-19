@@ -261,6 +261,13 @@ material::PbrMaterial ResolveMeshMaterial(std::string_view mesh_id) {
     m.mesh_slot = 6;
     m.tex_slot = 2;
     m.uv_scale = 1.f;
+  } else if (mesh_id == "character") {
+    m.base_color = {0.55f, 0.72f, 0.45f, 1.f};
+    m.roughness = 0.7f;
+    m.metallic = 0.02f;
+    m.mesh_slot = 7;
+    m.tex_slot = 0;
+    m.uv_scale = 1.f;
   } else {
     m.base_color = {1.f, 1.f, 1.f, 1.f};
     m.roughness = 0.4f;

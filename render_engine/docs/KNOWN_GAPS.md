@@ -33,11 +33,23 @@
 
 ## 3. 补齐 M25 后仍保留的引擎缺陷（摘要）
 
-详见 [POSITIONING.md](POSITIONING.md) §2：
+详见 [POSITIONING.md](POSITIONING.md) §2。下列弱项进入 **W12–W15 产品化目标**（[ADR 0039](learn/adr/0039-waterline-productization-a-c.md)）；完成后仍**不**宣称 UE/Nanite/真 DDGI/引擎内复制：
+
+| 弱项 | W12–W15 目标（中台+Sandbox） | 仍不宣称 |
+|---|---|---|
+| GI / RT | DDGI-lite 帧预算 + 可感知间接光；D3D12 半分辨率软影 compose；VK RT Feature/SKIP | Lumen / RTXGI |
+| 超分 | DLSS→真 FSR2→builtin；name 诚实 | Frame Generation |
+| VT / GPU Driven | 近默认可开；Cull+Indirect 稳定；**VK bindless 真接线或诚实 SKIP** | Nanite / 全材质默认 VT |
+| GPU 粒子 | CS + 间接绘制；CPU 回退 | Niagara 全家桶 |
+| 网络 | HTTP/WS/QUIC **传输**产品级 | 复制/匹配（→ game_kit） |
+| 角色 | GPU 蒙皮默认尝试 + AnimTree + Sandbox lit 网格 | 服装/完整 IK 产品 |
+| 地形水植被 | ChunkStream 真换入 + FFT 海可见 + 植被 GPU instance | 开放世界全家桶 |
+| Linux | Wayland + 全树冒烟；X11 CI 基线 | mac/Metal |
+
+产品水位（非忘排期、本计划也不做）：
 
 - **引擎内**无编辑器与脚本（外挂见 [HOSTING.md](HOSTING.md)、[LAYERS](../../docs/LAYERS.md)、`game_kit/` / `genre_kits/` / `games/` / `editor/`）；工具侧仅最小 CLI + 可选 C20  
-- 开放世界 **无 Nanite**；VT 为最小可用（Feature `virtual_texture`），**非默认全材质**；地形水植被仅基础  
-- 动态 GI / 光追深度不及顶尖产品  
+- 开放世界 **无 Nanite**；真 NVIDIA DDGI 外置  
 - 音频/物理/网络能力边界；非 ECS；双后端与硬解视频约束；无资产生态  
 
 这些是**产品水位**，不是「忘了排期」。

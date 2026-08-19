@@ -19,8 +19,9 @@ struct CharacterLoadResult {
 };
 
 struct CharacterAsset {
-  // Load one .gltf/.glb via LoadGltfMeshFile. On missing/invalid file, fill mesh
-  // from a standing capsule (feet on y=0) and set used_capsule_fallback.
+  // Load one .gltf/.glb. Static multi-mesh files merge all mesh nodes; skinned
+  // files keep mesh0 + joints. On missing/invalid file, fill mesh from a standing
+  // capsule (feet on y=0) and set used_capsule_fallback.
   [[nodiscard]] static CharacterLoadResult TryLoadGltfOrCapsule(
       const std::filesystem::path& gltf_or_glb_path, const IImageLoader& images,
       float capsule_radius = 0.35f, float capsule_height = 1.8f);

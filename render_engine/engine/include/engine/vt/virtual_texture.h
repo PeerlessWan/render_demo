@@ -83,6 +83,10 @@ class VirtualTexture {
   // Sample stub: resident → page color; else → transparent black + auto RequestPage.
   [[nodiscard]] ColorRgba Sample(float u, float v, std::uint32_t mip = 0);
 
+  // W13: one product tick — ingest feedback, upload up to budget pages.
+  std::uint32_t TickNearField(std::span<const VtFeedbackRequest> feedback,
+                              std::uint32_t max_uploads);
+
   void ClearRequests() { requests_.clear(); }
 
  private:

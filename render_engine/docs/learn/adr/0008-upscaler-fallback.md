@@ -15,8 +15,8 @@ DLSS 绑定 NVIDIA；无厂商支持时不能黑屏或假成功。当前仓库**
 2. 无 DLSS 时 **强制可诊断的 fallback**，不宣称「已开 DLSS」。  
 3. Frame Generation **不做**。  
 4. **`BuiltinBilinearUpscaler` + `ResolutionScale` 即为 FSR-absent fallback**：在无 FidelityFX SDK 时的唯一落地路径；`EffectTuning.render_resolution_scale` 驱动内部渲染尺寸，`upscale_jitter_x/y` → `UpscaleParams` 在双线性采样中偏移 UV（TAA-like 文档契约，非厂商 FSR）。  
-5. **`CreateUpscaler()` 偏好**：读环境变量 `ENGINE_UPSCALER`；若值为 `fsr` 且本树无 FSR SDK，仍返回 `BuiltinBilinearUpscaler`，并 **Log 一次** `FSR SDK absent → builtin`。禁止假名「FSR」作为 `IUpscaler::name()`。  
-6. **FSR = future**：待 AMD FidelityFX SDK 授权/vendor 后再接真实适配器。
+5. **`CreateUpscaler()` 偏好**：读环境变量 `ENGINE_UPSCALER`；链为 **DLSS（ENGINE_WITH_NGX）→ FSR2（ENGINE_WITH_FIDELITYFX）→ builtin_bilinear**。请求 `fsr`/`dlss` 但 SDK 缺失时 Log 一次并继续回退；禁止假名。  
+6. **FSR2 vendor**：`tools/fetch_fidelityfx.ps1` 占位；有 SDK 后开 `ENGINE_WITH_FIDELITYFX`（ADR 0039 W12）。
 
 ## 后果
 

@@ -6,8 +6,10 @@
 #include "engine/core/log.h"
 #include "engine/net/quic.h"
 
+#include <cstdlib>
 #include <mutex>
 #include <queue>
+#include <string>
 
 namespace engine::net {
 namespace {
@@ -80,11 +82,27 @@ class RoutingHttp final : public IHttpClient {
 class LoopbackWebSocket final : public IWebSocket {
  public:
   Status Connect(std::string_view url) override {
-    if (std::string(url).find("loopback://") != 0) {
-      return Status::Fail(ErrorCode::Unavailable, "WebSocket remote not available");
+    const std::string u(url);
+    if (u.find("loopback://") == 0) {
+      connected_ = true;
+      remote_ = false;
+      return Status::Ok("loopback");
     }
-    connected_ = true;
-    return Status::Ok();
+    // W14 ADR 0039: remote ws/wss — full IXWebSocket vendor optional.
+    if (u.find("ws://") == 0 || u.find("wss://") == 0) {
+      const char* sim = std::getenv("ENGINE_WS_REMOTE_SIM");
+      if (sim && sim[0] == '1') {
+        connected_ = true;
+        remote_ = true;
+        LogInfo(std::string("WebSocket remote-sim connect: ") + u);
+        return Status::Ok("remote-sim");
+      }
+      return Status::Fail(
+          ErrorCode::Unavailable,
+          "WebSocket remote Unavailable SKIP: IXWebSocket not vendored "
+          "(set ENGINE_WS_REMOTE_SIM=1 for simulated remote, or use loopback://)");
+    }
+    return Status::Fail(ErrorCode::InvalidArgument, "unsupported WebSocket URL scheme");
   }
   Status Send(std::string_view message) override {
     if (!connected_) {
@@ -120,6 +138,7 @@ class LoopbackWebSocket final : public IWebSocket {
 
  private:
   bool connected_ = false;
+  bool remote_ = false;
   MessageCallback on_message_;
   std::mutex mutex_;
   std::queue<std::string> inbox_;

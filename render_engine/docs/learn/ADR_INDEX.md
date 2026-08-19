@@ -51,6 +51,7 @@ ADR 记录 **为什么这样设计**，是学习封装的核心（比 API 列表
 | 0036 | Mega-W9 全主题加深、尾巴、学习轨与文档审计 | [0036-…](adr/0036-mega-w9-deepen.md) | CH36 | Accepted |
 | 0037 | Mega-W10 半成品收紧、尾巴、大场景、人物、学习轨 | [0037-…](adr/0037-mega-w10-deepen.md) | CH37–CH39 | Accepted |
 | 0038 | Mega-W11 拉齐各端（引擎 only；不含 kit/editor） | [0038-…](adr/0038-mega-w11-parity.md) | — | Accepted |
+| 0039 | 水位弱项产品化（A+C；W12–W15） | [0039-…](adr/0039-waterline-productization-a-c.md) | Sandbox | Accepted |
 
 ## 模板
 

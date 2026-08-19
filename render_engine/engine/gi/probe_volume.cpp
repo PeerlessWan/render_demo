@@ -223,4 +223,15 @@ void ProbeVolume::CascadeRefine(const Vec3& focus, int levels) {
   }
 }
 
+void ProbeVolume::TickProduct(std::span<const ProbeLight> lights, float neighborhood_weight) {
+  if (!enabled_ || probes_.empty()) {
+    return;
+  }
+  UpdateFromLights(lights);
+  const float w = std::clamp(neighborhood_weight, 0.f, 1.f);
+  if (w > 1e-4f) {
+    BlendNeighborhood(w);
+  }
+}
+
 }  // namespace engine::gi

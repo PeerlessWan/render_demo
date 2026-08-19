@@ -193,6 +193,17 @@ class WindowWin32 final : public Window {
       ClipCursor(&clip);
       while (ShowCursor(FALSE) >= 0) {
       }
+      // ClipCursor / ShowCursor can synthesize a jump WM_MOUSEMOVE — drop it so
+      // FPS always_look does not pitch/yaw the whole scene on Character enter.
+      input_.mouse_dx = 0.f;
+      input_.mouse_dy = 0.f;
+      have_mouse_ = false;
+      if (GetCursorPos(&ul) && ScreenToClient(hwnd_, &ul)) {
+        last_mouse_x_ = ul.x;
+        last_mouse_y_ = ul.y;
+        input_.mouse_x = static_cast<float>(ul.x);
+        input_.mouse_y = static_cast<float>(ul.y);
+      }
     } else {
       ClipCursor(nullptr);
       while (ShowCursor(TRUE) < 0) {
@@ -200,6 +211,9 @@ class WindowWin32 final : public Window {
       if (GetCapture() == hwnd_ && !soft_captured_) {
         ReleaseCapture();
       }
+      input_.mouse_dx = 0.f;
+      input_.mouse_dy = 0.f;
+      have_mouse_ = false;
     }
   }
 

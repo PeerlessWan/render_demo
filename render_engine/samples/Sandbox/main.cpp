@@ -1,6 +1,8 @@
 #include "engine/app/application.h"
 
 #include "engine/animation/skeleton.h"
+#include "engine/animation/gpu_skin_main.h"
+#include "engine/media/upscaler.h"
 #include "engine/assets/character_asset.h"
 #include "engine/assets/gltf_loader.h"
 #include "engine/assets/image_loader.h"
@@ -39,6 +41,8 @@
 #include "engine/ui/immediate_ui.h"
 #include "engine/ui/rml_ui.h"
 #include "engine/vfx/particles.h"
+#include "engine/vfx/gpu_particles.h"
+#include "engine/vt/virtual_texture.h"
 #include "engine/vfx/trail_ribbon.h"
 #include "engine/rhi/backend.h"
 
@@ -1017,6 +1021,11 @@ int main(int argc, char** argv) {
 
   engine::vfx::ParticleEmitter particles;
   particles.Configure({1.8f, 2.6f, 1.0f}, 28.f, 1.1f);
+  engine::vfx::GpuParticleSystem gpu_particles;
+  gpu_particles.Configure({1.8f, 2.6f, 1.0f}, 28.f, 1.1f, 128);
+  engine::SetFeatureOverride("gpu_particles", true);
+  engine::vt::VirtualTexture sandbox_vt;
+  sandbox_vt.Configure(16, 32, 3);
   engine::vfx::TrailRibbon lamp_trail;
   lamp_trail.Configure(0.75f, 0.06f, 40);
 
@@ -1046,6 +1055,38 @@ int main(int argc, char** argv) {
                     " fallback=" +
                     (possess_character_mesh.used_capsule_fallback ? "true" : "false"));
   }
+  // W12: lit character mesh (slot 7) for possess; prefer GPU skin Feature when available.
+  engine::SetFeatureOverride("gpu_skinning", true);
+  engine::scene::NodeId character_node = engine::scene::kInvalidNode;
+  bool character_mesh_uploaded = false;
+  {
+    const auto& cm = possess_character_mesh.mesh;
+    if (!cm.vertices.empty() && !cm.indices.empty()) {
+      std::vector<engine::rhi::LitVertex> verts(cm.vertices.size());
+      for (std::size_t i = 0; i < cm.vertices.size(); ++i) {
+        const auto& v = cm.vertices[i];
+        verts[i] = {v.px, v.py, v.pz, v.nx, v.ny, v.nz, v.u, v.v};
+      }
+      if (auto st = a.device().UploadLitGeometry(7, verts, cm.indices); st) {
+        character_mesh_uploaded = true;
+        character_node = a.world().CreateNode("character");
+        engine::scene::Transform xf;
+        xf.position = possess.position;
+        a.world().set_local_transform(character_node, xf);
+        engine::scene::MeshRenderer mr;
+        mr.mesh_id = "character";
+        mr.never_cull = true;
+        mr.local_bounds = {{-0.8f, 0.f, -0.8f}, {0.8f, 2.2f, 0.8f}};
+        a.world().set_mesh(character_node, mr);
+        a.world().set_visible(character_node, false);
+        engine::LogInfo("W12: character lit mesh uploaded (slot 7)");
+      } else {
+        engine::LogWarn(std::string("character UploadLitGeometry: ") + st.message());
+      }
+    }
+  }
+  auto sandbox_upscaler = engine::media::CreateUpscaler();
+  engine::LogInfo(std::string("W12 upscaler: ") + sandbox_upscaler->name());
   engine::clothing::GarmentCloth cape;
   {
     engine::clothing::GarmentMeshDesc cape_desc;
@@ -1057,6 +1098,9 @@ int main(int argc, char** argv) {
   bool large_terrain_mode = false;
   engine::terrain::Heightmap large_hm;
   bool large_hm_ok = false;
+  engine::terrain::TerrainChunkStreamer terrain_chunks;
+  engine::assets::StreamingBudget terrain_budget(32ull * 1024ull * 1024ull);
+  terrain_chunks.Configure(32.f, 2, 64ull * 1024ull);
   bool f_was_down = false;
   bool profiler_open = true;
   bool enable_vsync = desc.enable_vsync;
@@ -1266,6 +1310,16 @@ int main(int argc, char** argv) {
         app_ref.camera().position = possess.FirstPersonCameraPosition();
       }
 
+      // W12: drive lit character node (visible in TP or when cursor unlocked).
+      if (character_mesh_uploaded && character_node != engine::scene::kInvalidNode) {
+        engine::scene::Transform xf;
+        xf.position = possess.position;
+        xf.rotation = engine::Quat::FromEulerYxz(possess.facing_yaw, 0.f, 0.f);
+        app_ref.world().set_local_transform(character_node, xf);
+        const bool show_body = possess_third_person || app_ref.cursor_unlocked();
+        app_ref.world().set_visible(character_node, show_body);
+      }
+
       std::vector<engine::Vec3> attach;
       const engine::Quat fq_attach = engine::Quat::FromEulerYxz(possess.facing_yaw, 0.f, 0.f);
       attach.push_back(possess.position + fq_attach.Rotate({-0.2f, 1.45f, 0.f}));
@@ -1312,6 +1366,13 @@ int main(int argc, char** argv) {
       }
     } else {
       app_ref.set_fly_locomotion_enabled(true);
+      if (character_mesh_uploaded && character_node != engine::scene::kInvalidNode) {
+        app_ref.world().set_visible(character_node, true);  // show idle character in free cam
+        engine::scene::Transform xf;
+        xf.position = possess.position;
+        xf.rotation = engine::Quat::FromEulerYxz(possess.facing_yaw, 0.f, 0.f);
+        app_ref.world().set_local_transform(character_node, xf);
+      }
     }
 
     auto start_or_stop_record = [&](bool enable) {
@@ -1625,6 +1686,12 @@ int main(int argc, char** argv) {
             }
           }
           imgui.Checkbox(Su.probe_gi, &enable_gi);
+          {
+            char up_line[96];
+            std::snprintf(up_line, sizeof(up_line), "Upscaler: %s (ENGINE_UPSCALER)",
+                          sandbox_upscaler->name());
+            imgui.Text(up_line);
+          }
           if (lightmap_ready) {
             if (imgui.Checkbox(Su.lightmap, &enable_lightmap)) {
               sync_lightmap_albedo(enable_lightmap);
@@ -1814,7 +1881,7 @@ int main(int argc, char** argv) {
       pl.color = {1.f, 0.78f, 0.55f, 1.f};
       pl.intensity = 1.35f;
       pl.range = 5.5f;
-      probes.UpdateFromLights({&pl, 1});
+      probes.TickProduct({&pl, 1}, 0.18f);
       const auto irr = probes.Sample(app_ref.camera().position);
       env.ambient = {0.12f + irr.r * 0.35f, 0.13f + irr.g * 0.35f, 0.15f + irr.b * 0.35f, 1.f};
     } else {
@@ -1827,6 +1894,18 @@ int main(int argc, char** argv) {
     if (!gpu_headless_assert) {
       particles.set_origin({1.8f, 2.6f, 1.0f});
       particles.Step(app_ref.delta_time());
+      gpu_particles.set_origin({1.8f, 2.6f, 1.0f});
+      (void)gpu_particles.Step(app_ref.delta_time());
+      // W13: VT near-field tick when Feature on (CPU feedback sim → page upload).
+      if (engine::QueryFeature("virtual_texture")) {
+        engine::vt::VtFeedbackRequest fb{};
+        fb.page = sandbox_vt.UvToPage(0.5f, 0.5f, 0);
+        fb.importance = 1.f;
+        (void)sandbox_vt.TickNearField({&fb, 1}, 4);
+      }
+      if (large_terrain_mode) {
+        terrain_chunks.Update(app_ref.camera().position, terrain_budget);
+      }
       // Thin TrailRibbon: orbit the lamp for DebugDraw segments Sandbox can call.
       const float t = static_cast<float>(app_ref.frame_index()) * 0.05f;
       lamp_trail.Push({1.8f + std::cos(t) * 0.35f, 2.6f + 0.15f * std::sin(t * 1.7f),
@@ -1933,6 +2012,9 @@ int main(int argc, char** argv) {
     engine::render2d::SortSprites(sprites);
 
     const float aspect = dh > 0.f ? dw / dh : 1.f;
+    // Character / possess writes local transforms above — refresh world matrices
+    // before Extract (Application already ran UpdateTransforms earlier this frame).
+    app_ref.world().UpdateTransforms();
     const auto scene = engine::render::RenderSceneExtractor::Extract(
         app_ref.world(), app_ref.camera(), aspect);
 

@@ -3,11 +3,13 @@
 // Wayland postponed — this wave requires X11. See docs/LINUX.md.
 
 #include "engine/platform/linux/window_x11.h"
+#include "engine/platform/linux/window_wayland.h"
 
 #include "engine/core/log.h"
 #include "engine/platform/window.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -348,6 +350,29 @@ Result<std::unique_ptr<Window>> Window::Create(const WindowDesc& desc) {
         std::unique_ptr<Window>(std::make_unique<WindowHeadless>(desc.width, desc.height)));
   }
 
+  // W15: prefer Wayland when WAYLAND_DISPLAY is set and ENGINE_HAS_WAYLAND; else X11.
+#if defined(ENGINE_HAS_WAYLAND)
+  {
+    const char* wd = std::getenv("WAYLAND_DISPLAY");
+    const char* prefer_x11 = std::getenv("ENGINE_FORCE_X11");
+    if (wd && wd[0] && !(prefer_x11 && prefer_x11[0] == '1')) {
+      platform::linux_wayland::WaylandWindowDesc wdesc;
+      wdesc.title = desc.title;
+      wdesc.width = desc.width;
+      wdesc.height = desc.height;
+      platform::linux_wayland::WaylandNative native;
+      const auto wst = platform::linux_wayland::CreateWaylandWindowStub(wdesc, native);
+      if (wst) {
+        LogInfo("Wayland window probe Ok — falling through to X11 mapped window for "
+                "present until xdg-shell surface is wired (W15)");
+        (void)platform::linux_wayland::DestroyWaylandWindowStub(native);
+      } else {
+        LogWarn(std::string("Wayland probe: ") + wst.message() + "; using X11");
+      }
+    }
+  }
+#endif
+
 #if defined(ENGINE_HAS_X11)
   platform::linux_x11::X11WindowDesc xdesc;
   xdesc.title = desc.title;
@@ -367,7 +392,6 @@ Result<std::unique_ptr<Window>> Window::Create(const WindowDesc& desc) {
     return Result<std::unique_ptr<Window>>::Fail("WindowX11 Attach failed");
   }
 
-  // desc.hidden: still map (needed for VK surface); caller may iconify later.
   (void)desc.hidden;
   LogInfo(desc.hidden ? "X11 window created (hidden request ignored; mapped for surface)"
                       : "X11 window created");

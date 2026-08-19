@@ -48,6 +48,12 @@ struct GltfMeshAsset {
 Result<GltfMeshAsset> LoadGltfMeshFile(const std::filesystem::path& path,
                                        const IImageLoader& images);
 
+// Merge every mesh-bearing node's first primitive (with node world xform).
+// For modular characters (Kenney blocky: legs/torso/arms/head as separate meshes).
+// Skinned assets should keep LoadGltfMeshFile (bind pose + joints on mesh 0).
+Result<GltfMeshAsset> LoadGltfAllMeshNodes(const std::filesystem::path& path,
+                                           const IImageLoader& images);
+
 // Append src into dst with a world transform (positions + normals).
 void AppendTransformedMesh(GltfMeshAsset& dst, const GltfMeshAsset& src, const Mat4& world);
 

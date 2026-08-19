@@ -268,11 +268,17 @@ class VulkanDevice final : public IDevice {
       return st;
     }
 
-    // Mega-W11: descriptor-indexing may be present, but albedo bindless hot path is not
-    // wired — do not set Feature "bindless" / "bindless_hot_path" (honest SKIP).
-    LogInfo(descriptor_indexing_available_
-                ? "Vulkan bindless SKIP W11 (descriptor-indexing present; no albedo path)"
-                : "Vulkan bindless SKIP W11 (no descriptor-indexing; classic descriptors only)");
+    // W12/W13 ADR 0039: when VK_EXT_descriptor_indexing is present, expose Feature
+    // bindless (capability). Hot path still Feature-gated (default OFF), same as D3D12.
+    if (descriptor_indexing_available_) {
+      bindless_capable_ = true;
+      engine::SetFeatureOverride("bindless", true);
+      LogInfo("Vulkan bindless Feature path enabled (descriptor-indexing); "
+              "bindless_hot_path default OFF (classic descriptors)");
+    } else {
+      bindless_capable_ = false;
+      LogInfo("Vulkan bindless SKIP (no VK_EXT_descriptor_indexing; classic only)");
+    }
 #if defined(_WIN32)
     LogInfo("Vulkan device ready (Win32 surface + swapchain clear)");
 #elif defined(__linux__)
@@ -1776,14 +1782,16 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
 
-  // Mega-W11: descriptor-indexing may exist, but albedo bindless path is not implemented —
-  // honest SKIP (do not set Feature bindless / bindless_hot_path). See VULKAN_PARITY.md.
+  // W13 ADR 0039: capability Feature when descriptor-indexing present.
+  // bindless_hot_path stays opt-in (default OFF) — classic draw until hot path wired.
   Status ProbeBindlessMinimalPath(std::uint32_t /*srv_heap_slot*/) override {
-    return Status::Fail(
-        ErrorCode::Unavailable,
-        descriptor_indexing_available_
-            ? "ProbeBindlessMinimalPath: Vulkan bindless SKIP W11 (indexing present; no albedo path)"
-            : "ProbeBindlessMinimalPath: Vulkan bindless SKIP W11 (no descriptor-indexing)");
+    if (!descriptor_indexing_available_) {
+      return Status::Fail(ErrorCode::Unavailable,
+                          "ProbeBindlessMinimalPath: Vulkan bindless SKIP (no descriptor-indexing)");
+    }
+    bindless_capable_ = true;
+    engine::SetFeatureOverride("bindless", true);
+    return Status::Ok("vulkan-bindless-capability");
   }
 
   Status DrawLitCube(const LitDrawItem& item) override {
@@ -6531,6 +6539,7 @@ class VulkanDevice final : public IDevice {
   bool cull_ready_ = false;
   bool tile_cull_ready_ = false;
   bool descriptor_indexing_available_ = false;
+  bool bindless_capable_ = false;
   VkDescriptorSetLayout cull_set_layout_ = VK_NULL_HANDLE;
   VkPipelineLayout cull_pipeline_layout_ = VK_NULL_HANDLE;
   VkPipeline cull_pipeline_ = VK_NULL_HANDLE;

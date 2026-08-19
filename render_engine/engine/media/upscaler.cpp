@@ -1,5 +1,7 @@
 #include "engine/media/upscaler.h"
 
+#include "engine/media/upscaler_backends.h"
+
 #include "engine/core/log.h"
 
 #include <algorithm>
@@ -31,12 +33,9 @@ float SampleChannel(std::span<const std::uint8_t> src, int w, int h, int c, floa
   return hx0 + (hx1 - hx0) * fy;
 }
 
-bool EnvPrefersFsr() {
+bool EnvPrefers(std::string_view want) {
   const char* v = std::getenv("ENGINE_UPSCALER");
-  if (!v || !v[0]) {
-    return false;
-  }
-  return std::string_view(v) == "fsr";
+  return v && v[0] && std::string_view(v) == want;
 }
 
 }  // namespace
@@ -71,7 +70,6 @@ Status BuiltinBilinearUpscaler::Upscale(std::span<const std::uint8_t> src, int s
     return Status::Fail("source buffer too small");
   }
   dst.resize(static_cast<std::size_t>(dst_w * dst_h * 4));
-  // TAA-like path: NDC-style jitter (-1..1) → UV subpixel offset before bilinear sample.
   const float ju = params.jitter_x * 0.5f;
   const float jv = params.jitter_y * 0.5f;
   for (int y = 0; y < dst_h; ++y) {
@@ -91,12 +89,25 @@ Status BuiltinBilinearUpscaler::Upscale(std::span<const std::uint8_t> src, int s
 }
 
 std::unique_ptr<IUpscaler> CreateUpscaler() {
-  // No FidelityFX SDK in-tree: ENGINE_UPSCALER=fsr still yields FSR-absent builtin (ADR 0008).
-  if (EnvPrefersFsr()) {
+  // W12 / ADR 0039: DLSS → FSR2 → builtin. name() never lies about missing SDKs.
+  if (auto dlss = TryCreateDlssUpscaler()) {
+    return dlss;
+  }
+  if (EnvPrefers("dlss")) {
+    static bool logged_dlss = false;
+    if (!logged_dlss) {
+      logged_dlss = true;
+      LogWarn("DLSS SDK absent (ENGINE_WITH_NGX=0) → continue fallback chain");
+    }
+  }
+  if (auto fsr = TryCreateFsr2Upscaler()) {
+    return fsr;
+  }
+  if (EnvPrefers("fsr") || EnvPrefers("fsr2")) {
     static bool logged_fsr_absent = false;
     if (!logged_fsr_absent) {
       logged_fsr_absent = true;
-      LogWarn("FSR SDK absent → builtin");
+      LogWarn("FSR2 SDK absent (ENGINE_WITH_FIDELITYFX=0) → builtin_bilinear");
     }
   }
   return std::make_unique<BuiltinBilinearUpscaler>();

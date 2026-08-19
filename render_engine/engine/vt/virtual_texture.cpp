@@ -179,4 +179,10 @@ ColorRgba VirtualTexture::Sample(float u, float v, std::uint32_t mip) {
   return cache_[e->physical_slot].color;
 }
 
+std::uint32_t VirtualTexture::TickNearField(std::span<const VtFeedbackRequest> feedback,
+                                           std::uint32_t max_uploads) {
+  ProcessGpuFeedback(feedback);
+  return UploadPendingPages(max_uploads);
+}
+
 }  // namespace engine::vt
