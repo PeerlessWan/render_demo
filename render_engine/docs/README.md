@@ -32,6 +32,7 @@
 | [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md) | **封板看板**（W12–W20；Doing 空） |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 分层、目录树、子系统、后端能力 |
 | [POSITIONING.md](POSITIONING.md) | 是/不是、缺陷、风险锁死 |
+| [ENGINE_VS_MAINSTREAM.md](ENGINE_VS_MAINSTREAM.md) | **vs Godot / Unity / UE 完成度自评**（内核 vs 整引擎） |
 | [KNOWN_GAPS.md](KNOWN_GAPS.md) | 缺口 ↔ 里程碑；含 **§4 M25 后候选**（含 C19–C21） |
 | [HOSTING.md](HOSTING.md) | **玩法层 / 脚本 / 编辑器外挂接入** |
 | [HOST_API.md](HOST_API.md) | **Host API v0 草案** |

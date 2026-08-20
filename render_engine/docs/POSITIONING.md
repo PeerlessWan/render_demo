@@ -11,7 +11,8 @@
 
 > 自研 Win/Linux 通用 2D·3D 渲染引擎（**仅 D3D12 与 Vulkan**），对标桌面渲染中台而非 UE 全家桶。
 
-缺口追踪：[KNOWN_GAPS.md](KNOWN_GAPS.md)。
+缺口追踪：[KNOWN_GAPS.md](KNOWN_GAPS.md)。  
+与主流引擎完成度自评：[ENGINE_VS_MAINSTREAM.md](ENGINE_VS_MAINSTREAM.md)（Godot 内核约 60–70% / 整引擎约 35–45%；Unity 约 45–55% / 20–30%；UE5 约 25–35% / 10–20%）。
 
 ### 与纯 RHI / 渲染库的边界
 

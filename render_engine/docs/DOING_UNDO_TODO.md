@@ -67,6 +67,7 @@
 | **W20 尾巴** | VK upload/oneshot/`UploadLitGeometry` fence（`WaitGpuSubmitted`）+ 文档对齐（Sandbox Medium / PLAN W17–W20） |
 | **W20 lit 再拆** | `*_device_{lit,shadow,env}.cpp` 对称拆分（压行数） |
 | **封板软债** | device 再拆已落地（swapchain/targets/readback/overlay）；§1.9/里程碑已对齐 |
+| **对标记录** | [ENGINE_VS_MAINSTREAM.md](ENGINE_VS_MAINSTREAM.md)：vs Godot/Unity/UE 内核与整引擎完成度 |
 | **W18** | light tile GPU；WorldText/Path2D；VT packed；软影/MS/HLOD/dxc |
 | **W17** | meshoptimizer Prefer；VK 粒子；软影 blur；glTF 多 prim |
 | **W16** | 零尾巴收口 |
