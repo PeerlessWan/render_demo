@@ -18,6 +18,9 @@ QualitySettings QualitySettings::FromTier(QualityTier t) {
       q.enable_ssr = false;
       q.enable_dof = false;
       q.enable_motion_blur = false;
+      q.enable_cascade_gi = false;
+      q.enable_volumetric_fog = false;
+      q.enable_soft_shadow = false;
       break;
     case QualityTier::Medium:
       q.shadow_cascades = 2;
@@ -31,6 +34,9 @@ QualitySettings QualitySettings::FromTier(QualityTier t) {
       q.enable_ssr = false;
       q.enable_dof = false;
       q.enable_motion_blur = false;
+      q.enable_cascade_gi = true;
+      q.enable_volumetric_fog = true;
+      q.enable_soft_shadow = true;
       break;
     case QualityTier::High:
       q.shadow_cascades = 4;
@@ -44,8 +50,10 @@ QualitySettings QualitySettings::FromTier(QualityTier t) {
       q.enable_ssr = false;
       q.enable_dof = true;
       q.enable_motion_blur = false;
-      // Still Feature-gated at runtime; High opts into soft-shadow mask product path.
       q.enable_raytracing = true;
+      q.enable_cascade_gi = true;
+      q.enable_volumetric_fog = true;
+      q.enable_soft_shadow = true;
       break;
   }
   return q;

@@ -4,6 +4,7 @@
 #include "engine/core/result.h"
 #include "engine/gpu_driven/indirect_draw.h"
 #include "engine/vfx/particles.h"
+#include "engine/vfx/trail_ribbon.h"
 
 #include <cstdint>
 #include <string>
@@ -31,7 +32,13 @@ struct ParticleSubEmit {
   float size_scale = 0.45f;
 };
 
-// W16 / ADR 0040 + W21 ADR 0044: GPU particle path + collision / sub-emit.
+struct ParticleAttractor {
+  Vec3 position{};
+  float strength = 4.f;  // positive = pull
+  float radius = 3.f;
+  bool enabled = false;
+};
+
 class GpuParticleSystem {
  public:
   void Configure(const Vec3& origin, float rate, float lifetime, std::uint32_t max_particles = 256);
@@ -45,9 +52,10 @@ class GpuParticleSystem {
   void set_collision_plane(const ParticleCollisionPlane& p) { collision_ = p; }
   void set_kill_box(const ParticleKillBox& box) { kill_box_ = box; }
   void set_sub_emit(const ParticleSubEmit& s) { sub_emit_ = s; }
-  [[nodiscard]] const ParticleCollisionPlane& collision_plane() const { return collision_; }
-  [[nodiscard]] const ParticleKillBox& kill_box() const { return kill_box_; }
-  [[nodiscard]] const ParticleSubEmit& sub_emit() const { return sub_emit_; }
+  void set_attractor(const ParticleAttractor& a) { attractor_ = a; }
+  void set_trail_enabled(bool on);
+  [[nodiscard]] TrailRibbon& trail() { return trail_; }
+  [[nodiscard]] const TrailRibbon& trail() const { return trail_; }
 
   Status Step(float dt);
 
@@ -65,15 +73,20 @@ class GpuParticleSystem {
   ParticleCollisionPlane collision_{};
   ParticleKillBox kill_box_{};
   ParticleSubEmit sub_emit_{};
+  ParticleAttractor attractor_{};
   float sub_accum_ = 0.f;
+  bool trail_enabled_ = false;
+  TrailRibbon trail_{};
 
   float NextRand();
   void EmitCpu(int count);
   void EmitSubCpu(const Particle& parent, int count);
   void IntegrateCpu(float dt);
+  void ApplyAttractor(float dt);
   void ApplyCollisionAndKill();
   void CullDead();
   void FillIndirect();
+  void UpdateTrail();
 };
 
 }  // namespace engine::vfx

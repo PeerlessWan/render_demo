@@ -5,7 +5,7 @@
 > 定位：**Windows（D3D12 + Vulkan）/ Linux（Vulkan）通用 2D·3D 渲染引擎**  
 > 范围分段：M1–M16（既有能力）+ M17–M19（后端/Linux/网络）+ **M20–M25 引擎缺口补齐（P2）**。  
 > **封板状态看板**（Doing 空）：[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)  
-> **引擎状态：W12–W20 已收口并封板** — [ADR 0040](learn/adr/0040-w16-zero-tail-closeout.md)–[0043](learn/adr/0043-w20-product-deepen.md)；**当前波 W21**（[ADR 0044](learn/adr/0044-w21-godot-parity-unfreeze.md)）。HEAD 见看板。  
+> **引擎状态：W12–W20 已收口并封板** — [ADR 0040](learn/adr/0040-w16-zero-tail-closeout.md)–[0043](learn/adr/0043-w20-product-deepen.md)；W21 收口 [0044](learn/adr/0044-w21-godot-parity-unfreeze.md)；**当前波 W22**（[ADR 0045](learn/adr/0045-w22-godot-kernel-100.md)）。HEAD 见看板。  
 > **游戏可用 ≠ 渲染可用**：玩法层见 **§1.9**（`game_kit` / `editor`；引擎封板不替代可玩产品水位）。
 
 ## 1. 总验收目标
@@ -571,7 +571,8 @@ Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
 | **W18** | 半落地加深（ADR 0042） | light tile GPU；WorldText/Path2D；VT packed；软影/MS/HLOD/dxc |
 | **W19** | （并入 W18/W20 收口） | 见 ADR 0042 / 0043 |
 | **W20** | 中台产品级加深并封板（ADR 0043） | GI/软影/VT/HLOD/MS；device 按域拆；Sandbox 默认 Medium；SSAO/软影/VT 默认 OFF；194 unit |
-| **W21** | Godot 渲染内核对标 + 解冻（ADR 0044） | CascadeGi/Light2D/材质·粒子·雾；DLSS/FSR2/MsQuic 可选 SDK；内核 vs Godot ≈80–85% |
+| **W21** | Godot 对标 + 解冻（ADR 0044） | CascadeGi/Light2D；DLSS/FSR/MsQuic 可选；内核 ≈80–85% |
+| **W22** | Godot 渲染内核 ≈100%（ADR 0045） | SDF/2D 阴影；材质粒子雾；DLSS+FSR Bind；Low 档；XeSS 不做；208 unit |
 
 > Q4 WARP / 默认严 C4 仍后置（测试轨，**非本波工程缺口**）。
 

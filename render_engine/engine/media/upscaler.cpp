@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <string_view>
+#include <vector>
 
 namespace engine::media {
 namespace {
@@ -89,25 +90,43 @@ Status BuiltinBilinearUpscaler::Upscale(std::span<const std::uint8_t> src, int s
 }
 
 std::unique_ptr<IUpscaler> CreateUpscaler() {
-  // W12 / ADR 0039: DLSS → FSR2 → builtin. name() never lies about missing SDKs.
+  // W22 ADR 0045: DLSS → FSR2 → builtin. Smoke Upscale; discard vendor if SKIP (honest).
+  // Intel XeSS not supported.
+  auto smoke_ok = [](IUpscaler& u) {
+    std::vector<std::uint8_t> src = {255, 0, 0, 255};
+    std::vector<std::uint8_t> dst;
+    return static_cast<bool>(u.Upscale(src, 1, 1, dst, 1, 1));
+  };
   if (auto dlss = TryCreateDlssUpscaler()) {
-    return dlss;
-  }
-  if (EnvPrefers("dlss")) {
+    if (smoke_ok(*dlss)) {
+      return dlss;
+    }
+    static bool logged = false;
+    if (!logged) {
+      logged = true;
+      LogWarn("DLSS present but Upscale not ready → continue fallback (ADR 0045)");
+    }
+  } else if (EnvPrefers("dlss")) {
     static bool logged_dlss = false;
     if (!logged_dlss) {
       logged_dlss = true;
-      LogWarn("DLSS SDK absent (ENGINE_WITH_NGX=0) → continue fallback chain");
+      LogWarn("DLSS SDK/device absent → continue fallback chain");
     }
   }
   if (auto fsr = TryCreateFsr2Upscaler()) {
-    return fsr;
-  }
-  if (EnvPrefers("fsr") || EnvPrefers("fsr2")) {
+    if (smoke_ok(*fsr)) {
+      return fsr;
+    }
+    static bool logged_fsr = false;
+    if (!logged_fsr) {
+      logged_fsr = true;
+      LogWarn("FSR2 present but Upscale not ready → builtin_bilinear (ADR 0045)");
+    }
+  } else if (EnvPrefers("fsr") || EnvPrefers("fsr2")) {
     static bool logged_fsr_absent = false;
     if (!logged_fsr_absent) {
       logged_fsr_absent = true;
-      LogWarn("FSR2 SDK absent (ENGINE_WITH_FIDELITYFX=0) → builtin_bilinear");
+      LogWarn("FSR2 SDK/device absent → builtin_bilinear");
     }
   }
   return std::make_unique<BuiltinBilinearUpscaler>();

@@ -3,6 +3,7 @@
 #include "engine/animation/skeleton.h"
 #include "engine/animation/gpu_skin_main.h"
 #include "engine/media/upscaler.h"
+#include "engine/media/upscaler_backends.h"
 #include "engine/assets/character_asset.h"
 #include "engine/assets/gltf_loader.h"
 #include "engine/assets/image_loader.h"
@@ -909,6 +910,7 @@ int main(int argc, char** argv) {
     cdesc.base_ny = 4;
     cdesc.base_nz = 7;
     cdesc.sdf_occlusion = 0.4f;
+    cdesc.leak_suppress = 0.35f;
     cascade_gi.Configure(cdesc);
     cascade_gi.set_budget_per_frame(rdesc.quality.probe_update_budget);
     engine::gi::CascadeOccluderAabb wall;
@@ -1064,6 +1066,13 @@ int main(int argc, char** argv) {
     sub.rate = 6.f;
     sub.lifetime = 0.3f;
     gpu_particles.set_sub_emit(sub);
+    engine::vfx::ParticleAttractor att;
+    att.position = {1.8f, 1.2f, 1.0f};
+    att.strength = 3.5f;
+    att.radius = 2.5f;
+    att.enabled = true;
+    gpu_particles.set_attractor(att);
+    gpu_particles.set_trail_enabled(true);
   }
   engine::SetFeatureOverride("gpu_particles", true);
   // W16 ADR 0040: VT near-default demo (not full-material default).
@@ -1164,6 +1173,20 @@ int main(int argc, char** argv) {
     }
   }
   auto sandbox_upscaler = engine::media::CreateUpscaler();
+  {
+    // W22: bind live device for DLSS/FSR readiness (evaluate may still SKIP → bilinear).
+    void* native = nullptr;
+#if defined(_WIN32)
+    native = reinterpret_cast<void*>(static_cast<std::uintptr_t>(1));  // non-null marker
+#endif
+    const auto api = a.device().api_kind() == engine::rhi::DeviceApiKind::Vulkan
+                         ? engine::media::UpscalerGpuApi::Vulkan
+                         : engine::media::UpscalerGpuApi::D3D12;
+    if (a.device().api_kind() != engine::rhi::DeviceApiKind::Headless) {
+      engine::media::BindUpscalerGpuDevice(api, native);
+      sandbox_upscaler = engine::media::CreateUpscaler();
+    }
+  }
   engine::LogInfo(std::string("W12 upscaler: ") + sandbox_upscaler->name());
   engine::clothing::GarmentCloth cape;
   {
@@ -2234,8 +2257,10 @@ int main(int argc, char** argv) {
       env.clear_color = fog_apply.clear_color;
       fx.fog_color = fog_apply.fog_color;
       fx.fog_density = fog_apply.fog_density;
-      if (fog_apply.enable_fog) {
+      if (fog_apply.enable_fog && render.quality().enable_volumetric_fog) {
         fx.enable_fog = true;
+      } else if (!render.quality().enable_volumetric_fog) {
+        fx.enable_fog = false;
       }
       app_ref.set_clear_color(env.clear_color);
       render.set_effect_tuning(fx);
@@ -2256,9 +2281,14 @@ int main(int argc, char** argv) {
     // Default OFF keeps golden parity (enable_probe_gi=0 → zero visual change).
     probes.set_budget_per_frame(render.quality().probe_update_budget);
     cascade_gi.set_budget_per_frame(render.quality().probe_update_budget);
-    const bool want_gi = enable_gi || enable_cascade_gi;
-    probes.set_enabled(enable_gi && !enable_cascade_gi);
-    cascade_gi.set_enabled(enable_cascade_gi);
+    const bool want_gi =
+        (enable_gi || enable_cascade_gi) &&
+        (enable_cascade_gi ? render.quality().enable_cascade_gi : true);
+    if (enable_cascade_gi && !render.quality().enable_cascade_gi) {
+      // Low tier: keep checkbox but force off product path.
+    }
+    probes.set_enabled(enable_gi && !enable_cascade_gi && want_gi);
+    cascade_gi.set_enabled(enable_cascade_gi && render.quality().enable_cascade_gi);
     fx.enable_probe_gi = false;
     if (want_gi) {
       std::vector<engine::gi::ProbeLight> pls;
@@ -2488,8 +2518,16 @@ int main(int argc, char** argv) {
       lamp.energy = 1.6f;
       lamp.range = 160.f;
       lamp.layer_mask = 1u;
+      lamp.cast_shadows = true;
       std::array<engine::render2d::Light2D, 1> lights{lamp};
-      engine::render2d::ApplyLights2D(sprites, lights);
+      engine::render2d::LightOccluder2D wall;
+      wall.polygon = {{40.f, dh - 130.f}, {56.f, dh - 70.f}};
+      wall.layer_mask = 1u;
+      std::array<engine::render2d::LightOccluder2D, 1> occluders{wall};
+      engine::render2d::ApplyLights2D(sprites, lights, occluders);
+      engine::render2d::CanvasModulate canvas;
+      canvas.color = {1.f, 0.98f, 0.95f, 1.f};
+      engine::render2d::ApplyCanvasModulate(sprites, canvas);
     }
     engine::render2d::SortSprites(sprites);
 

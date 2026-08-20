@@ -27,6 +27,13 @@ struct Environment {
   float fog_density = 0.02f;
   float fog_start = 12.f;
   ColorRgba fog_color{0.62f, 0.70f, 0.78f, 1.f};
+  // W22: optional fog volume AABB (world space); disabled when min>=max on any axis.
+  Vec3 fog_box_min{0.f, 0.f, 0.f};
+  Vec3 fog_box_max{0.f, 0.f, 0.f};
+  [[nodiscard]] bool has_fog_box() const {
+    return fog_box_min.x < fog_box_max.x && fog_box_min.y < fog_box_max.y &&
+           fog_box_min.z < fog_box_max.z;
+  }
 
   bool skybox_enabled = true;
   // C05: when true, Sandbox/host may tint fog_color / clear from EvalSkyColor(cam forward).

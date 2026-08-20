@@ -19,6 +19,10 @@ struct QualitySettings {
   bool enable_motion_blur = false;
   bool enable_raytracing = false;
   bool multithread_submit = false;
+  // W22 Low-tier weak-GPU gates (ADR 0045)
+  bool enable_cascade_gi = true;
+  bool enable_volumetric_fog = true;
+  bool enable_soft_shadow = true;
 
   static QualitySettings FromTier(QualityTier t);
 };

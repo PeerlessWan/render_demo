@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace engine::gi {
 
@@ -12,8 +13,10 @@ void CascadeGiVolume::Configure(const CascadeGiDesc& desc) {
   desc_.base_ny = std::max(2, desc_.base_ny);
   desc_.base_nz = std::max(2, desc_.base_nz);
   desc_.sdf_occlusion = std::clamp(desc_.sdf_occlusion, 0.f, 1.f);
+  desc_.leak_suppress = std::clamp(desc_.leak_suppress, 0.f, 1.f);
   cascades_.clear();
   cascades_.reserve(static_cast<std::size_t>(desc_.cascade_count));
+  tick_ = 0;
 
   for (int c = 0; c < desc_.cascade_count; ++c) {
     const float grow = std::pow(2.f, static_cast<float>(c));
@@ -29,16 +32,22 @@ void CascadeGiVolume::Configure(const CascadeGiDesc& desc) {
     vol.Configure(origin, spacing, nx, ny, nz);
     cascades_.push_back(std::move(vol));
   }
+  set_budget_per_frame(total_budget_);
 }
 
 void CascadeGiVolume::set_budget_per_frame(int n) {
-  n = std::max(1, n);
+  total_budget_ = std::max(1, n);
   if (cascades_.empty()) {
     return;
   }
-  const int per = std::max(1, n / static_cast<int>(cascades_.size()));
-  for (auto& c : cascades_) {
-    c.set_budget_per_frame(per);
+  // Near cascade gets ~half budget; remainder split across far cascades.
+  const int near_b = std::max(1, total_budget_ / 2);
+  cascades_.front().set_budget_per_frame(near_b);
+  const int rest = std::max(1, total_budget_ - near_b);
+  const int far_n = std::max(1, static_cast<int>(cascades_.size()) - 1);
+  const int per_far = std::max(1, rest / far_n);
+  for (std::size_t i = 1; i < cascades_.size(); ++i) {
+    cascades_[i].set_budget_per_frame(per_far);
   }
 }
 
@@ -55,7 +64,6 @@ void CascadeGiVolume::ApplySdfOcclusionLite() {
     for (auto& probe : cascade.probes()) {
       float occ = 0.f;
       for (const auto& box : occluders_) {
-        // Soft inside-AABB factor (Godot SDFGI spirit — not a true SDF field).
         const float dx = std::max(box.min_p.x - probe.position.x, probe.position.x - box.max_p.x);
         const float dy = std::max(box.min_p.y - probe.position.y, probe.position.y - box.max_p.y);
         const float dz = std::max(box.min_p.z - probe.position.z, probe.position.z - box.max_p.z);
@@ -77,15 +85,58 @@ void CascadeGiVolume::ApplySdfOcclusionLite() {
   }
 }
 
+void CascadeGiVolume::ApplyLeakSuppress() {
+  const float leak = desc_.leak_suppress;
+  if (leak <= 1e-4f || occluders_.empty()) {
+    return;
+  }
+  for (auto& cascade : cascades_) {
+    for (auto& probe : cascade.probes()) {
+      float near_wall = 0.f;
+      for (const auto& box : occluders_) {
+        const float cx = std::clamp(probe.position.x, box.min_p.x, box.max_p.x);
+        const float cy = std::clamp(probe.position.y, box.min_p.y, box.max_p.y);
+        const float cz = std::clamp(probe.position.z, box.min_p.z, box.max_p.z);
+        const float dx = probe.position.x - cx;
+        const float dy = probe.position.y - cy;
+        const float dz = probe.position.z - cz;
+        const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        near_wall = std::max(near_wall, std::clamp(1.f - dist / 0.75f, 0.f, 1.f));
+      }
+      if (near_wall > 0.f) {
+        const float atten = 1.f - near_wall * leak * 0.55f;
+        probe.irradiance.r *= atten;
+        probe.irradiance.g *= atten;
+        probe.irradiance.b *= atten;
+      }
+    }
+  }
+}
+
 void CascadeGiVolume::TickProduct(std::span<const ProbeLight> lights, float neighborhood_weight) {
   if (!enabled_ || cascades_.empty()) {
     return;
   }
-  for (auto& c : cascades_) {
-    c.set_enabled(true);
-    c.TickProduct(lights, neighborhood_weight);
+  ++tick_;
+  for (std::size_t i = 0; i < cascades_.size(); ++i) {
+    // Cascade 0 every frame; cascade k every (k+1) frames.
+    const std::uint64_t period = static_cast<std::uint64_t>(i) + 1u;
+    if ((tick_ % period) != 0u && i > 0) {
+      continue;
+    }
+    cascades_[i].set_enabled(true);
+    cascades_[i].TickProduct(lights, neighborhood_weight);
   }
   ApplySdfOcclusionLite();
+  ApplyLeakSuppress();
+}
+
+ColorRgba CascadeGiVolume::BlendWithReflection(const ColorRgba& probe_gi, const ColorRgba& reflection,
+                                               float weight) {
+  weight = std::clamp(weight, 0.f, 1.f);
+  return ColorRgba{probe_gi.r + (reflection.r - probe_gi.r) * weight,
+                   probe_gi.g + (reflection.g - probe_gi.g) * weight,
+                   probe_gi.b + (reflection.b - probe_gi.b) * weight, 1.f};
 }
 
 ColorRgba CascadeGiVolume::Sample(const Vec3& world_pos) const {

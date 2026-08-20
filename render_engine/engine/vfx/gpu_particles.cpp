@@ -20,6 +20,43 @@ void GpuParticleSystem::Configure(const Vec3& origin, float rate, float lifetime
   sub_accum_ = 0.f;
   last_path_ = "configured";
   last_indirect_ = {};
+  trail_.Configure(0.45f, 0.06f, 48);
+  trail_.Clear();
+}
+
+void GpuParticleSystem::set_trail_enabled(bool on) {
+  trail_enabled_ = on;
+  trail_.set_enabled(on);
+  if (!on) {
+    trail_.Clear();
+  }
+}
+
+void GpuParticleSystem::ApplyAttractor(float dt) {
+  if (!attractor_.enabled || attractor_.radius <= 1e-4f) {
+    return;
+  }
+  for (auto& p : particles_) {
+    Vec3 d = attractor_.position - p.position;
+    const float dist = d.length();
+    if (dist >= attractor_.radius || dist < 1e-4f) {
+      continue;
+    }
+    const float t = 1.f - dist / attractor_.radius;
+    const float w = attractor_.strength * t * t * dt;
+    d = d * (1.f / dist);
+    p.velocity = p.velocity + d * w;
+  }
+}
+
+void GpuParticleSystem::UpdateTrail() {
+  if (!trail_enabled_) {
+    return;
+  }
+  trail_.Step(1.f / 60.f);
+  if (!particles_.empty()) {
+    trail_.Push(particles_.front().position, particles_.front().color);
+  }
 }
 
 float GpuParticleSystem::NextRand() {
@@ -100,6 +137,7 @@ void GpuParticleSystem::IntegrateCpu(float dt) {
       parents_for_sub.push_back(p);
     }
   }
+  ApplyAttractor(dt);
   ApplyCollisionAndKill();
   if (sub_emit_.enabled && !parents_for_sub.empty()) {
     sub_accum_ += sub_emit_.rate * dt * static_cast<float>(parents_for_sub.size()) * 0.05f;
@@ -148,14 +186,17 @@ Status GpuParticleSystem::Step(float dt) {
       gpu = particles_detail::TryIntegrateGpuCsVk(particles_, dt);
     }
     if (gpu) {
+      ApplyAttractor(dt);
       ApplyCollisionAndKill();
       CullDead();
       FillIndirect();
+      UpdateTrail();
       last_path_ = gpu.message().empty() ? "gpu-cs" : gpu.message();
       return Status::Ok(last_path_.c_str());
     }
     IntegrateCpu(dt);
     FillIndirect();
+    UpdateTrail();
     last_path_ = "cpu-fallback";
     static bool once = false;
     if (!once) {
@@ -168,6 +209,7 @@ Status GpuParticleSystem::Step(float dt) {
 
   IntegrateCpu(dt);
   FillIndirect();
+  UpdateTrail();
   last_path_ = "cpu-fallback";
   return Status::Ok("cpu-fallback");
 }
