@@ -1,10 +1,7 @@
 # Fetch AMD FidelityFX FSR2 headers/libs into third_party (optional).
-# W16 ADR 0040: this script only prepares a drop-in directory — it does NOT download
-# SDKs and does NOT enable fake name=fsr2 Upscalers. CreateUpscaler stays on
-# builtin_bilinear until real FFX Upscale() is wired under ENGINE_WITH_FIDELITYFX.
-#
-# Usage:
-#   powershell -ExecutionPolicy Bypass -File tools/fetch_fidelityfx.ps1
+# ADR 0044: prepares drop-in directory. Does NOT download SDKs.
+# After placing official FSR2 SDK, reconfigure with -DENGINE_WITH_FIDELITYFX=ON.
+# TryCreateFsr2Upscaler returns a live upscaler only when Upscale() dispatches into FFX.
 
 param(
   [string]$OutDir = (Join-Path $PSScriptRoot "..\third_party\fidelityfx")
@@ -14,14 +11,13 @@ $ErrorActionPreference = "Stop"
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $marker = Join-Path $OutDir "README_ENGINE.txt"
 @"
-FidelityFX / FSR2 vendor drop (manual).
+FidelityFX / FSR2 vendor drop (manual) — ADR 0044 unfreeze.
 
-1. Place official FSR2 SDK headers/libs here.
-2. Reconfigure CMake with -DENGINE_WITH_FIDELITYFX=ON only after Upscale()
-   dispatches into FFX (see engine/media/upscaler_backends.cpp).
-3. Until dispatch is wired, TryCreateFsr2Upscaler() returns nullptr (ADR 0040).
+1. Place official FSR2 SDK headers/libs here (ffx_fsr2.h).
+2. cmake -DENGINE_WITH_FIDELITYFX=ON (or ENGINE_WITH_FFX=ON).
+3. GPU FFX context must be bound before name()=fsr2 is returned from CreateUpscaler.
+4. Until then TryCreateFsr2Upscaler() returns nullptr → builtin_bilinear (honest).
 
-Do not claim name()=fsr2 while calling bilinear.
-See docs/learn/adr/0008-upscaler-fallback.md and ADR 0040.
+See docs/learn/adr/0044-w21-godot-parity-unfreeze.md and ADR 0008.
 "@ | Set-Content -Path $marker -Encoding UTF8
 Write-Host "Wrote $marker (manual SDK drop-in). No automatic download (license/size)."

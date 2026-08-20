@@ -21,7 +21,7 @@
 | 分层解耦 | 业务不直接依赖 D3D12 头文件；只依赖引擎公开 API |
 | 后端可替换 | RHI 抽象稳定；工厂注册后端；未实装后端返回明确错误 |
 | 扩展优先 Pass/模块 | 自定义渲染优先加 FrameGraph Pass、Material 变体或 Module |
-| 可降级 | 无 DXR 时走光栅阴影；超分无 NGX/FFX → `builtin_bilinear`（**DLSS/FSR2 冻结**） |
+| 可降级 | 无 DXR 时走光栅阴影；超分无 NGX/FFX → `builtin_bilinear`（ADR 0044 可选 SDK） |
 | 可读可维护 | 命名清晰、模块边界清楚、关键约定文档化 |
 | 可学习 | 关键路径可加强注释；`learn.*` 开关提供慢路径/校验；文档双轨更新 |
 | 外设可扩展 | 业务只依赖 `IInputDevice` / ActionMap；具体 HID/XInput/WinRT 藏在 adapters |
@@ -300,7 +300,7 @@ Visibility.Cull(camera) → RenderScene
 |---|---|
 | VFX | CPU 粒子、GPU 粒子、Trail、Decal |
 | Post | Tonemap、ColorGrading、Bloom、FXAA、Vignette；可插拔 Effect |
-| Upscaler | `IUpscaler`：诚实链 `builtin_bilinear`；**DLSS/FSR2 SDK 冻结** |
+| Upscaler | `IUpscaler`：DLSS→FSR2→`builtin_bilinear`（ADR 0044；无 SDK 诚实） |
 | RayTracing | BLAS/TLAS、RT Pipeline；一期示范级；可关 |
 | Frame Generation | **仅接口预留，一期不实装** |
 
@@ -464,7 +464,7 @@ GPU 上传中与异步收割重叠的部分：在 `Asset.PumpAsync` 已登记的
 |---|---|---|
 | 视频纹理 | D3D12VA stub 可诊断（真解另波） | Vulkan Video（产品路径外置） |
 | 光追示范 | DXR 真 AS/DispatchRays（可关） | 有 `rayTracingPipeline` 则示范否则 SKIP |
-| 超分 | **冻结** DLSS/FSR2；`builtin_bilinear` | 同左 |
+| 超分 | 可选 DLSS/FSR2；无 SDK → `builtin_bilinear` | 同左 |
 | Mesh Shader | Tier→热路径 L1；无 → SKIP | EXT→热路径 L1；无 → SKIP |
 
 D3D12：Fence、屏障、描述符、Root Sig/PSO、Copy、DXR、NGX 等封装在后端内。  

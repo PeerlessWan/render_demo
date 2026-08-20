@@ -2,6 +2,7 @@
 
 #include "engine/core/math.h"
 #include "engine/render/atmosphere.h"
+#include "engine/render/quality.h"
 #include "engine/vfx/particles.h"
 
 #include <algorithm>
@@ -51,6 +52,18 @@ class WeatherSystem {
   // Couple fog density / tint with atmosphere + current weather.
   [[nodiscard]] CoupledFog CoupleFog(const AtmosphereParams& atmosphere, const Vec3& view_dir,
                                      float base_fog_density, bool enable_clouds) const;
+
+  // W21: Weather → volumetric fog product defaults (Sandbox / EffectTuning).
+  struct VolumetricFogApply {
+    bool enable_fog = false;
+    float fog_density = 0.02f;
+    Vec3 fog_color{0.62f, 0.70f, 0.78f};
+    ColorRgba clear_color{0.10f, 0.12f, 0.16f, 1.f};
+  };
+  [[nodiscard]] VolumetricFogApply MakeVolumetricFogApply(const AtmosphereParams& atmosphere,
+                                                          const Vec3& view_dir, QualityTier tier,
+                                                          float base_fog_density, bool enable_clouds,
+                                                          bool caller_enable_fog) const;
 
   // Drive existing VFX emitter as rain/snow curtain (caller Steps the emitter).
   void ConfigurePrecipEmitter(vfx::ParticleEmitter& emitter, const Vec3& camera_pos) const;

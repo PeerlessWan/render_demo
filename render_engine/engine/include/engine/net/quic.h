@@ -15,16 +15,17 @@ namespace engine::net {
 
 struct QuicProbeInfo {
   bool dll_or_lib_present = false;
-  bool linked = false;  // ENGINE_WITH_MSQUIC compile-time link
+  bool linked = false;  // ENGINE_WITH_MSQUIC compile-time
   std::string detail;
 };
 
 [[nodiscard]] QuicProbeInfo QueryMsQuicProbeInfo();
 
-// W16 ADR 0040: always Unavailable until MsQuic SendReliable API is wired (no session-stub Ok).
+// Remote connect (product hosts). Without full session wiring → Unavailable SKIP.
 [[nodiscard]] Status TryQuicConnectStub(std::string_view host, int port);
 
-// W16 ADR 0040: always Unavailable (no simulated-loopback Ok).
+// ADR 0044: ENGINE_WITH_MSQUIC=ON + msquic.dll → real MsQuicOpenVersion path.
+// OFF or missing DLL → Unavailable SKIP (no simulated Ok).
 [[nodiscard]] Status TryQuicLoopbackReliableSendRecv();
 
 }  // namespace engine::net

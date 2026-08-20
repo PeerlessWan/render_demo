@@ -3,6 +3,7 @@
 #include "engine/core/math.h"
 #include "engine/core/result.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -18,6 +19,11 @@ struct Sprite {
   float sort_y = 0.f;
   bool nearest = true;
   ColorRgba color{0.2f, 0.85f, 0.35f, 0.9f};
+  // W21: Godot CanvasItem-lite
+  ColorRgba modulate{1.f, 1.f, 1.f, 1.f};
+  std::string normal_tex;  // optional normal map id (CPU Light2D uses has_normals)
+  bool has_normals = false;
+  std::uint32_t layer_mask = 0xFFFFFFFFu;
 };
 
 struct TilemapLayer {

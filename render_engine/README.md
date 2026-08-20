@@ -14,6 +14,6 @@ build\samples\Sandbox\Release\sample_sandbox.exe
 **测试**：`ctest -R unit` / `ctest -L headless`；`sample_sandbox.exe --headless --headless_frames 3`。
 
 **水位**：见 [docs/DOING_UNDO_TODO.md](docs/DOING_UNDO_TODO.md)、[docs/PLAN.md](docs/PLAN.md)、[docs/VULKAN_PARITY.md](docs/VULKAN_PARITY.md)。  
-冻结：DLSS / FSR2 / MsQuic；不宣称 Nanite / 真 DDGI。
+W21：解冻 DLSS / FSR2 / MsQuic（可选 SDK）；不宣称 Nanite / 真 DDGI。
 
 ImGui 路径：`third_party/imgui-v1.91.8`（`ENGINE_WITH_IMGUI`）。

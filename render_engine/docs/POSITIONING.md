@@ -46,7 +46,7 @@
 | 非 ECS | 超大规模模拟/数据导向架构需上层自建；引擎用场景树 + 渲染 SoA 提取缓解（ADR 0024） |
 | 双后端特性差与维护成本 | 用 L0/L1/L2 分级 + 先 D3D12 后 VK 控制（ADR 0024）；视频/DXR 等仍须 Feature |
 | 视频仅硬解、随后端 | 无 VA 则视频不可用（无软解）；VA stub 可诊断 |
-| 超分无厂商 SDK | **冻结** DLSS/FSR2；诚实链仅 `builtin_bilinear` |
+| 超分无厂商 SDK | 可选 NGX/FFX（ADR 0044）；无 SDK → 诚实链仅 `builtin_bilinear` |
 
 ### 2.3 子系统能力边界
 
@@ -62,20 +62,20 @@
 
 | 缺陷 | 影响 |
 |---|---|
-| 范围 M1–M25 + **W12–W20 已封板** | 后续仅外置/冻结项与测试后置；不重开引擎主线 |
+| 范围 M1–M25 + **W12–W20 已封板**；**W21 Doing**（ADR 0044） | 外置项仍钉死；超分/MsQuic 已解冻为可选 SDK |
 | Win+Linux × D3D12+VK CI/黄金图矩阵 | 基线与驱动差异大 |
-| 第三方许可栈 | Jolt、ImGui、RmlUi、（冻结）DLSS/MsQuic、2D 骨骼运行时等 |
+| 第三方许可栈 | Jolt、ImGui、RmlUi、可选 DLSS/FSR2/MsQuic、2D 骨骼运行时等 |
 | 教学双轨维护 | 文档/Sample 与产品需同步 |
 
 ## 3. 风险锁死
 
-1. 无 NGX/FFX → **仅** `builtin_bilinear`；**DLSS/FSR2 真 SDK 冻结**（ADR 0043）。  
+1. 无 NGX/FFX → **仅** `builtin_bilinear`；有 SDK 时按 ADR 0044 链 DLSS→FSR2→builtin（禁止假名）。  
 2. 无 DXR/关 RT → 光栅阴影；按后端标注。  
 3. Frame Generation 不做。  
 4. **仅** Win D3D12+Vulkan、Linux Vulkan；**明确不做** macOS/移动/Metal；D3D11/GL/GLES 不实装。  
 5. 视频随后端硬解；无软解、不跨 API。  
 6. **音频明确不做特效**（ADR 0013）；物理第三方 + 抽象层。  
-7. P0 前不宣称 3D 通用验收；**W20 封板**后不宣称 UE/Nanite/真 DDGI。M25 后候选见 KNOWN_GAPS §4，立项须另开里程碑。  
+7. P0 前不宣称 3D 通用验收；**W20 封板 / W21 对标**后仍不宣称 UE/Nanite/真 DDGI。M25 后候选见 KNOWN_GAPS §4，立项须另开里程碑。  
 8. 玩法/状态同步/脚本/完整编辑器不进引擎核心；外挂方式见 [HOSTING.md](HOSTING.md)、ADR 0027。  
 9. 测试：unit + D3D12/Vulkan 冒烟；网络 loopback；Q4/严 C4 后置。  
 10. 凡三方经抽象层；遵守 STANDARDS；缺口补齐见 ADR 0023；双后端分级与 SoA 见 ADR 0024。  

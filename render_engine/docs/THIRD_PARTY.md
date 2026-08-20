@@ -29,7 +29,7 @@
 | `IPhysicsWorld` | Jolt | PhysX |
 | `IImmediateUi` / ImGui 适配 | Dear ImGui | 其它即时 UI（须等价调试能力） |
 | `IRetainedUi` | RmlUi | 薄自研保留模式 |
-| `IUpscaler` | **冻结** DLSS/FSR2 真 SDK | 仅 `builtin_bilinear`（ADR 0043） |
+| `IUpscaler` | 可选 DLSS/FSR2 SDK（ADR 0044） | 无 SDK → `builtin_bilinear` |
 | `IShaderCompiler`（工具链） | DXC | 其它 HLSL→DXIL/SPIR-V 工具（须 ADR） |
 | `IVideoDecoder` | D3D12VA / Vulkan Video | 同后端其它硬解（禁止软解降级） |
 | `IHttpClient` | cpp-httplib | libcurl / IX HTTP 等 |
@@ -52,13 +52,13 @@
 |---|---|---|---|
 | **物理** | [Jolt Physics](https://github.com/jrouwe/JoltPhysics) | 刚体、查询、角色控制器；薄 SoftBody 见 C22 | PhysX 可替代；见 ADR 0015 / **0029** |
 | **调试 UI** | [Dear ImGui](https://github.com/ocornut/imgui) | 控制台、Profiler、工具面板 | D3D12 + Vulkan backend |
-| **超分（NVIDIA）** | NVIDIA **DLSS / Streamline（NGX）** | `IUpscaler`（**产品冻结**，ADR 0043） | 许可与再分发单独合规；现网仅 bilinear |
+| **超分（NVIDIA）** | NVIDIA **DLSS / Streamline（NGX）** | `IUpscaler`（可选，ADR 0044） | 许可与再分发单独合规；无 SDK → bilinear |
 | **着色器编译** | **DirectXShaderCompiler (DXC)** | HLSL → DXIL；HLSL → SPIR-V（Vulkan） | Windows SDK / NuGet / 官方包；构建时调用 |
 | **Vulkan** | **Vulkan SDK**（LunarG） | Device/Swapchain/校验层 | M17+；Linux 必选 |
 | **视频硬解** | **D3D12VA**（Win+D3D12）；**Vulkan Video**（Win/Linux+Vulkan） | 与当前渲染 Device 绑定 | 跟随 RHI；**无软解、不跨 API** |
 | **HTTP(S)** | [cpp-httplib](https://github.com/yhirose/cpp-httplib) | HTTP 客户端（可兼调试服务端） | header-only；**HTTPS**：CMake `find_package(OpenSSL)` 成功且 `ENGINE_WITH_OPENSSL=ON` 时启用；未找到则 `Unavailable`（见 `http_httplib.cpp`）；**引擎不安装 OpenSSL**（可设 `OPENSSL_ROOT_DIR`）；见 ADR 0021 / 0031 |
 | **WebSocket** | [IXWebSocket](https://github.com/machinezone/IXWebSocket) | WS / WSS 客户端（可服务端） | 轻量、跨平台、少依赖 |
-| **QUIC** | [MsQuic](https://github.com/microsoft/msquic) | IETF QUIC **可靠流** | **产品冻结**（ADR 0043）；现网 Probe/Unavailable |
+| **QUIC** | [MsQuic](https://github.com/microsoft/msquic) | IETF QUIC **可靠流** | 可选（ADR 0044）；`ENGINE_WITH_MSQUIC`；无 → Probe/Unavailable |
 
 ---
 
@@ -69,7 +69,7 @@
 | **运行时 / HUD UI** | [RmlUi](https://github.com/mikke89/RmlUi) | 保留模式菜单/HUD | 薄自研保留模式（成本更高） |
 | **网格导入** | [cgltf](https://github.com/jkuhlmann/cgltf) 或 [fastgltf](https://github.com/spnda/fastgltf) | glTF 2.0 静态+蒙皮 | tinygltf |
 | **图像解码** | [stb_image](https://github.com/nothings/stb) | PNG/JPEG | [dds-ktx](https://github.com/septag/dds-ktx) 等补 DDS/KTX |
-| **超分 fallback** | **FidelityFX FSR**（**产品冻结**） | 无 DLSS 时超分 | 现网 **仅** 引擎内置双线性 |
+| **超分 fallback** | **FidelityFX FSR2**（可选，ADR 0044） | 无 DLSS 时超分 | 无 FFX → 引擎内置双线性 |
 | **JSON / 配置** | [nlohmann/json](https://github.com/nlohmann/json) 或 [simdjson](https://github.com/simdjson/simdjson) | 配置、序列化辅助 | 自研极简解析（不推荐） |
 | **字体光栅** | ImGui 内置 + [stb_truetype](https://github.com/nothings/stb) 或 FreeType | 调试 UI / 保留 UI 字形 | RmlUi 自带字体路径 |
 

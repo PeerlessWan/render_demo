@@ -1,5 +1,6 @@
 #include "engine/render/weather.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace engine::render {
@@ -160,6 +161,27 @@ CoupledFog WeatherSystem::CoupleFog(const AtmosphereParams& atmosphere, const Ve
     fog.fog_color.b = fog.fog_color.b * 0.9f + 0.85f * 0.1f;
   }
   return fog;
+}
+
+WeatherSystem::VolumetricFogApply WeatherSystem::MakeVolumetricFogApply(
+    const AtmosphereParams& atmosphere, const Vec3& view_dir, QualityTier tier,
+    float base_fog_density, bool enable_clouds, bool caller_enable_fog) const {
+  const CoupledFog fog = CoupleFog(atmosphere, view_dir, base_fog_density, enable_clouds);
+  VolumetricFogApply out;
+  out.fog_density = fog.fog_density;
+  out.fog_color = {fog.fog_color.r, fog.fog_color.g, fog.fog_color.b};
+  out.clear_color = fog.clear_color;
+  // High: default-on product volumetric feel; Medium/Low honor caller (don't explode FPS).
+  if (tier == QualityTier::High) {
+    out.enable_fog = true;
+    out.fog_density = std::min(out.fog_density, 0.06f);
+  } else {
+    out.enable_fog = caller_enable_fog;
+    if (tier == QualityTier::Medium && out.enable_fog) {
+      out.fog_density = std::min(out.fog_density, 0.035f);
+    }
+  }
+  return out;
 }
 
 void WeatherSystem::ConfigurePrecipEmitter(vfx::ParticleEmitter& emitter,

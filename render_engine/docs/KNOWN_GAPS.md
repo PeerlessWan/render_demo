@@ -38,7 +38,7 @@
 | 弱项 | 收口状态 | 仍不宣称 |
 |---|---|---|
 | GI / RT | **W20**：DDGI-lite atlas→GPU+lit；软影 half-res→FrameCB（非全屏 RT） | Lumen / RTXGI |
-| 超分 | 诚实链；无 FFX/NGX → `builtin_bilinear`；**DLSS/FSR2 冻结不开发** | Frame Generation |
+| 超分 | 诚实链；可选 NGX/FFX（ADR 0044）；无 SDK → `builtin_bilinear` | Frame Generation |
 | VT / GPU Driven | **W20**：物理页 atlas + lit opt-in；Cull+Indirect；meshoptimizer Prefer | Nanite / 全材质默认 VT |
 | GPU 粒子 | D3D12 CS；**W17** VK `gpu-cs-vk` SSBO dispatch（缺 SPIR-V → cpu-fallback） | Niagara |
 | 角色 | mesh0 全 prim；蒙皮多 draw（Sandbox 多 slot） | 服装/完整 IK |

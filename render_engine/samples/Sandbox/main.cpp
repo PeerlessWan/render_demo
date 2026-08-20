@@ -16,6 +16,7 @@
 #include "engine/core/feature.h"
 #include "engine/gi/lightmap.h"
 #include "engine/gi/probe_volume.h"
+#include "engine/gi/cascade_gi.h"
 #include "engine/gi/reflection_probe.h"
 #include "engine/gi/scene_capture.h"
 #include "engine/gpu_driven/indirect_draw.h"
@@ -23,8 +24,10 @@
 #include "engine/hlod/billboard_impostor.h"
 #include "engine/rt/raytracing.h"
 #include "engine/render/atmosphere.h"
+#include "engine/render/weather.h"
 #include "engine/render/ies_profile.h"
 #include "engine/render2d/bmfont.h"
+#include "engine/render2d/light2d.h"
 #include "engine/render2d/path2d.h"
 #include "engine/render2d/world_text.h"
 #include "engine/render/ibl_pack.h"
@@ -55,6 +58,7 @@
 #include "write_bmp.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -66,6 +70,7 @@
 #include <iostream>
 #include <iterator>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -894,7 +899,27 @@ int main(int argc, char** argv) {
   // does not replace IBL/Lightmap — F1 "Probe GI" toggles this additive tint.
   probes.Configure({-6.f, 0.25f, -6.f}, {1.5f, 1.25f, 1.5f}, 9, 4, 9);
   probes.set_budget_per_frame(rdesc.quality.probe_update_budget);
+  engine::gi::CascadeGiVolume cascade_gi;
+  {
+    engine::gi::CascadeGiDesc cdesc;
+    cdesc.origin = {-4.f, 0.2f, -4.f};
+    cdesc.extent = {8.f, 3.5f, 8.f};
+    cdesc.cascade_count = 2;
+    cdesc.base_nx = 7;
+    cdesc.base_ny = 4;
+    cdesc.base_nz = 7;
+    cdesc.sdf_occlusion = 0.4f;
+    cascade_gi.Configure(cdesc);
+    cascade_gi.set_budget_per_frame(rdesc.quality.probe_update_budget);
+    engine::gi::CascadeOccluderAabb wall;
+    wall.min_p = {-1.5f, 0.f, -0.4f};
+    wall.max_p = {1.5f, 2.5f, 0.4f};
+    cascade_gi.set_occluders(std::span<const engine::gi::CascadeOccluderAabb>(&wall, 1));
+  }
+  engine::render::WeatherSystem weather;
+  weather.SetState(engine::render::WeatherState::Cloudy, 0.45f);
   bool enable_gi = false;
+  bool enable_cascade_gi = false;
   bool gi_cascade_refined = false;
   bool soft_shadow_mask_ready = false;
   bool enable_soft_shadow_product = false;  // opt-in: DXR demo AS rebuild is expensive
@@ -1022,6 +1047,24 @@ int main(int argc, char** argv) {
   particles.Configure({1.8f, 2.6f, 1.0f}, 28.f, 1.1f);
   engine::vfx::GpuParticleSystem gpu_particles;
   gpu_particles.Configure({1.8f, 2.6f, 1.0f}, 28.f, 1.1f, 128);
+  {
+    engine::vfx::ParticleCollisionPlane plane;
+    plane.point = {0.f, 0.05f, 0.f};
+    plane.normal = {0.f, 1.f, 0.f};
+    plane.bounce = 0.4f;
+    plane.enabled = true;
+    gpu_particles.set_collision_plane(plane);
+    engine::vfx::ParticleKillBox box;
+    box.min_p = {-8.f, -1.f, -8.f};
+    box.max_p = {8.f, 12.f, 8.f};
+    box.enabled = true;
+    gpu_particles.set_kill_box(box);
+    engine::vfx::ParticleSubEmit sub;
+    sub.enabled = true;
+    sub.rate = 6.f;
+    sub.lifetime = 0.3f;
+    gpu_particles.set_sub_emit(sub);
+  }
   engine::SetFeatureOverride("gpu_particles", true);
   // W16 ADR 0040: VT near-default demo (not full-material default).
   engine::SetFeatureOverride("virtual_texture", true);
@@ -1993,6 +2036,9 @@ int main(int argc, char** argv) {
             }
           }
           imgui.Checkbox(Su.probe_gi, &enable_gi);
+          imgui.Checkbox(ui_lang_i == static_cast<int>(SandboxUiLang::Zh) ? "级联 GI (Cascade)"
+                                                                          : "Cascade GI",
+                         &enable_cascade_gi);
           {
             char up_line[96];
             std::snprintf(up_line, sizeof(up_line), "Upscaler: %s (ENGINE_UPSCALER)",
@@ -2172,6 +2218,7 @@ int main(int argc, char** argv) {
     render.set_effect_tuning(fx);
 
     // C05/W7: optional atmosphere (+ cloud band) coupled into fog / clear.
+    // W21: WeatherSystem → VolumetricFog product defaults (High can auto-enable).
     if (env.enable_atmosphere) {
       engine::render::AtmosphereParams ap;
       ap.sun_dir = env.sun_direction;
@@ -2179,13 +2226,16 @@ int main(int argc, char** argv) {
       const auto& cam = app_ref.camera();
       const engine::Quat q = engine::Quat::FromEulerYxz(cam.yaw, cam.pitch, 0.f);
       const engine::Vec3 fwd = q.Rotate(engine::Vec3{0.f, 0.f, -1.f});
-      const auto coupled = engine::render::CoupleFogWithAtmosphere(
-          ap, fwd, fx.fog_density > 1e-6f ? fx.fog_density : 0.02f, env.enable_volume_clouds);
-      env.fog_color = coupled.fog_color;
-      env.clear_color = coupled.clear_color;
-      fx.fog_color = {coupled.fog_color.r, coupled.fog_color.g, coupled.fog_color.b};
-      if (fx.enable_fog) {
-        fx.fog_density = coupled.fog_density;
+      weather.Update(app_ref.delta_time());
+      const auto fog_apply = weather.MakeVolumetricFogApply(
+          ap, fwd, render.quality().tier,
+          fx.fog_density > 1e-6f ? fx.fog_density : 0.02f, env.enable_volume_clouds, fx.enable_fog);
+      env.fog_color = {fog_apply.fog_color.x, fog_apply.fog_color.y, fog_apply.fog_color.z, 1.f};
+      env.clear_color = fog_apply.clear_color;
+      fx.fog_color = fog_apply.fog_color;
+      fx.fog_density = fog_apply.fog_density;
+      if (fog_apply.enable_fog) {
+        fx.enable_fog = true;
       }
       app_ref.set_clear_color(env.clear_color);
       render.set_effect_tuning(fx);
@@ -2202,12 +2252,15 @@ int main(int argc, char** argv) {
       (void)tiles;
     }
 
-    // M22 / W20: DDGI-lite ProbeVolume → GPU irradiance atlas + lit world-pos sample.
+    // M22 / W20 / W21: ProbeVolume or CascadeGi → GPU irradiance atlas + lit sample.
     // Default OFF keeps golden parity (enable_probe_gi=0 → zero visual change).
     probes.set_budget_per_frame(render.quality().probe_update_budget);
-    probes.set_enabled(enable_gi);
+    cascade_gi.set_budget_per_frame(render.quality().probe_update_budget);
+    const bool want_gi = enable_gi || enable_cascade_gi;
+    probes.set_enabled(enable_gi && !enable_cascade_gi);
+    cascade_gi.set_enabled(enable_cascade_gi);
     fx.enable_probe_gi = false;
-    if (enable_gi) {
+    if (want_gi) {
       std::vector<engine::gi::ProbeLight> pls;
       pls.reserve(sandbox_local_lights.size());
       for (const auto& L : sandbox_local_lights) {
@@ -2220,30 +2273,52 @@ int main(int argc, char** argv) {
       }
       const engine::Vec3 focus =
           possess.possess_character ? possess.position : app_ref.camera().position;
-      if (!gi_cascade_refined) {
-        probes.CascadeRefine(focus, 1);
-        gi_cascade_refined = true;
-      }
-      probes.TickProduct(pls, 0.18f);
-      if ((app_ref.frame_index() % static_cast<std::uint64_t>(kProbeAtlasUploadInterval)) == 0) {
-        const auto atlas = probes.BuildIrradianceAtlasCpu();
-        const int nprobe = probes.grid_nx() * probes.grid_ny() * probes.grid_nz();
-        if (auto st = app_ref.device().UploadProbeIrradianceAtlas(
-                atlas.data(), nprobe, probes.grid_nx(), probes.grid_ny(), probes.grid_nz());
-            !st) {
-          engine::LogWarn(std::string("UploadProbeIrradianceAtlas: ") + st.message());
+      if (enable_cascade_gi) {
+        cascade_gi.TickProduct(pls, 0.18f);
+        if ((app_ref.frame_index() % static_cast<std::uint64_t>(kProbeAtlasUploadInterval)) == 0) {
+          const auto& primary = cascade_gi.primary();
+          const auto atlas = cascade_gi.BuildIrradianceAtlasCpu();
+          const int nprobe = primary.grid_nx() * primary.grid_ny() * primary.grid_nz();
+          if (auto st = app_ref.device().UploadProbeIrradianceAtlas(
+                  atlas.data(), nprobe, primary.grid_nx(), primary.grid_ny(), primary.grid_nz());
+              !st) {
+            engine::LogWarn(std::string("UploadProbeIrradianceAtlas(cascade): ") + st.message());
+          }
         }
+        fx.enable_probe_gi = true;
+        fx.probe_gi_intensity = 0.4f;
+        fx.probe_rgb_scale = 2.f;
+        fx.probe_origin = cascade_gi.primary().origin();
+        fx.probe_spacing = cascade_gi.primary().spacing();
+        fx.probe_nx = cascade_gi.primary().grid_nx();
+        fx.probe_ny = cascade_gi.primary().grid_ny();
+        fx.probe_nz = cascade_gi.primary().grid_nz();
+        env.ambient = {0.18f, 0.19f, 0.22f, 1.f};
+      } else {
+        if (!gi_cascade_refined) {
+          probes.CascadeRefine(focus, 1);
+          gi_cascade_refined = true;
+        }
+        probes.TickProduct(pls, 0.18f);
+        if ((app_ref.frame_index() % static_cast<std::uint64_t>(kProbeAtlasUploadInterval)) == 0) {
+          const auto atlas = probes.BuildIrradianceAtlasCpu();
+          const int nprobe = probes.grid_nx() * probes.grid_ny() * probes.grid_nz();
+          if (auto st = app_ref.device().UploadProbeIrradianceAtlas(
+                  atlas.data(), nprobe, probes.grid_nx(), probes.grid_ny(), probes.grid_nz());
+              !st) {
+            engine::LogWarn(std::string("UploadProbeIrradianceAtlas: ") + st.message());
+          }
+        }
+        fx.enable_probe_gi = true;
+        fx.probe_gi_intensity = 0.35f;
+        fx.probe_rgb_scale = 2.f;
+        fx.probe_origin = probes.origin();
+        fx.probe_spacing = probes.spacing();
+        fx.probe_nx = probes.grid_nx();
+        fx.probe_ny = probes.grid_ny();
+        fx.probe_nz = probes.grid_nz();
+        env.ambient = {0.20f, 0.21f, 0.24f, 1.f};
       }
-      fx.enable_probe_gi = true;
-      fx.probe_gi_intensity = 0.35f;
-      fx.probe_rgb_scale = 2.f;
-      fx.probe_origin = probes.origin();
-      fx.probe_spacing = probes.spacing();
-      fx.probe_nx = probes.grid_nx();
-      fx.probe_ny = probes.grid_ny();
-      fx.probe_nz = probes.grid_nz();
-      // Base ambient only; spatial GI is sampled in lit (not CPU ambient tint).
-      env.ambient = {0.20f, 0.21f, 0.24f, 1.f};
     } else {
       gi_cascade_refined = false;
       env.ambient = {0.20f, 0.21f, 0.24f, 1.f};
@@ -2349,7 +2424,7 @@ int main(int argc, char** argv) {
     }
     render.set_effect_tuning(fx);
 
-    // M16 sprites + M7 particle screen proxies
+    // M16 sprites + M7 particle screen proxies + W21 Light2D
     sprites.clear();
     {
       // Distinct warm marker (not cyan — cyan matched the washed floor bug).
@@ -2358,7 +2433,22 @@ int main(int argc, char** argv) {
       s.size = {96.f, 48.f};
       s.color = {0.95f, 0.55f, 0.15f, 0.9f};
       s.sort_y = s.position.y;
+      s.layer_mask = 2u;
       sprites.push_back(s);
+    }
+    {
+      // W21: normal-mapped tile + point Light2D (CPU lit into color).
+      engine::render2d::Sprite tile;
+      tile.position = {24.f, dh - 140.f};
+      tile.size = {96.f, 96.f};
+      tile.color = {0.55f, 0.58f, 0.62f, 1.f};
+      tile.modulate = {1.f, 1.f, 1.f, 1.f};
+      tile.has_normals = true;
+      tile.normal_tex = "demo_normal";
+      tile.sort_layer = 1;
+      tile.sort_y = tile.position.y;
+      tile.layer_mask = 1u;
+      sprites.push_back(tile);
     }
     const float aspect_pre = dh > 0.f ? dw / dh : 1.f;
     const auto vp = app_ref.camera().view_proj_matrix(aspect_pre);
@@ -2386,8 +2476,20 @@ int main(int argc, char** argv) {
       s.size = {p.size, p.size};
       s.color = p.color;
       s.sort_y = s.position.y;
+      s.layer_mask = 2u;
       sprites.push_back(s);
       ++particle_sprites;
+    }
+    {
+      engine::render2d::Light2D lamp;
+      lamp.type = engine::render2d::Light2DType::Point;
+      lamp.position = {72.f, dh - 90.f};
+      lamp.color = {1.f, 0.85f, 0.55f, 1.f};
+      lamp.energy = 1.6f;
+      lamp.range = 160.f;
+      lamp.layer_mask = 1u;
+      std::array<engine::render2d::Light2D, 1> lights{lamp};
+      engine::render2d::ApplyLights2D(sprites, lights);
     }
     engine::render2d::SortSprites(sprites);
 

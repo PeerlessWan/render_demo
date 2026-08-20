@@ -17,7 +17,8 @@ W18/W19 半落地收口后，仍有四类工程弱项：深度不均、双后端
    - **C** W20 新路径标 L0 则双端同波；更新 `VULKAN_PARITY.md`
    - **D** `d3d12`/`vulkan_device` 按域拆分 + `GpuComputeOneShot`；次级拆 glTF/particles/rt（**Done**）
    - **E** Profiler Pass GPU 时间 + StreamingBudget HUD + 规模冒烟契约
-3. **冻结（本波及后续暂不开发）**：DLSS / FSR2 / MsQuic 真 SDK；超分继续 `builtin_bilinear`；QUIC 继续 Probe/Unavailable。
+3. **冻结（本波）**：DLSS / FSR2 / MsQuic 真 SDK；超分继续 `builtin_bilinear`；QUIC 继续 Probe/Unavailable。  
+   > **已被 [ADR 0044](0044-w21-godot-parity-unfreeze.md) 解冻**（W21 起可选 SDK；无 SDK 仍诚实 SKIP / bilinear）。
 4. **不做**：真 NVIDIA DDGI、Nanite、多视角商业 Impostor、引擎内复制、backend 拆独立进程、mac/C17。
 
 ## W20 能力表（L0/L1/L2）
@@ -66,4 +67,4 @@ W18/W19 半落地收口后，仍有四类工程弱项：深度不均、双后端
 - Profiler GPU Pass + StreamingBudget HUD；`test_w20` 规模/预算契约。
 - 尾巴：Vulkan `UploadRgba2D` / `EndOneShot` / `UploadLitGeometry`（换槽）与 cull/indirect 扩容改为 **fence 等待**（`WaitGpuSubmitted`），去掉热路径 `Device/QueueWaitIdle`。
 - 单测：以看板跑测水位为准。
-- **冻结**：DLSS/FSR2/MsQuic。
+- **冻结（本波）**：DLSS/FSR2/MsQuic — **W21 起见 ADR 0044 解冻**。

@@ -44,7 +44,8 @@ class BuiltinBilinearUpscaler final : public IUpscaler {
                  UpscaleParams params = {}) override;
 };
 
-// Preference: ENGINE_UPSCALER=fsr requests FSR; without SDK still returns builtin and logs once.
+// Preference: ENGINE_UPSCALER=fsr|fsr2|dlss; chain DLSS→FSR2→builtin (ADR 0044).
+// Without SDK, logs once and returns builtin_bilinear (never fake vendor names).
 std::unique_ptr<IUpscaler> CreateUpscaler();
 
 }  // namespace engine::media

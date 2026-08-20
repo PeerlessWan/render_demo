@@ -274,6 +274,22 @@ target_link_libraries(engine_media PUBLIC engine_core)
 if(WIN32)
   target_link_libraries(engine_media PRIVATE winmm)
 endif()
+if(ENGINE_WITH_FIDELITYFX)
+  target_compile_definitions(engine_media PUBLIC ENGINE_WITH_FIDELITYFX=1)
+  if(EXISTS "${ENGINE_FIDELITYFX_DIR}")
+    target_include_directories(engine_media PRIVATE "${ENGINE_FIDELITYFX_DIR}" "${ENGINE_FIDELITYFX_DIR}/include")
+  endif()
+else()
+  target_compile_definitions(engine_media PUBLIC ENGINE_WITH_FIDELITYFX=0)
+endif()
+if(ENGINE_WITH_NGX)
+  target_compile_definitions(engine_media PUBLIC ENGINE_WITH_NGX=1)
+  if(EXISTS "${ENGINE_NGX_DIR}")
+    target_include_directories(engine_media PRIVATE "${ENGINE_NGX_DIR}" "${ENGINE_NGX_DIR}/include")
+  endif()
+else()
+  target_compile_definitions(engine_media PUBLIC ENGINE_WITH_NGX=0)
+endif()
 
 add_library(engine_ui STATIC
   ui/retained_ui.cpp
@@ -315,6 +331,7 @@ endif()
 
 add_library(engine_render2d STATIC
   render2d/sprite.cpp
+  render2d/light2d.cpp
   render2d/tilemap_stream.cpp
   render2d/atlas.cpp
   render2d/fx2d.cpp
@@ -335,6 +352,7 @@ target_link_libraries(engine_mixed PUBLIC engine_core engine_rhi engine_render2d
 
 add_library(engine_gi STATIC
   gi/probe_volume.cpp
+  gi/cascade_gi.cpp
   gi/reflection_probe.cpp
   gi/scene_capture.cpp
   gi/lightmap.cpp
