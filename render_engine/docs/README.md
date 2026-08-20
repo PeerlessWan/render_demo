@@ -1,12 +1,12 @@
 # 文档索引
 
-> 实现与里程碑见 [PLAN.md](PLAN.md)；**当前迭代**看 [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)。入门：[GETTING_STARTED_M1.md](GETTING_STARTED_M1.md)。
+> 实现与里程碑见 [PLAN.md](PLAN.md)；**封板状态**看 [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)（Doing 空）。入门：[GETTING_STARTED_M1.md](GETTING_STARTED_M1.md)。
 
 ## 怎么读
 
 | 你想… | 先看 |
 |---|---|
-| 本轮 Doing / 回退 / 下一档 Todo | [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md) |
+| 封板水位 / Undo / 外置 Todo | [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md) |
 | 知道做不做、边界在哪 | [POSITIONING.md](POSITIONING.md) → [KNOWN_GAPS.md](KNOWN_GAPS.md) |
 | 工作区各层怎么切 | [../../docs/LAYERS.md](../../docs/LAYERS.md) · [../../docs/README.md](../../docs/README.md) |
 | 外面怎么挂玩法/脚本/编辑器 | [HOSTING.md](HOSTING.md) |
@@ -29,7 +29,7 @@
 | 文档 | 说明 |
 |---|---|
 | [PLAN.md](PLAN.md) | 总验收、范围、风险锁死、里程碑、进度；**§3.1 测试加深**；**§1.9 游戏可用水位** |
-| [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md) | **当前迭代** Doing / Undo / Todo 工作板 |
+| [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md) | **封板看板**（W12–W20；Doing 空） |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 分层、目录树、子系统、后端能力 |
 | [POSITIONING.md](POSITIONING.md) | 是/不是、缺陷、风险锁死 |
 | [KNOWN_GAPS.md](KNOWN_GAPS.md) | 缺口 ↔ 里程碑；含 **§4 M25 后候选**（含 C19–C21） |
@@ -70,7 +70,7 @@
 5. **工具**：最小 CLI 见 TOOLING；**引擎内不做**可视化内容编辑器（ADR 0025）；可选外挂 `editor/`（C21）。  
 6. **场景**：Node 树权威 + 渲染 SoA；**非默认 ECS**（ADR 0024）。  
 7. **分层**：玩法不进引擎；`game_kit` 品类无关；品类 → `genre_kits`；内容 → `games`（ADR 0027 / **0028**、[LAYERS](../../docs/LAYERS.md)）。**编辑器规格/排期不进本目录**，只在工作区 `editor/docs`。  
-8. **进度用语**：未写代码前缺口状态用 **已排期 / 未开始**，不用「补齐中」。
+8. **进度用语**：引擎 **W20 已封板**；外置/冻结项用钉死表述，不用「补齐中」冒充在研。
 
 ## 相关
 

@@ -4,7 +4,7 @@
 > 教学封装：[learn/README.md](learn/README.md) · 路径：[learn/PATH.md](learn/PATH.md)  
 > 定位：**Windows（D3D12 + Vulkan）/ Linux（Vulkan）通用 2D·3D 渲染引擎**  
 > 范围分段：M1–M16（既有能力）+ M17–M19（后端/Linux/网络）+ **M20–M25 引擎缺口补齐（P2）**。  
-> **当前迭代看板**（Doing / Undo / Todo）：[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)  
+> **封板状态看板**（Doing 空）：[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)  
 > **引擎状态：W12–W20 已收口并封板** — [ADR 0040](learn/adr/0040-w16-zero-tail-closeout.md)–[0043](learn/adr/0043-w20-product-deepen.md)；HEAD 见看板。  
 > **游戏可用 ≠ 渲染可用**：玩法层见 **§1.9**（`game_kit` / `editor`；引擎封板不替代可玩产品水位）。
 
@@ -333,7 +333,7 @@
     - **MCP 冻结**：`sandbox_mcp` 仅 Cursor 薄适配；**不扩**编辑器/运维/脚本语义；CI **不依赖** MCP。本机不用 Agent 控 Sandbox 时可删 `tools/sandbox_mcp`，不影响正确性。  
     - 协议与挂法：[SANDBOX_MCP.md](SANDBOX_MCP.md)。
 22. **自动化测试加深**：**准优先于广**；不扩 Harness 命令、不扩 MCP、不追像素全覆盖。实施顺序与不做项见 **§3.1**。  
-23. **游戏可用 ≠ 渲染可用**：2D/3D 可玩产品以 **`game_kit` GK0–GK3 为主缺口**；不把玩法做进 `engine/`；不把大气/云当「能做游戏」的前提。口径与顺序见 **§1.9**。  
+23. **游戏可用 ≠ 渲染可用**：引擎已封板；可玩弱项在 **`genre_kits` / 新品类**（`game_kit` GK0–GK5 已接线）；不把玩法做进 `engine/`。口径见 **§1.9**。  
 24. **编辑器文档不进引擎**：视口编辑器规格/排期只在工作区 `editor/docs`；本目录不写 ED 里程碑、不收录 editor PLAN。引擎侧仅保留 **C20**（轻量 CLI 候选）与「独立 `editor/`」边界。
 
 
@@ -556,7 +556,7 @@ Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
 
 > 无 vendor 100% 口径见看板；测试门禁：`ci_headless.ps1 -Golden`（Q1+Q3+C2+C3+C6）+ matrix 比图 + C4 薄对标（默认记回归）；可选 `-Validation`（C1）。**Harness 冻结；MCP 不进门禁。** §3.1：**Q1–Q3 / C1–C6 已落地（C4 记对标）**；Q4/Q5 / 严 C4 仍后置。
 
-## 6.1 水位弱项产品化（W12–W16，ADR 0039 + 0040）
+## 6.1 水位弱项产品化（W12–W20，ADR 0039–0043）
 
 边界：**A** 渲染中台（无 Nanite / 真 DDGI / 引擎内复制）；**C** Sandbox 演示观感。W16 清假壳。详见 [KNOWN_GAPS.md](KNOWN_GAPS.md) §3、[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)。
 
@@ -570,7 +570,7 @@ Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
 | **W17** | 引擎加深（ADR 0041） | meshoptimizer Prefer；VK 粒子；软影 blur；glTF 多 prim |
 | **W18** | 半落地加深（ADR 0042） | light tile GPU；WorldText/Path2D；VT packed；软影/MS/HLOD/dxc |
 | **W19** | （并入 W18/W20 收口） | 见 ADR 0042 / 0043 |
-| **W20** | 中台产品级加深（ADR 0043） | GI/软影/VT/HLOD/MS；device 按域拆；次级拆 glTF/particles/rt；Profiler/Budget |
+| **W20** | 中台产品级加深并封板（ADR 0043） | GI/软影/VT/HLOD/MS；device 按域拆；Sandbox 默认 Medium；SSAO/软影/VT 默认 OFF；DLSS/FSR2/MsQuic 冻结；194 unit |
 
 > Q4 WARP / 默认严 C4 仍后置（测试轨，**非本波工程缺口**）。
 
@@ -590,9 +590,9 @@ Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
 ## 8. 相关文档
 
 - [README.md](README.md) — 文档总索引  
-- [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md) — **当前迭代 Doing / Undo / Todo**  
+- [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md) — **封板看板**（W12–W20；Doing 空）  
 - [../../docs/LAYERS.md](../../docs/LAYERS.md) — **工作区分层权威**（`editor/` 规格不在本目录）  
-- [../../game_kit/docs/PLAN.md](../../game_kit/docs/PLAN.md) — **游戏可用主缺口 GK0–GK3**（见 §1.9）  
+- [../../game_kit/docs/PLAN.md](../../game_kit/docs/PLAN.md) — **game_kit 细则**（GK 已接线；品类弱项见 §1.9）  
 - [GETTING_STARTED_M1.md](GETTING_STARTED_M1.md) — **M1 可执行清单**  
 - [HOSTING.md](HOSTING.md) — **玩法层 / 脚本外挂**；独立编辑器不在本树  
 - [HOST_API.md](HOST_API.md) — **Host API v0**  

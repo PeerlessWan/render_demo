@@ -12,20 +12,20 @@
 | 3D | P0/P1 + 简化 GI | + 动态 GI；地形/水体/植被基础；GPU Driven；VK RT |
 | 2D | 像素混合基础（M16） | + 阴影/MV/分层后处理/拣选；流式；骨骼；光雾等 |
 | 网络 | HTTP/WS/QUIC 传输 | 同左 |
-| 玩法 | 不在引擎内 | 同左；工作区「游戏可用」主缺口是 **`game_kit` GK0–GK3**（见 [PLAN.md](PLAN.md) **§1.9**），不是再堆引擎 Pass |
+| 玩法 | 不在引擎内 | 同左；工作区「游戏可用」弱项是 **`genre_kits` / 新品类 / 独立服**（`game_kit` GK0–GK5 已接线，见 [PLAN.md](PLAN.md) **§1.9**），不是再堆引擎 Pass |
 
 ## 2. 缺口 ↔ 里程碑（已排期）
 
 | ID | 缺口 | 状态 | 里程碑 |
 |---|---|---|---|
 | G01 | 跨后端（VK） | **Win 双后端 100% 收口**（见 [VULKAN_PARITY.md](VULKAN_PARITY.md)）：全栈 post、GPU 实例/Cull/Indirect、探针/IBL 分槽；Linux 仍外置 | M17 |
-| G18 | Mesh Shader / GPU Driven | **Cull/Indirect 两端可用**；Bindless D3D12 Feature（默认 OFF）；**VK bindless W11 钉死 SKIP**；VK MS/RT 有扩展则示范否则 SKIP（ADR 0038） | M24 / W11 |
+| G18 | Mesh Shader / GPU Driven | **Cull/Indirect 两端可用**；**W20** MS 热路径 L1（无 Tier/EXT → SKIP）；Bindless 热路径默认 OFF | M24 / W11 / W20 |
 | G19 | Linux | **W11**：UNIX 跳过 D3D12；X11 `Window::Create` + `VK_KHR_xlib_surface`；实机 xvfb smoke OK（[LINUX.md](LINUX.md)）；Wayland 仍后置；全量引擎树同步另议 | M18 / W11 |
 | G02–G04、G11 | 混合打磨 / 拣选 / 多 DPI | **可用加深** | M20 |
 | G05–G10、G12 | 2D 深度 | **已加深**：chunk→Sprite 展开；SkeletonClip2D；雾 tint / BMFont JSON / 震屏 | M21 |
-| G14 | 动态 GI | **Mega-W10 DDGI-lite**：`BlendNeighborhood` / `CascadeRefine`（CPU，**非** NVIDIA DDGI）；W6 `RefineDensity`；ProbeVolume + Lightmap | M22 / W6 / W10 |
+| G14 | 动态 GI | **DDGI-lite**：W10 CPU ProbeVolume + **W20** atlas→GPU+lit（**非** NVIDIA DDGI） | M22 / W6 / W10 / W20 |
 | G15 | 地形/水体/植被（基础） | **可用加深**；W10 大地形 ChunkStream + CC0 高度图 | M23 / W10 |
-| G16 | 光追 API 对齐 | **完成（加深）** Feature 门控；W7 真 AS/DispatchRays；**W17** `TrySoftShadowCompose` half-res blur grid（无路径 → Unavailable SKIP） | M25 / W7 / W10 / W17 |
+| G16 | 光追 API 对齐 | **W20**：DXR 真 AS/DispatchRays + 软影 half-res→FrameCB；无 RT → SKIP；VK 有扩展则示范否则 SKIP | M25 / W7–W20 |
 | T01 | 最小工具链（shader/IBL/纹理/cook/黄金图） | 已排期 | M2–M9；见 [TOOLING.md](TOOLING.md) |
 | T03 | 自动化测试加深（准/广） | **Q1–Q3 + C1–C3 + C5–C7 + Q5 ROI 已落地**；C4 双后端比图（默认 ROI + 松闸≈90 PASS，现 RMSE≈74；`--strict` / `-StrictParity` 紧闸 48 可选严） | [PLAN.md](PLAN.md) **§3.1**；不扩 MCP/Harness 命令 |
 | T02 | 图集约定 + Tiled 导入 | 已排期 | M16 |
@@ -33,7 +33,7 @@
 
 ## 3. 补齐 M25 后仍保留的引擎缺陷（摘要）
 
-详见 [POSITIONING.md](POSITIONING.md) §2。下列弱项经 **W12–W15 + W16 零尾巴**（[ADR 0039](learn/adr/0039-waterline-productization-a-c.md)、[ADR 0040](learn/adr/0040-w16-zero-tail-closeout.md)）已关门；完成后仍**不**宣称 UE/Nanite/真 DDGI/引擎内复制：
+详见 [POSITIONING.md](POSITIONING.md) §2。下列弱项经 **W12–W20**（[ADR 0039](learn/adr/0039-waterline-productization-a-c.md)–[0043](learn/adr/0043-w20-product-deepen.md)）已关门并**封板**；完成后仍**不**宣称 UE/Nanite/真 DDGI/引擎内复制：
 
 | 弱项 | 收口状态 | 仍不宣称 |
 |---|---|---|

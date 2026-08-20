@@ -6,7 +6,7 @@
 
 | 项 | 状态 |
 |---|---|
-| Windows Vulkan（M17） | `backends/vulkan/vulkan_device.cpp`：Win32 surface + swapchain（`ENGINE_WITH_VULKAN`） |
+| Windows Vulkan（M17） | `backends/vulkan/vulkan_device_*.cpp`（按域拆分，见 ADR 0043）：Win32 surface + swapchain（`ENGINE_WITH_VULKAN`） |
 | engine/platform/win32/ | 已实现 `Window::Create`（Win32 + headless）；**仅 WIN32 编译** |
 | engine/platform/linux/ | **Mega-W11**：`window_x11`；`__linux__` + `ENGINE_HAS_X11` 时 `Window::Create` → X11；headless Ok；非 Linux 树为 Unavailable 桩 |
 | D3D12 | Linux **不做**；CMake 跳过 `engine_d3d12` 与 D3D12 learn samples |

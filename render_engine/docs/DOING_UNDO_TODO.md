@@ -6,7 +6,7 @@
 
 | 项 | 值 |
 |---|---|
-| **状态** | **已收口** |
+| **状态** | **已收口并封板** |
 | **范围** | [ADR 0043](learn/adr/0043-w20-product-deepen.md) |
 | **水位** | 产品 Pass + 真 GPU + 可维护/可度量；不宣称 Lumen/RTXGI/Nanite |
 | **冻结** | DLSS / FSR2 / MsQuic 真 SDK |
@@ -66,7 +66,7 @@
 | **W20** | GI atlas→GPU+lit；软影 mask→FrameCB；VT/HLOD/MS/WorldText/热更；device 按域拆分 + OneShot；Profiler/Budget HUD；VULKAN_PARITY |
 | **W20 尾巴** | VK upload/oneshot/`UploadLitGeometry` fence（`WaitGpuSubmitted`）+ 文档对齐（Sandbox Medium / PLAN W17–W20） |
 | **W20 lit 再拆** | `*_device_{lit,shadow,env}.cpp` 对称拆分（压行数） |
-| **封板软债** | PLAN §1.9/里程碑对齐；`*_device_{swapchain,targets/readback,overlay}.cpp` 再拆 |
+| **封板软债** | device 再拆已落地（swapchain/targets/readback/overlay）；§1.9/里程碑已对齐 |
 | **W18** | light tile GPU；WorldText/Path2D；VT packed；软影/MS/HLOD/dxc |
 | **W17** | meshoptimizer Prefer；VK 粒子；软影 blur；glTF 多 prim |
 | **W16** | 零尾巴收口 |

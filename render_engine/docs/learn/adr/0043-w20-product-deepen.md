@@ -1,6 +1,6 @@
 # ADR 0043: W20 中台产品级加深
 
-- 状态: Accepted
+- 状态: Accepted（**W20 封板**；见 [DOING_UNDO_TODO.md](../../DOING_UNDO_TODO.md)）
 - 日期: 2026-08-20
 - 关联: ADR 0042、KNOWN_GAPS §3–4、VULKAN_PARITY、STANDARDS §15
 

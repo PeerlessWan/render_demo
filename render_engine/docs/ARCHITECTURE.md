@@ -21,7 +21,7 @@
 | 分层解耦 | 业务不直接依赖 D3D12 头文件；只依赖引擎公开 API |
 | 后端可替换 | RHI 抽象稳定；工厂注册后端；未实装后端返回明确错误 |
 | 扩展优先 Pass/模块 | 自定义渲染优先加 FrameGraph Pass、Material 变体或 Module |
-| 可降级 | 无 DXR / 无 DLSS 时必须可运行（ShadowMap / FSR 或内置超分） |
+| 可降级 | 无 DXR 时走光栅阴影；超分无 NGX/FFX → `builtin_bilinear`（**DLSS/FSR2 冻结**） |
 | 可读可维护 | 命名清晰、模块边界清楚、关键约定文档化 |
 | 可学习 | 关键路径可加强注释；`learn.*` 开关提供慢路径/校验；文档双轨更新 |
 | 外设可扩展 | 业务只依赖 `IInputDevice` / ActionMap；具体 HID/XInput/WinRT 藏在 adapters |
@@ -300,7 +300,7 @@ Visibility.Cull(camera) → RenderScene
 |---|---|
 | VFX | CPU 粒子、GPU 粒子、Trail、Decal |
 | Post | Tonemap、ColorGrading、Bloom、FXAA、Vignette；可插拔 Effect |
-| Upscaler | `IUpscaler`：DLSS；强制 fallback（FSR 或内置） |
+| Upscaler | `IUpscaler`：诚实链 `builtin_bilinear`；**DLSS/FSR2 SDK 冻结** |
 | RayTracing | BLAS/TLAS、RT Pipeline；一期示范级；可关 |
 | Frame Generation | **仅接口预留，一期不实装** |
 
@@ -462,10 +462,10 @@ GPU 上传中与异步收割重叠的部分：在 `Asset.PumpAsync` 已登记的
 
 | 特性 | D3D12 | Vulkan |
 |---|---|---|
-| 视频纹理 | D3D12VA（无软解） | Vulkan Video（无软解） |
-| 光追示范 | DXR（可关） | M25 对齐；此前可 NotSupported |
-| DLSS | 按 NGX | 若支持则接，否则 FSR/关 |
-| FSR / 内置超分 | 支持 | 支持 |
+| 视频纹理 | D3D12VA stub 可诊断（真解另波） | Vulkan Video（产品路径外置） |
+| 光追示范 | DXR 真 AS/DispatchRays（可关） | 有 `rayTracingPipeline` 则示范否则 SKIP |
+| 超分 | **冻结** DLSS/FSR2；`builtin_bilinear` | 同左 |
+| Mesh Shader | Tier→热路径 L1；无 → SKIP | EXT→热路径 L1；无 → SKIP |
 
 D3D12：Fence、屏障、描述符、Root Sig/PSO、Copy、DXR、NGX 等封装在后端内。  
 Vulkan：Swapchain、RenderPass/DynamicRendering、描述符、SPIR-V、同步封装在后端内。
@@ -493,7 +493,7 @@ Vulkan：Swapchain、RenderPass/DynamicRendering、描述符、SPIR-V、同步�
 |---|---|
 | Low | 关 RT、关/降 Bloom、单级或无 CSM、关超分或最低档、降 IBL 级别 |
 | Medium | CSM 中等、光栅阴影、可选超分、标准 IBL |
-| High | 全后处理、完整 IBL、CSM 高质量、允许 RT + DLSS（硬件允许时） |
+| High | 全后处理、完整 IBL、CSM 高质量；RT/软影 **opt-in**；**不**默认开 DLSS（已冻结） |
 
 具体映射在配置与 `RenderSystem` 中实现，Sandbox 可运行时切换。
 

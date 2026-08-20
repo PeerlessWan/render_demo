@@ -14,7 +14,7 @@
 | **编辑器可用** | ED4–ED5 | **已收口**（Play / Prefab / 脚本 Entity） |
 | **对标主流** | 不宣称 | 材质图 / UMG / 蓝图 / DCC — GAPS §4，刻意不对齐 |
 
-一期是关卡摆放器，不替代 Blender，也不替代 `game_kit` GK0–GK3。
+一期是关卡摆放器，不替代 Blender；**不替代**已接线的 `game_kit` GK0–GK5。
 
 ## 1. 里程碑
 
@@ -30,7 +30,7 @@
 
 ## 2. 建议时序
 
-> ED 不替代 GK0–GK3。一期是关卡摆放器，不替代 Blender。
+> ED 不替代 GK0–GK5（已接线）。一期是关卡摆放器，不替代 Blender。
 
 | 阶段 | 动作 |
 |---|---|
@@ -55,5 +55,5 @@
 - [ADR_INDEX.md](ADR_INDEX.md)  
 - [FEATURES.md](FEATURES.md)  
 - [../../render_engine/docs/PLAN.md](../../render_engine/docs/PLAN.md) **§1.9**  
-- [../../game_kit/docs/PLAN.md](../../game_kit/docs/PLAN.md)（游戏可用主缺口，先于本层）  
+- [../../game_kit/docs/PLAN.md](../../game_kit/docs/PLAN.md)（GK 已接线；品类弱项见 genre_kits）
 - [../../render_engine/docs/KNOWN_GAPS.md](../../render_engine/docs/KNOWN_GAPS.md) C20/C21  

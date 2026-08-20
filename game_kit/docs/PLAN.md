@@ -1,20 +1,20 @@
 # game_kit 规划
 
 > **前置：** `render_engine` 至少 M4（Scene + Module + 输入）可用；脚本绑定建议等 M8–M9（序列化/UI/资产约定）后做可玩切片。  
-> 本层里程碑前缀 **GK**；**不阻塞**引擎 M1–M25，但是工作区 **「游戏可用」的主缺口**（相对 Sandbox 已能出的「渲染可用」）。  
-> 口径与落地顺序：[render_engine PLAN §1.9](../../render_engine/docs/PLAN.md)。  
+> 本层里程碑前缀 **GK**；**不阻塞**引擎（引擎 **W20 已封板**）。相对「渲染可用」，本层承担可玩壳；**GK0–GK5 已接线**，工作区弱项转向 `genre_kits` / 新品类。  
+> 口径：[render_engine PLAN §1.9](../../render_engine/docs/PLAN.md)。  
 > **品类玩法不进本层排期**；见 [LAYERS](../../docs/LAYERS.md) / `genre_kits`（ADR 0028）。首个游戏可先写在 `games/<title>`。
 
 ## 0. 在工作区里排第几
 
 | 口径 | 本层角色 |
 |---|---|
-| **渲染可用** | 不负责；Sandbox / 引擎看板（如 **W-vk-parity**） |
-| **游戏可用** | **GK0–GK3 就是主缺口**：切关、暂停、存档槽、脚本不毁 Device、一条小关走完 |
+| **渲染可用** | 不负责；见引擎 [VULKAN_PARITY](../../render_engine/docs/VULKAN_PARITY.md) **Win 100% 封板** |
+| **游戏可用** | **GK0–GK5 已接线**（切关/暂停/存档/脚本/Prefab/协程骨架）；弱项 → 新品类 / `genre_kits` |
 | **对标主流** | GK4 Prefab + `editor` ED；动画树走引擎 C10 或上层自建——不宣称对齐 UE5 |
 
-**优先于**大气/云/Bindless 全量（那些是引擎加深，不替代本层）。  
-**不插队**当前引擎 Doing（现为 Win Vulkan 对标）：下令开 GK 实现波后再写代码。
+**优先于**再堆引擎 Pass（引擎已封板）。  
+**不插队**引擎冻结项（DLSS/FSR2/MsQuic）与外置项（Nanite/真 DDGI）；本层按自身 Todo。
 
 ## 1. 里程碑
 

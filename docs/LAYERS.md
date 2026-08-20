@@ -58,7 +58,7 @@ editor ──► render_engine（视口）；可读 Prefab/脚本元数据约定
 3. **新品类开新 kit**：不把射击塞进 RPG kit，也不把两者揉进加厚的单一 `game_kit`。  
 4. **跨品类能力用中间件**：联机复制、导航网格、音频 DSP 桥等与品类无关时，另立模块文档，默认仍不进引擎核心。  
 5. **不阻塞引擎 M1**：本分层是工作区约定；实现仍从 `render_engine` M1 起，见 [GETTING_STARTED_M1.md](../render_engine/docs/GETTING_STARTED_M1.md)。  
-6. **游戏可用路径**（相对「Sandbox 能出画面」）：先 `game_kit` **GK0–GK3**，再 Prefab/存场景（GK4）。视口编辑器为 P1，**文档只在** [`editor/docs`](../editor/docs/README.md)，**不进** `render_engine/docs`。引擎侧仅有 C20 CLI 候选。口径：[引擎 PLAN §1.9](../render_engine/docs/PLAN.md)。不把玩法做进 `engine/`，也不把大气/云当「能做游戏」的前提。
+6. **游戏可用路径**（相对「Sandbox 能出画面」）：`game_kit` **GK0–GK5 已接线**；弱项转向 **`genre_kits` / 新品类 / 独立服**。视口编辑器 **ED0–ED5 已收口**，规格只在 [`editor/docs`](../editor/docs/README.md)。引擎 **W20 已封板**。口径：[引擎 PLAN §1.9](../render_engine/docs/PLAN.md)。
 
 ## 5. 与已有文档的关系
 
@@ -68,7 +68,7 @@ editor ──► render_engine（视口）；可读 Prefab/脚本元数据约定
 | [README.md](README.md) | 工作区文档总索引 |
 | [HOSTING.md](../render_engine/docs/HOSTING.md) | 引擎对外挂怎么挂、帧相位、禁止依赖 |
 | [引擎 PLAN §1.9](../render_engine/docs/PLAN.md) | **渲染可用 / 游戏可用 / 对标主流** 三口径 |
-| [game_kit/docs](../game_kit/docs/README.md) | 通用玩法壳规格；**游戏可用主缺口 GK0–GK3** |
+| [game_kit/docs](../game_kit/docs/README.md) | 通用玩法壳；**GK0–GK5 已接线**；品类弱项见 genre_kits |
 | [genre_kits/README.md](../genre_kits/README.md) | 品类 kit 索引与建仓约定 |
 | [games/README.md](../games/README.md) | 游戏工程约定 |
 | [editor/docs](../editor/docs/README.md) | **视口编辑器唯一文档树**（不进 `render_engine/docs`） |

@@ -1,8 +1,9 @@
 # D3D12 ↔ Vulkan 差异与对齐
 
 > **原则：D3D12 是功能与观感参考路径；Vulkan 负责追上。**  
-> **口径（Win 双后端 100%）：** Windows 上 D3D12 + Vulkan 渲染与近端物理对齐到「可同场景发版」——lit/阴影/IBL/探针、完整基础后处理（含 SSR/DoF/MB）、GPU 实例 + Cull/Indirect、Bindless 热路径（Feature 门控）、薄 SoftBody Demo；Sandbox 中英文 UI 可实时切换。  
-> **不算进本口径：** Linux / 大气 / 编辑器 / game_kit / 完整多语言框架。  
+> **引擎水位：W12–W20 已封板**（ADR 0043）。  
+> **口径（Win 双后端 100%）：** Windows 上 D3D12 + Vulkan 渲染与近端物理对齐到「可同场景发版」——lit/阴影/IBL/探针、完整基础后处理（含 SSR/DoF/MB）、GPU 实例 + Cull/Indirect、Bindless 热路径（Feature 门控）、薄 SoftBody Demo；Sandbox 中英文 UI 可实时切换。默认质量 **Medium**；SSAO/软影/VT→slot1 默认关。  
+> **不算进本口径：** Linux 全量发版树 / 大气 / 编辑器 / game_kit / 完整多语言框架；**冻结** DLSS/FSR2/MsQuic。  
 > 自动化：`python tests/scripts/run_backend_parity.py --config Debug`（见 [TESTING.md](TESTING.md) C4）。
 
 ## 1. 结论（怎么读差异）
