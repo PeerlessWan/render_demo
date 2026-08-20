@@ -64,7 +64,7 @@
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
 | C01 | 产品级 Deferred / Forward+ 路径钉死 | **已落地（M26）**：Forward+ 钉死 + Pass 名冻结；见 [FORWARD_PLUS.md](FORWARD_PLUS.md)、[ADR 0032](learn/adr/0032-m26-forward-plus-cluster.md) | 高（影响扩展方式） |
-| C02 | 集群 / 分块多灯光 | **Mega-W9**：range 扩格 `AssignLightsToTiles` + `light_tile_cull_cs`（CPU Simulate 对齐）；FrameCB 8×4、≤8/tile；`enable_tiled_lights` | 高 |
+| C02 | 集群 / 分块多灯光 | **W18**：D3D12 真 CS Dispatch+readback（失败 → Simulate）；VK 仍 Simulate（诚实日志） | 高 |
 | C03 | IES / Light Function | **Mega-W9**：IES + `EvalLightFunctionFactor` / `LocalLight::light_function_id` | 中 |
 | C04 | 更细电影级镜头后处理 | **Mega-W8**：vignette/grain/色差 + 畸变/脏点/眩光（默认 0） | 低 |
 | C05 | 大气 / 体积云 / 天气降水 | **Mega-W8**：`WeatherSystem` + 降水/积雪/雷闪；大气见 W4/W7 | 中 |
@@ -73,10 +73,10 @@
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C06 | Virtual Texture 产品化 | **加深（W9/W10）**：GPU feedback stub + 页上传；Feature `virtual_texture`；**`vt_near_default` / EffectTuning「近默认」开关（默认 OFF）**；**无 Nanite**；**非默认全材质** | 中 |
-| C07 | HLOD / Impostor | **最小落地（W9/W10）**：`BillboardImpostor` 距离切换 + placeholder bake + **`SerializeBakeToFile` 落盘** | 中 |
-| C08 | Meshlet / 更完整 GPU 几何管线 | **W17**：`ENGINE_WITH_MESHOPTIMIZER` + `meshopt_buildMeshlets` Prefer；缺库 AABB | 中 |
-| G16 | 光追 API 对齐 | **W17**：`TrySoftShadowCompose` → half-res blur grid | M25 / W7 / W10 / W17 |
+| C06 | Virtual Texture 产品化 | **W18**：`IngestFeedbackPackedU32` + 多请求近场；仍非 GPU UAV feedback / Nanite | 中 |
+| C07 | HLOD / Impostor | **W18**：Sandbox 距离切换 + `LoadBakeFromFile` / `WriteSolidRgba8Bake`；仍非多视角 GPU bake | 中 |
+| C08 | Meshlet / 更完整 GPU 几何管线 | **W17/W18**：meshoptimizer Prefer；Sandbox 启动 `TryMeshShaderPath`；无 Tier/EXT → SKIP | 中 |
+| G16 | 光追 API 对齐 | **W18**：half-res soft compose + Sandbox 乘 sun；无 RT → SKIP | M25 / W7–W18 |
 | C09 | FFT / 高级水面 | **Mega-W8**：无限平铺 FFT 海 + 浮力 | 低 |
 
 ### 4.3 动画与角色
@@ -97,16 +97,16 @@
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| **G13** | **矢量 / 路径绘制** | **部分落地（W9/W17）**：Path2D 描边 + 闭合填充；Sandbox「Path2D debug」线框；SVG 布尔外置 | 按产品需要 |
+| **G13** | **矢量 / 路径绘制** | **W18**：Path2D → lit mesh slot（Sandbox）；SVG 布尔外置 | 按产品需要 |
 | C13 | 九宫格 / 更完整 2D UI 精灵约定 | 偏运行时 UI 与 2D 共用 | 低 |
-| C14 | 3D 世界文字 | **部分落地（W7）**：`BuildWorldTextBillboards`（BMFont 广告牌）；Sandbox DebugDraw 线框 | 中 |
+| C14 | 3D 世界文字 | **W18**：WorldText → lit mesh slot（Sandbox）；仍可用 DebugDraw | 中 |
 | C15 | 2D 富文本 / 复杂排版 | 超出 BMFont 基础 | 低 |
 
 ### 4.5 运行时工程
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C16 | 资源热更 / 着色器热重载 | **部分落地（W8/W9/W10）**：`ShaderHotReload` / `AssetHotReload`；**`TryCompileHlslWithDxc`（PATH 有 dxc 则编，否则 Unavailable SKIP）**；Sandbox 可响应重建（真 PSO 闭环见 ADR 0036） | 中 |
+| C16 | 资源热更 / 着色器热重载 | **W18**：`TryCompileHlslWithDxc` 可写 `.cso`（VS/PS entry）；缺 dxc → SKIP | 中 |
 | C17 | 多窗口 / 多 GPU | **钉死（W9）**：单窗口单适配器；**不实装**；见 [C17_MULTI_WINDOW.md](C17_MULTI_WINDOW.md) | 低（不做） |
 | C18 | 立体 / XR 渲染 | 输入层可预留适配器；渲染未排期 | 低（易扩范围） |
 

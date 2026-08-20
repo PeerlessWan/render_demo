@@ -532,21 +532,69 @@ class D3D12Device final : public IDevice {
     return Status::Ok();
   }
 
-  // Mega-W9 C02: CS bytecode presence enables Feature path; Dispatch fills FrameCB-shaped
-  // arrays via SimulateLightTileCullCs (CPU stand-in matching light_tile_cull_cs.hlsl).
+  // W18 ADR 0042 C02: real CS PSO + one-shot Dispatch/readback; fail → Simulate.
   Status SetupLightTileCullCompute(const std::filesystem::path& cs_dxil) override {
+    tile_cull_ready_ = false;
+    tile_cull_gpu_ = false;
+    tile_cull_root_.Reset();
+    tile_cull_pso_.Reset();
     if (!device_ || cs_dxil.empty()) {
       return Status::Fail(ErrorCode::Unavailable, "SetupLightTileCullCompute: invalid");
     }
     std::ifstream in(cs_dxil, std::ios::binary);
     if (!in) {
-      tile_cull_ready_ = false;
       return Status::Fail(ErrorCode::Unavailable,
                           "Light tile CS missing: " + cs_dxil.string());
     }
+    std::vector<char> bytes((std::istreambuf_iterator<char>(in)),
+                            std::istreambuf_iterator<char>());
+    if (bytes.empty()) {
+      return Status::Fail(ErrorCode::Unavailable, "Light tile CS empty");
+    }
+
+    D3D12_ROOT_PARAMETER params[4]{};
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[0].Descriptor.ShaderRegister = 0;
+    params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    params[1].Descriptor.ShaderRegister = 0;
+    params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+    params[2].Descriptor.ShaderRegister = 0;
+    params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+    params[3].Descriptor.ShaderRegister = 1;
+    params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_ROOT_SIGNATURE_DESC rs{};
+    rs.NumParameters = 4;
+    rs.pParameters = params;
+    ComPtr<ID3DBlob> sig;
+    ComPtr<ID3DBlob> err;
+    if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err))) {
+      tile_cull_ready_ = true;
+      LogInfo("D3D12 light tile cull: root serialize failed; CPU Simulate only");
+      return Status::Ok("cpu-simulate-only");
+    }
+    if (FAILED(device_->CreateRootSignature(0, sig->GetBufferPointer(), sig->GetBufferSize(),
+                                            IID_PPV_ARGS(&tile_cull_root_)))) {
+      tile_cull_ready_ = true;
+      LogInfo("D3D12 light tile cull: root create failed; CPU Simulate only");
+      return Status::Ok("cpu-simulate-only");
+    }
+    D3D12_COMPUTE_PIPELINE_STATE_DESC pso{};
+    pso.pRootSignature = tile_cull_root_.Get();
+    pso.CS = {bytes.data(), bytes.size()};
+    if (FAILED(device_->CreateComputePipelineState(&pso, IID_PPV_ARGS(&tile_cull_pso_)))) {
+      tile_cull_root_.Reset();
+      tile_cull_ready_ = true;
+      LogInfo("D3D12 light tile cull: PSO failed; CPU Simulate only");
+      return Status::Ok("cpu-simulate-only");
+    }
     tile_cull_ready_ = true;
-    LogInfo("D3D12 light tile cull ready (CPU SimulateLightTileCullCs fallback)");
-    return Status::Ok();
+    tile_cull_gpu_ = true;
+    LogInfo("D3D12 light tile cull CS ready (GPU Dispatch; Simulate fallback)");
+    return Status::Ok("gpu-cs");
   }
 
   Status DispatchLightTileCull(const Mat4& view_proj, std::span<const Vec3> positions,
@@ -558,9 +606,186 @@ class D3D12Device final : public IDevice {
       out_indices.fill(-1);
       return Status::Fail(ErrorCode::Unavailable, "DispatchLightTileCull: not set up");
     }
+    if (tile_cull_gpu_ && tile_cull_pso_ && tile_cull_root_ &&
+        TryDispatchLightTileCullGpu(view_proj, positions, ranges, out_counts, out_indices, eye,
+                                    cam_forward)) {
+      return Status::Ok("gpu-cs");
+    }
     engine::render::SimulateLightTileCullCs(view_proj, positions, ranges, out_counts, out_indices,
                                             eye, cam_forward);
-    return Status::Ok();
+    return Status::Ok("cpu-simulate");
+  }
+
+  bool TryDispatchLightTileCullGpu(const Mat4& view_proj, std::span<const Vec3> positions,
+                                   std::span<const float> ranges, std::array<int, 128>& out_counts,
+                                   std::array<int, 1024>& out_indices, const Vec3& eye,
+                                   const Vec3& cam_forward) {
+    if (!device_ || !queue_) {
+      return false;
+    }
+    const UINT n = static_cast<UINT>((std::min)(positions.size(), ranges.size()));
+    if (n == 0) {
+      out_counts.fill(0);
+      out_indices.fill(-1);
+      return true;
+    }
+    struct LightPacked {
+      float px, py, pz, range;
+    };
+    struct TileCullCB {
+      float vp[16];
+      float eye[3];
+      UINT light_count;
+      float cam_forward[3];
+      float z_near;
+      float z_far;
+      UINT pad[3];
+    };
+    std::vector<LightPacked> lights(n);
+    for (UINT i = 0; i < n; ++i) {
+      lights[i] = {positions[i].x, positions[i].y, positions[i].z, ranges[i]};
+    }
+    TileCullCB cb{};
+    std::memcpy(cb.vp, view_proj.m.data(), sizeof(cb.vp));
+    cb.eye[0] = eye.x;
+    cb.eye[1] = eye.y;
+    cb.eye[2] = eye.z;
+    cb.light_count = n;
+    cb.cam_forward[0] = cam_forward.x;
+    cb.cam_forward[1] = cam_forward.y;
+    cb.cam_forward[2] = cam_forward.z;
+    cb.z_near = engine::render::kLightZNear;
+    cb.z_far = engine::render::kLightZFar;
+
+    auto make_buf = [&](UINT64 size, D3D12_HEAP_TYPE heap, D3D12_RESOURCE_STATES state,
+                        D3D12_RESOURCE_FLAGS flags, ComPtr<ID3D12Resource>& out) -> bool {
+      D3D12_HEAP_PROPERTIES hp{};
+      hp.Type = heap;
+      D3D12_RESOURCE_DESC desc{};
+      desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+      desc.Width = size;
+      desc.Height = 1;
+      desc.DepthOrArraySize = 1;
+      desc.MipLevels = 1;
+      desc.SampleDesc.Count = 1;
+      desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+      desc.Flags = flags;
+      return SUCCEEDED(device_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &desc, state,
+                                                        nullptr, IID_PPV_ARGS(&out)));
+    };
+
+    const UINT64 light_bytes = sizeof(LightPacked) * n;
+    const UINT64 cb_bytes = (sizeof(TileCullCB) + 255ull) & ~255ull;
+    const UINT64 count_bytes = sizeof(int) * 128;
+    const UINT64 index_bytes = sizeof(int) * 1024;
+    ComPtr<ID3D12Resource> cb_up, light_up, light_def, count_uav, index_uav, count_rb, index_rb;
+    if (!make_buf(cb_bytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ,
+                  D3D12_RESOURCE_FLAG_NONE, cb_up) ||
+        !make_buf(light_bytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ,
+                  D3D12_RESOURCE_FLAG_NONE, light_up) ||
+        !make_buf(light_bytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST,
+                  D3D12_RESOURCE_FLAG_NONE, light_def) ||
+        !make_buf(count_bytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                  D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, count_uav) ||
+        !make_buf(index_bytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                  D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, index_uav) ||
+        !make_buf(count_bytes, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST,
+                  D3D12_RESOURCE_FLAG_NONE, count_rb) ||
+        !make_buf(index_bytes, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST,
+                  D3D12_RESOURCE_FLAG_NONE, index_rb)) {
+      return false;
+    }
+    {
+      void* mapped = nullptr;
+      if (FAILED(cb_up->Map(0, nullptr, &mapped)) || !mapped) {
+        return false;
+      }
+      std::memcpy(mapped, &cb, sizeof(cb));
+      cb_up->Unmap(0, nullptr);
+    }
+    {
+      void* mapped = nullptr;
+      if (FAILED(light_up->Map(0, nullptr, &mapped)) || !mapped) {
+        return false;
+      }
+      std::memcpy(mapped, lights.data(), static_cast<size_t>(light_bytes));
+      light_up->Unmap(0, nullptr);
+    }
+
+    ComPtr<ID3D12CommandAllocator> alloc;
+    ComPtr<ID3D12GraphicsCommandList> list;
+    if (FAILED(device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                               IID_PPV_ARGS(&alloc))) ||
+        FAILED(device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc.Get(), nullptr,
+                                         IID_PPV_ARGS(&list)))) {
+      return false;
+    }
+    list->CopyBufferRegion(light_def.Get(), 0, light_up.Get(), 0, light_bytes);
+    D3D12_RESOURCE_BARRIER bar{};
+    bar.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    bar.Transition.pResource = light_def.Get();
+    bar.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    bar.Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    bar.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    list->ResourceBarrier(1, &bar);
+
+    list->SetPipelineState(tile_cull_pso_.Get());
+    list->SetComputeRootSignature(tile_cull_root_.Get());
+    list->SetComputeRootConstantBufferView(0, cb_up->GetGPUVirtualAddress());
+    list->SetComputeRootShaderResourceView(1, light_def->GetGPUVirtualAddress());
+    list->SetComputeRootUnorderedAccessView(2, count_uav->GetGPUVirtualAddress());
+    list->SetComputeRootUnorderedAccessView(3, index_uav->GetGPUVirtualAddress());
+    list->Dispatch(8, 4, 4);
+
+    D3D12_RESOURCE_BARRIER uavs[2]{};
+    uavs[0].Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    uavs[0].UAV.pResource = count_uav.Get();
+    uavs[1].Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    uavs[1].UAV.pResource = index_uav.Get();
+    list->ResourceBarrier(2, uavs);
+
+    auto to_copy = [&](ID3D12Resource* uav) {
+      D3D12_RESOURCE_BARRIER t{};
+      t.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      t.Transition.pResource = uav;
+      t.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+      t.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+      t.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+      list->ResourceBarrier(1, &t);
+    };
+    to_copy(count_uav.Get());
+    to_copy(index_uav.Get());
+    list->CopyBufferRegion(count_rb.Get(), 0, count_uav.Get(), 0, count_bytes);
+    list->CopyBufferRegion(index_rb.Get(), 0, index_uav.Get(), 0, index_bytes);
+    if (FAILED(list->Close())) {
+      return false;
+    }
+    ID3D12CommandList* lists[] = {list.Get()};
+    queue_->ExecuteCommandLists(1, lists);
+    WaitGpuSubmitted();
+
+    {
+      void* mapped = nullptr;
+      D3D12_RANGE range{0, static_cast<SIZE_T>(count_bytes)};
+      if (SUCCEEDED(count_rb->Map(0, &range, &mapped)) && mapped) {
+        std::memcpy(out_counts.data(), mapped, count_bytes);
+        count_rb->Unmap(0, nullptr);
+      } else {
+        return false;
+      }
+    }
+    {
+      void* mapped = nullptr;
+      D3D12_RANGE range{0, static_cast<SIZE_T>(index_bytes)};
+      if (SUCCEEDED(index_rb->Map(0, &range, &mapped)) && mapped) {
+        std::memcpy(out_indices.data(), mapped, index_bytes);
+        index_rb->Unmap(0, nullptr);
+      } else {
+        return false;
+      }
+    }
+    ++compute_dispatches_;
+    return true;
   }
 
   Status ProbeBindlessMinimalPath(std::uint32_t srv_heap_slot) override {
@@ -4782,8 +5007,11 @@ class D3D12Device final : public IDevice {
   std::uint32_t compute_dispatches_ = 0;
   bool cull_ready_ = false;
   bool tile_cull_ready_ = false;
+  bool tile_cull_gpu_ = false;
   ComPtr<ID3D12RootSignature> cull_root_;
   ComPtr<ID3D12PipelineState> cull_pso_;
+  ComPtr<ID3D12RootSignature> tile_cull_root_;
+  ComPtr<ID3D12PipelineState> tile_cull_pso_;
   ComPtr<ID3D12Resource> cull_compact_buf_;
   UINT64 cull_compact_bytes_ = 0;
   D3D12_RESOURCE_STATES cull_compact_state_ = D3D12_RESOURCE_STATE_COMMON;

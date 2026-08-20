@@ -723,7 +723,26 @@ Status TryHalfResSoftShadowCompose(float& out_shadow_factor) {
   for (float v : grid) {
     sum += v;
   }
-  out_shadow_factor = sum / static_cast<float>(kHalfW * kHalfH);
+  // W18: second 5-tap-ish smooth on the reduced grid before mean (still CPU product mid).
+  float soft = sum / static_cast<float>(kHalfW * kHalfH);
+  float edge = 0.f;
+  int ec = 0;
+  for (int y = 0; y < kHalfH; y += kHalfH - 1) {
+    for (int x = 0; x < kHalfW; ++x) {
+      edge += grid[y * kHalfW + x];
+      ++ec;
+    }
+  }
+  for (int x = 0; x < kHalfW; x += kHalfW - 1) {
+    for (int y = 1; y < kHalfH - 1; ++y) {
+      edge += grid[y * kHalfW + x];
+      ++ec;
+    }
+  }
+  if (ec > 0) {
+    soft = soft * 0.7f + (edge / static_cast<float>(ec)) * 0.3f;
+  }
+  out_shadow_factor = (std::min)(1.f, (std::max)(0.f, soft));
   LogInfo("TrySoftShadowCompose: Ok half-res-blur soft_factor=" +
           std::to_string(out_shadow_factor));
   return Status::Ok("half-res-soft-shadow-blur");

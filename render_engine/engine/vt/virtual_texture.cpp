@@ -193,4 +193,24 @@ std::uint32_t VirtualTexture::TickNearField(std::span<const VtFeedbackRequest> f
   return UploadPendingPages(max_uploads);
 }
 
+std::uint32_t VirtualTexture::IngestFeedbackPackedU32(std::span<const std::uint32_t> packed) {
+  // W18: decode GPU-style packed feedback (CPU ingest of readback buffer).
+  std::vector<VtFeedbackRequest> reqs;
+  reqs.reserve(packed.size());
+  for (std::uint32_t w : packed) {
+    VtFeedbackRequest r;
+    r.page.x = w & 0x3FFu;
+    r.page.y = (w >> 10) & 0x3FFu;
+    r.page.mip = (w >> 20) & 0xFu;
+    const std::uint32_t imp_q = (w >> 24) & 0xFFu;
+    r.importance = static_cast<float>(imp_q) / 255.f;
+    if (r.importance < 1e-4f) {
+      r.importance = 1.f;
+    }
+    reqs.push_back(r);
+  }
+  ProcessGpuFeedback(reqs);
+  return static_cast<std::uint32_t>(reqs.size());
+}
+
 }  // namespace engine::vt

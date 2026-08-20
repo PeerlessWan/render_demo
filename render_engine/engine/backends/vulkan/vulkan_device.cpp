@@ -1370,8 +1370,10 @@ class VulkanDevice final : public IDevice {
     }
     vkDestroyShaderModule(device_, mod, nullptr);
     tile_cull_ready_ = true;
-    LogInfo("Vulkan light tile cull ready (SPIR-V Ok; Dispatch fills via SimulateLightTileCullCs)");
-    return Status::Ok();
+    // W18: D3D12 path runs real CS; VK Dispatch still Simulate until SSBO wiring matches.
+    LogInfo("Vulkan light tile cull ready (SPIR-V Ok; Dispatch=SimulateLightTileCullCs; "
+            "D3D12 has GPU CS — ADR 0042)");
+    return Status::Ok("spirv-ok-cpu-simulate");
   }
 
   Status DispatchLightTileCull(const Mat4& view_proj, std::span<const Vec3> positions,
@@ -1384,10 +1386,10 @@ class VulkanDevice final : public IDevice {
       return Status::Fail(ErrorCode::Unavailable,
                           "DispatchLightTileCull SKIP: not set up (no SPIR-V)");
     }
-    // Equivalent buffer fill to CS UAV outputs (parity with D3D12 Simulate path).
+    // Equivalent buffer fill to CS UAV outputs (parity with D3D12 Simulate fallback).
     engine::render::SimulateLightTileCullCs(view_proj, positions, ranges, out_counts, out_indices,
                                             eye, cam_forward);
-    return Status::Ok();
+    return Status::Ok("cpu-simulate");
   }
 
   Status UploadIndirectIndexedArgs(std::span<const std::uint32_t> raw_u32) override {

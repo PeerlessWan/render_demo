@@ -19,6 +19,9 @@
 #include "engine/gi/reflection_probe.h"
 #include "engine/gi/scene_capture.h"
 #include "engine/gpu_driven/indirect_draw.h"
+#include "engine/gpu_driven/meshlet.h"
+#include "engine/hlod/billboard_impostor.h"
+#include "engine/rt/raytracing.h"
 #include "engine/render/atmosphere.h"
 #include "engine/render/ies_profile.h"
 #include "engine/render2d/bmfont.h"
@@ -1030,6 +1033,7 @@ int main(int argc, char** argv) {
   // W16 ADR 0040: VT near-default demo (not full-material default).
   engine::SetFeatureOverride("virtual_texture", true);
   engine::SetFeatureOverride("vt_near_default", true);
+  engine::SetFeatureOverride("meshlet", true);
   engine::vt::VirtualTexture sandbox_vt;
   sandbox_vt.Configure(16, 32, 3);
   engine::vfx::TrailRibbon lamp_trail;
@@ -1152,6 +1156,25 @@ int main(int argc, char** argv) {
   bool show_physics_debug = false;
   bool show_world_text_debug = false;
   bool show_path2d_debug = false;
+  bool show_hlod_debug = false;
+  float soft_shadow_factor = 1.f;
+  std::string mesh_shader_last_status = "not probed";
+  engine::scene::NodeId world_text_mesh_node = engine::scene::kInvalidNode;
+  engine::scene::NodeId path2d_mesh_node = engine::scene::kInvalidNode;
+  engine::scene::NodeId hlod_near_node = engine::scene::kInvalidNode;
+  engine::scene::NodeId hlod_impostor_node = engine::scene::kInvalidNode;
+  engine::hlod::BillboardImpostor sandbox_hlod;
+  sandbox_hlod.distance_threshold = 8.f;
+  sandbox_hlod.near_mesh_id = "cube";
+  // W18: mesh shader probe once at startup when Feature meshlet/mesh_shader on.
+  if (engine::QueryFeature("meshlet") || engine::QueryFeature("mesh_shader")) {
+    const auto ms = engine::gpu_driven::TryMeshShaderPath();
+    mesh_shader_last_status = ms ? (std::string("Ok: ") + ms.message())
+                                 : (std::string("SKIP: ") + ms.message());
+    engine::LogInfo(std::string("W18 TryMeshShaderPath: ") + mesh_shader_last_status);
+  } else {
+    mesh_shader_last_status = "Feature meshlet/mesh_shader off";
+  }
   bool f1_was_down = false;
   bool f2_was_down = false;
   bool f3_was_down = false;
@@ -1263,9 +1286,23 @@ int main(int argc, char** argv) {
       const auto hlsl_try =
           std::filesystem::exists(lit_from_shader_dir) ? lit_from_shader_dir : lit_hlsl;
       if (std::filesystem::exists(hlsl_try)) {
-        const auto cst = engine::assets::TryCompileHlslWithDxc(hlsl_try);
-        if (!cst) {
-          engine::LogInfo(std::string("ShaderHotReload dxc: ") + cst.message());
+        // W18: write VS/PS CSOs matching Sandbox CMake (lit_cube.vs.cso / lit_cube.ps.cso).
+        const auto vs_out = shader_dir / "lit_cube.vs.cso";
+        const auto ps_out = shader_dir / "lit_cube.ps.cso";
+        const auto vs_st =
+            engine::assets::TryCompileHlslWithDxc(hlsl_try, vs_out, "VSMain", "vs_6_0");
+        if (!vs_st) {
+          engine::LogInfo(std::string("ShaderHotReload dxc VS: ") + vs_st.message());
+        } else {
+          engine::LogInfo("ShaderHotReload dxc VS → " + vs_out.string());
+        }
+        // Align profile with CMake (ps_6_6 for lit PS).
+        const auto ps_st =
+            engine::assets::TryCompileHlslWithDxc(hlsl_try, ps_out, "PSMain", "ps_6_6");
+        if (!ps_st) {
+          engine::LogInfo(std::string("ShaderHotReload dxc PS: ") + ps_st.message());
+        } else {
+          engine::LogInfo("ShaderHotReload dxc PS → " + ps_out.string());
         }
       }
       (void)RebuildLitPsoIfPossible();
@@ -1497,6 +1534,7 @@ int main(int argc, char** argv) {
       dbg.AddAxes(2.5f, 0.05f);
     }
     // C14/W7: world BMFont billboard wireframe (atlas glyph boxes facing camera).
+    // W18: also UploadLitGeometry → slot 13 / character_13 when checked.
     if (show_world_text_debug) {
       engine::render2d::BmFontAtlas atlas;
       atlas.line_height = 16;
@@ -1519,8 +1557,33 @@ int main(int argc, char** argv) {
         dbg.AddLine(v2, v3, tc);
         dbg.AddLine(v3, v0, tc);
       }
+      if (!wt.vertices.empty() && !wt.indices.empty()) {
+        std::vector<engine::rhi::LitVertex> lit;
+        lit.reserve(wt.vertices.size());
+        for (const auto& v : wt.vertices) {
+          lit.push_back({v.position.x, v.position.y, v.position.z, 0.f, 1.f, 0.f, v.u, v.v});
+        }
+        if (app_ref.device().UploadLitGeometry(13, lit, wt.indices)) {
+          if (world_text_mesh_node == engine::scene::kInvalidNode ||
+              !app_ref.world().valid(world_text_mesh_node)) {
+            world_text_mesh_node = app_ref.world().CreateNode("character_13");
+            engine::scene::Transform xf;
+            app_ref.world().set_local_transform(world_text_mesh_node, xf);
+            engine::scene::MeshRenderer mr;
+            mr.mesh_id = "character_13";
+            mr.never_cull = true;
+            mr.local_bounds = {{-2.f, 1.5f, -3.f}, {2.f, 3.5f, 0.f}};
+            app_ref.world().set_mesh(world_text_mesh_node, mr);
+          }
+          app_ref.world().set_visible(world_text_mesh_node, true);
+        }
+      }
+    } else if (world_text_mesh_node != engine::scene::kInvalidNode &&
+               app_ref.world().valid(world_text_mesh_node)) {
+      app_ref.world().set_visible(world_text_mesh_node, false);
     }
     // W17/G13: Path2D fill (XZ plane) as debug wireframe — visible without sprite upload.
+    // W18: also UploadLitGeometry → slot 14 / character_14 when checked.
     if (show_path2d_debug) {
       engine::render2d::Path2D path;
       path.MoveTo({-1.5f, -1.0f});
@@ -1543,12 +1606,112 @@ int main(int argc, char** argv) {
           dbg.AddLine(b, c, pc);
           dbg.AddLine(c, a, pc);
         }
+        if (!fill.vertices.empty() && !fill.indices.empty()) {
+          std::vector<engine::rhi::LitVertex> lit;
+          lit.reserve(fill.vertices.size());
+          for (const auto& v : fill.vertices) {
+            lit.push_back({v.position.x, y, v.position.y, 0.f, 1.f, 0.f, v.u, v.v});
+          }
+          if (app_ref.device().UploadLitGeometry(14, lit, fill.indices)) {
+            if (path2d_mesh_node == engine::scene::kInvalidNode ||
+                !app_ref.world().valid(path2d_mesh_node)) {
+              path2d_mesh_node = app_ref.world().CreateNode("character_14");
+              engine::scene::Transform xf;
+              app_ref.world().set_local_transform(path2d_mesh_node, xf);
+              engine::scene::MeshRenderer mr;
+              mr.mesh_id = "character_14";
+              mr.never_cull = true;
+              mr.local_bounds = {{-2.5f, 0.f, -2.5f}, {2.5f, 0.2f, 2.5f}};
+              app_ref.world().set_mesh(path2d_mesh_node, mr);
+            }
+            app_ref.world().set_visible(path2d_mesh_node, true);
+          }
+        }
       }
       const auto stroke = path.BuildLineList();
       const engine::ColorRgba sc{0.95f, 0.55f, 0.2f, 1.f};
       for (std::size_t i = 0; i + 1 < stroke.indices.size(); i += 2) {
         dbg.AddLine(to_world(stroke.vertices[stroke.indices[i]]),
                     to_world(stroke.vertices[stroke.indices[i + 1]]), sc);
+      }
+    } else if (path2d_mesh_node != engine::scene::kInvalidNode &&
+               app_ref.world().valid(path2d_mesh_node)) {
+      app_ref.world().set_visible(path2d_mesh_node, false);
+    }
+    // W18 HLOD: Near cube @ {4,0.5,-4} vs camera-facing impostor quad (slot 15).
+    {
+      constexpr float kHlodX = 4.f;
+      constexpr float kHlodY = 0.5f;
+      constexpr float kHlodZ = -4.f;
+      const engine::Vec3 kHlodPos{kHlodX, kHlodY, kHlodZ};
+      auto ensure_hlod_near = [&]() {
+        if (hlod_near_node == engine::scene::kInvalidNode ||
+            !app_ref.world().valid(hlod_near_node)) {
+          hlod_near_node = app_ref.world().CreateNode("hlod_near");
+          engine::scene::Transform xf;
+          xf.position = kHlodPos;
+          app_ref.world().set_local_transform(hlod_near_node, xf);
+          engine::scene::MeshRenderer mr;
+          mr.mesh_id = "cube";
+          mr.never_cull = true;
+          app_ref.world().set_mesh(hlod_near_node, mr);
+        }
+      };
+      auto ensure_hlod_impostor = [&]() {
+        if (hlod_impostor_node == engine::scene::kInvalidNode ||
+            !app_ref.world().valid(hlod_impostor_node)) {
+          hlod_impostor_node = app_ref.world().CreateNode("character_15");
+          engine::scene::Transform xf;
+          app_ref.world().set_local_transform(hlod_impostor_node, xf);
+          engine::scene::MeshRenderer mr;
+          mr.mesh_id = "character_15";
+          mr.never_cull = true;
+          mr.local_bounds = {{3.f, -0.5f, -5.f}, {5.f, 1.5f, -3.f}};
+          app_ref.world().set_mesh(hlod_impostor_node, mr);
+        }
+      };
+      if (show_hlod_debug) {
+        ensure_hlod_near();
+        ensure_hlod_impostor();
+        const auto cam_p = app_ref.camera().position;
+        const float dist = (cam_p - kHlodPos).length();
+        const auto mode = sandbox_hlod.SwitchLod(dist);
+        if (mode == engine::hlod::LodMode::NearMesh) {
+          app_ref.world().set_visible(hlod_near_node, true);
+          app_ref.world().set_visible(hlod_impostor_node, false);
+        } else {
+          app_ref.world().set_visible(hlod_near_node, false);
+          const auto& cam = app_ref.camera();
+          const engine::Quat q = engine::Quat::FromEulerYxz(cam.yaw, cam.pitch, 0.f);
+          const engine::Vec3 right = q.Rotate(engine::Vec3{1.f, 0.f, 0.f});
+          const engine::Vec3 up = q.Rotate(engine::Vec3{0.f, 1.f, 0.f});
+          const engine::Vec3 n = engine::Normalize(engine::Cross(right, up));
+          constexpr float hs = 0.75f;
+          const engine::Vec3 c0 = kHlodPos - right * hs - up * hs;
+          const engine::Vec3 c1 = kHlodPos + right * hs - up * hs;
+          const engine::Vec3 c2 = kHlodPos + right * hs + up * hs;
+          const engine::Vec3 c3 = kHlodPos - right * hs + up * hs;
+          // Teal-green tint via character_15 material; UVs for lit path.
+          std::vector<engine::rhi::LitVertex> qv = {
+              {c0.x, c0.y, c0.z, n.x, n.y, n.z, 0.f, 1.f},
+              {c1.x, c1.y, c1.z, n.x, n.y, n.z, 1.f, 1.f},
+              {c2.x, c2.y, c2.z, n.x, n.y, n.z, 1.f, 0.f},
+              {c3.x, c3.y, c3.z, n.x, n.y, n.z, 0.f, 0.f},
+          };
+          static const std::uint32_t qi[6] = {0, 1, 2, 0, 2, 3};
+          if (app_ref.device().UploadLitGeometry(15, qv, qi)) {
+            app_ref.world().set_visible(hlod_impostor_node, true);
+          }
+        }
+      } else {
+        if (hlod_near_node != engine::scene::kInvalidNode &&
+            app_ref.world().valid(hlod_near_node)) {
+          app_ref.world().set_visible(hlod_near_node, false);
+        }
+        if (hlod_impostor_node != engine::scene::kInvalidNode &&
+            app_ref.world().valid(hlod_impostor_node)) {
+          app_ref.world().set_visible(hlod_impostor_node, false);
+        }
       }
     }
     if (show_physics_debug) {
@@ -1653,6 +1816,17 @@ int main(int argc, char** argv) {
           imgui.Checkbox("Physics debug (AABB/SoftBody)", &show_physics_debug);
           imgui.Checkbox("World text debug (W7)", &show_world_text_debug);
           imgui.Checkbox("Path2D debug (W17)", &show_path2d_debug);
+          imgui.Checkbox("HLOD debug (W18)", &show_hlod_debug);
+          {
+            char w18[128];
+            std::snprintf(w18, sizeof(w18), "soft_shadow_factor  %.3f", soft_shadow_factor);
+            imgui.Text(w18);
+            std::snprintf(w18, sizeof(w18), "mesh_shader  %s", mesh_shader_last_status.c_str());
+            imgui.Text(w18);
+            std::snprintf(w18, sizeof(w18), "VT resident_count  %u",
+                          sandbox_vt.resident_count());
+            imgui.Text(w18);
+          }
           imgui.Checkbox("Scale instances (1024)", &show_scale_instances);
           if (imgui.Checkbox("Character (F)", &possess.possess_character)) {
             // Edge applied next frame via possess_was; force sync now.
@@ -1991,12 +2165,22 @@ int main(int argc, char** argv) {
       particles.Step(app_ref.delta_time());
       gpu_particles.set_origin({1.8f, 2.6f, 1.0f});
       (void)gpu_particles.Step(app_ref.delta_time());
-      // W16: VT near-field when Feature virtual_texture / vt_near_default on.
+      // W16/W18: VT near-field — multi UV feedback + optional packed U32 ingest.
       if (engine::QueryFeature("virtual_texture") || engine::QueryFeature("vt_near_default")) {
-        engine::vt::VtFeedbackRequest fb{};
-        fb.page = sandbox_vt.UvToPage(0.5f, 0.5f, 0);
-        fb.importance = 1.f;
-        (void)sandbox_vt.TickNearField({&fb, 1}, 4);
+        engine::vt::VtFeedbackRequest fbs[5]{};
+        const float uvs[5][2] = {{0.50f, 0.50f}, {0.42f, 0.50f}, {0.58f, 0.50f},
+                                {0.50f, 0.42f}, {0.50f, 0.58f}};
+        for (int i = 0; i < 5; ++i) {
+          fbs[i].page = sandbox_vt.UvToPage(uvs[i][0], uvs[i][1], 0);
+          fbs[i].importance = 1.f - 0.05f * static_cast<float>(i);
+        }
+        (void)sandbox_vt.TickNearField({fbs, 5}, 4);
+        const auto packed_page = sandbox_vt.UvToPage(0.45f, 0.55f, 0);
+        const std::uint32_t packed =
+            (packed_page.x & 0x3FFu) | ((packed_page.y & 0x3FFu) << 10) |
+            ((packed_page.mip & 0xFu) << 20) | (200u << 24);
+        (void)sandbox_vt.IngestFeedbackPackedU32({&packed, 1});
+        (void)sandbox_vt.ProcessRequests(1);
       }
       if (large_terrain_mode) {
         terrain_chunks.Update(app_ref.camera().position, terrain_budget);
@@ -2201,6 +2385,19 @@ int main(int argc, char** argv) {
         }
       }
       reflection_probe.ClearDirty();
+    }
+    // W18: half-res soft-shadow compose → multiply into sun (no-op when RT Unavailable).
+    if ((app_ref.frame_index() % 30) == 0) {
+      float factor = 1.f;
+      if (auto st = engine::rt::TryHalfResSoftShadowCompose(factor); st) {
+        soft_shadow_factor = factor;
+      }
+    }
+    {
+      const float sun_ui = fx.sun_intensity;
+      fx.sun_intensity = sun_ui * soft_shadow_factor;
+      render.set_effect_tuning(fx);
+      fx.sun_intensity = sun_ui;
     }
     if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites, nullptr, &dbg);
         !st) {

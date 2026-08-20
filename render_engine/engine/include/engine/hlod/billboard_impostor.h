@@ -33,4 +33,10 @@ struct BillboardImpostor {
                                          const ColorRgba& bake_color,
                                          const std::filesystem::path& path);
 
+// W18: write 2×2 RGBA8 solid bake next to path (path.stem + ".rgba8"); returns Ok with path message.
+[[nodiscard]] Status WriteSolidRgba8Bake(const ColorRgba& color, const std::filesystem::path& path);
+
+// W18: read SerializeBakeToFile text back into impostor (distance + ids).
+[[nodiscard]] Status LoadBakeFromFile(BillboardImpostor& out, const std::filesystem::path& path);
+
 }  // namespace engine::hlod

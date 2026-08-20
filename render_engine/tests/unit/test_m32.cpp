@@ -139,6 +139,10 @@ TEST_CASE("VT GPU feedback stub and UploadPendingPages", "[m32][w9][c06]") {
 
   const auto hit = vt.Sample(0.1f, 0.1f, 0);
   REQUIRE(hit.a == 1.f);
+
+  // W18: packed u32 ingest (GPU readback word shape).
+  const std::uint32_t packed = (2u) | (1u << 10) | (0u << 20) | (180u << 24);
+  REQUIRE(vt.IngestFeedbackPackedU32({&packed, 1}) == 1);
 }
 
 TEST_CASE("BillboardImpostor SwitchLod and Bake placeholder", "[m32][w9][c07]") {

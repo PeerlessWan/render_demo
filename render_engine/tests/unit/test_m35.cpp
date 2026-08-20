@@ -168,6 +168,17 @@ TEST_CASE("HLOD SerializeBakeToFile writes bake", "[m35][w10][hlod]") {
   std::string line;
   REQUIRE(static_cast<bool>(std::getline(in, line)));
   REQUIRE(line.find("hlod_impostor_bake") != std::string::npos);
+
+  engine::hlod::BillboardImpostor loaded;
+  const auto load = engine::hlod::LoadBakeFromFile(loaded, path);
+  REQUIRE(load);
+  REQUIRE(loaded.near_mesh_id == "mesh/tree");
+  REQUIRE(std::fabs(loaded.distance_threshold - 40.f) < 1e-3f);
+
+  const auto rgba_path = dir / "solid.rgba8";
+  const auto rgba_st = engine::hlod::WriteSolidRgba8Bake({0.1f, 0.2f, 0.3f, 1.f}, rgba_path);
+  REQUIRE(rgba_st);
+  REQUIRE(std::filesystem::file_size(rgba_path) == 16);
 }
 
 TEST_CASE("VT near default Feature default off", "[m35][w10][vt]") {

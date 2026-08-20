@@ -87,6 +87,10 @@ class VirtualTexture {
   std::uint32_t TickNearField(std::span<const VtFeedbackRequest> feedback,
                               std::uint32_t max_uploads);
 
+  // W18 ADR 0042: decode packed GPU feedback words (page_x | page_y<<10 | mip<<20 | imp*1000<<24)
+  // into VtFeedbackRequest then ProcessGpuFeedback. Returns ingested count.
+  std::uint32_t IngestFeedbackPackedU32(std::span<const std::uint32_t> packed);
+
   void ClearRequests() { requests_.clear(); }
 
  private:
