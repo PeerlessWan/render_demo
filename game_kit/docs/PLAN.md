@@ -44,7 +44,7 @@
 | GK0–GK3 | 已写；`game_kit_tests` / samples 可 headless |
 | GK4 Prefab | `PrefabDocument` + `Instantiate`（可挂脚本）+ `samples/prefab_place` |
 | GK5 | 已写接线：Lua 协程 `wait`/`start_coroutine`、`AiState` 挂实体、`GameKitScriptHost` |
-| 主流差距 1–7 | 产品级加深：Host API 0.1 / Prefab v3、存档 v1、Contacts、Recast、ReplicationSession、行断点、`api.json` 生成器。`ctest`：`game_kit.unit`。仍外置：品类 kit、独立服、Luau/IDE |
+| 主流差距 1–7 | 产品级加深 + 绑定 C 生成 / DAP TCP。`ctest`：`game_kit.unit`。**暂停**：新品类游戏、`genre_kits`。仍外置：独立服、Luau |
 
 ## 4. 相关
 

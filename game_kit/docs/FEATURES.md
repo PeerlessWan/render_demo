@@ -30,10 +30,10 @@
 | ID | 功能 | 状态 |
 |---|---|---|
 | GKSC01 | 语言运行时（默认 Lua，可换） | 已写 |
-| GKSC02 | 绑定白名单（`api.json` → `luaL_Reg`） | 已写 |
+| GKSC02 | 绑定白名单（`api.json` → `luaL_Reg` + 生成 C 体） | 已写 |
 | GKSC03 | 脚本热重载（开发构建） | 已写（可 `persist`） |
 | GKSC04 | 错误隔离（脚本异常不崩 Device） | 已写（`luaL_traceback`） |
-| GKSC05 | 调试钩子 | 已写（DAP 子集 + 行断点 + `on_break` locals；无 IDE 窗口） |
+| GKSC05 | 调试钩子 | 已写（DAP 子集 + TCP 帧 + VS Code 骨架；无市场发布） |
 | GKSC06 | 协程 / yield | 已写（`wait` / `wait_event` / `start_coroutine`） |
 | GKSC07 | `import` 模块缓存 | 已写 |
 
@@ -50,7 +50,7 @@
 | 材质节点图 | **范围外** / 外部 DCC（editor **不做**节点图） |
 | 关卡视口编辑器 | 独立 [`editor/`](../../editor/docs/README.md) 或继续 DCC+CLI |
 | 音频 DSP | 跨品类中间件或游戏 |
-| 绑定生成器全家桶 / IDE 调试器 / Luau | 后置工具；本层 `api.json` 生成器 + DAP 子集，不换 Luau |
+| 绑定生成器全家桶 / IDE 调试器 / Luau | 后置工具；本层 `api.json` 生成器（含 C 体）+ DAP TCP 骨架，不换 Luau |
 
 ## 4. 相关
 

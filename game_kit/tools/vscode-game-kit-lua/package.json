@@ -1,0 +1,38 @@
+{
+  "name": "game-kit-lua",
+  "displayName": "game_kit Lua DAP",
+  "description": "Thin Debug Adapter that attaches to game_kit DapSession over TCP.",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Debuggers"],
+  "activationEvents": ["onDebug"],
+  "main": "./src/extension.js",
+  "contributes": {
+    "debuggers": [
+      {
+        "type": "game-kit-lua",
+        "label": "game_kit Lua",
+        "program": "./src/adapter.js",
+        "runtime": "node",
+        "configurationAttributes": {
+          "attach": {
+            "required": ["port"],
+            "properties": {
+              "port": { "type": "number", "description": "DapSession Listen port", "default": 4711 },
+              "host": { "type": "string", "default": "127.0.0.1" }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "game-kit-lua",
+            "request": "attach",
+            "name": "Attach game_kit Lua",
+            "host": "127.0.0.1",
+            "port": 4711
+          }
+        ]
+      }
+    ]
+  }
+}

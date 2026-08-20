@@ -83,6 +83,7 @@ add_library(game_kit STATIC
   script/vm/lua_vm.cpp
   script/dap_session.cpp
   script/bindings/lua_api.cpp
+  script/bindings/lua_api.gen.cpp
   script/script_hot_reload.cpp
   script/script_component.cpp
   script/coroutine_scheduler.cpp
@@ -118,7 +119,7 @@ if(Python3_Interpreter_FOUND)
     RESULT_VARIABLE _lua_api_check
   )
   if(NOT _lua_api_check EQUAL 0)
-    message(WARNING "game_kit: lua_api_reg.inc does not match api.json; run script/bindings/gen_lua_api.py")
+    message(WARNING "game_kit: lua bindings generated files do not match api.json; run script/bindings/gen_lua_api.py")
   endif()
 endif()
 
@@ -151,6 +152,9 @@ target_link_libraries(game_kit_tests PRIVATE game_kit)
 enable_testing()
 add_test(NAME game_kit.unit COMMAND game_kit_tests)
 
+if(WIN32)
+  target_link_libraries(game_kit PUBLIC ws2_32)
+endif()
 if(MSVC)
   target_compile_options(game_kit PRIVATE /W4)
   target_compile_options(hello_playable PRIVATE /W4)

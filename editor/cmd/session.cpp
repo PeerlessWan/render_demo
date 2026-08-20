@@ -222,6 +222,11 @@ engine::scene::NodeId CreatePrimitive(engine::scene::World& world, std::string_v
     mesh.never_cull = true;
     mesh.local_bounds = {{-4.f, -0.05f, -4.f}, {4.f, 0.05f, 4.f}};
     world.set_mesh(id, mesh);
+    engine::scene::ColliderComponent col;
+    col.hx = 4.f;
+    col.hy = 0.25f;
+    col.hz = 4.f;
+    world.set_collider(id, col);
     return id;
   }
   const bool player = kind == "player";
@@ -756,6 +761,20 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
         return Fail(st.message());
       }
       return Ok("bake");
+    }
+    case EditorOp::Kind::BakeNav: {
+      if (!s.rt || !s.world) {
+        return Fail("no runtime");
+      }
+      s.rt->set_world(s.world);
+      const bool baked = s.rt->nav().BakeFromWorld(*s.world);
+      const bool mesh = s.rt->nav().has_navmesh();
+      auto pts = s.rt->nav().FindPath({-4.f, 0.5f, -4.f}, {4.f, 0.5f, 4.f});
+      auto r = Ok(baked ? "bake_nav" : "bake_nav empty");
+      r.json = std::string("{\"has_navmesh\":") + (mesh ? "true" : "false") + ",\"path_pts\":" +
+               std::to_string(pts.size()) + "}";
+      r.message = r.json;
+      return r;
     }
     case EditorOp::Kind::Lint: {
       auto doc = game_kit::CaptureWorld(world);

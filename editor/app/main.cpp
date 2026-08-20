@@ -517,6 +517,14 @@ int main(int argc, char** argv) {
         engine::LogError(r.message);
       }
     }
+    if (cmd.bake_nav) {
+      editor::EditorOp op;
+      op.kind = editor::EditorOp::Kind::BakeNav;
+      const auto r = editor::ApplyOp(bind_session(), op);
+      if (!r.ok) {
+        engine::LogError(r.message);
+      }
+    }
 
     if (cmd.sculpt) {
       editor::EditorOp op;

@@ -23,9 +23,9 @@ Script Source (.lua 等)
 
 绑定只经 [HOST_API.md](../../render_engine/docs/HOST_API.md)。  
 
-默认绑定源：[`script/bindings/api.json`](../script/bindings/api.json) 生成 `lua_api_reg.inc`。含 `ui_label`/`ui_button`/`ui_panel`/`ui_toggle`/`ui_slider`/`ui_layout`、`bake_nav`/`bake_nav_world`/`find_path`/`nav_agent`。  
+默认绑定源：[`script/bindings/api.json`](../script/bindings/api.json) 生成 `lua_api_reg.inc` / `lua_api.gen.cpp`（`sig` 规则签名；变参与协程 `hand` 仍手写）。含 `ui_label`/`ui_button`/`ui_panel`/`ui_toggle`/`ui_slider`/`ui_layout`、`bake_nav`/`bake_nav_world`/`find_path`/`nav_agent`。  
 
-每 VM 一份 Host（Lua extraspace）。pcall 走 `luaL_traceback`。`set_instruction_budget` 用 count hook 打断死循环。`set_debug_hooks(true)` 记录 `last_line` / `last_chunk`，`ScriptDebugger` 行断点在 hook 内调 `on_break` 可读 locals；`DapSession` 可 `Handle` DAP JSON（命中后 hook 内阻塞直到 `continue`）。热重载可保留 `persist`。`wait_event(topic)` 挂起协程直到 EventBus 发布该主题。打开 base 后剥掉 `load`/`loadfile`/`dofile`。  
+每 VM 一份 Host（Lua extraspace）。pcall 走 `luaL_traceback`。`set_instruction_budget` 用 count hook 打断死循环。`set_debug_hooks(true)` 记录 `last_line` / `last_chunk`，`ScriptDebugger` 行断点在 hook 内调 `on_break` 可读 locals；`DapSession` 可 `Handle` DAP JSON，并可 `Listen` TCP（`Content-Length` 帧）。热重载可保留 `persist`。`wait_event(topic)` 挂起协程直到 EventBus 发布该主题。打开 base 后剥掉 `load`/`loadfile`/`dofile`。  
 
 - **不进引擎核心：** 与 ADR 0027 / HOSTING 方案 A 一致；game_kit 实现薄 `GameKitScriptHost`（C19）。  
 - **Host API：** 绑定只经 [HOST_API.md](../../render_engine/docs/HOST_API.md)。  

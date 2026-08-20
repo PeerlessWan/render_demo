@@ -29,7 +29,15 @@ bool Overlaps(engine::Vec3 p, engine::Vec3 half, engine::Vec3 q) {
          std::abs(p.z - q.z) <= half.z;
 }
 
+engine::Vec3 PaddedHalf(engine::Vec3 h) {
+  h.x = std::max(h.x, 0.25f);
+  h.y = std::max(h.y, 0.25f);
+  h.z = std::max(h.z, 0.25f);
+  return h;
+}
+
 void PushBox(std::vector<float>* verts, std::vector<int>* tris, engine::Vec3 c, engine::Vec3 h) {
+  h = PaddedHalf(h);
   const int base = static_cast<int>(verts->size() / 3);
   const float xs[2] = {c.x - h.x, c.x + h.x};
   const float ys[2] = {c.y - h.y, c.y + h.y};
@@ -74,11 +82,11 @@ void VisitWorld(engine::scene::World& world, engine::scene::NodeId id, const eng
       mx.y = std::max(mx.y, p.y);
       mx.z = std::max(mx.z, p.z);
     }
-    boxes->push_back(NavObstacle{(mn + mx) * 0.5f, (mx - mn) * 0.5f});
+    boxes->push_back(NavObstacle{(mn + mx) * 0.5f, PaddedHalf((mx - mn) * 0.5f)});
   }
   if (const auto* col = world.collider(id)) {
     const auto p = m.TransformPoint({});
-    boxes->push_back(NavObstacle{p, {col->hx, col->hy, col->hz}});
+    boxes->push_back(NavObstacle{p, PaddedHalf({col->hx, col->hy, col->hz})});
   }
   for (auto child : world.children(id)) {
     VisitWorld(world, child, m, boxes);
@@ -311,6 +319,16 @@ bool NavWorld::BakeFromWorld(engine::scene::World& world) {
     VisitWorld(world, root, engine::Mat4::Identity(), &boxes);
   }
   boxes.insert(boxes.end(), obstacles_.begin(), obstacles_.end());
+  bool wide_floor = false;
+  for (const auto& b : boxes) {
+    if (b.half_extents.x >= 2.f && b.half_extents.z >= 2.f) {
+      wide_floor = true;
+      break;
+    }
+  }
+  if (!wide_floor) {
+    boxes.insert(boxes.begin(), NavObstacle{{0.f, -0.25f, 0.f}, {20.f, 0.25f, 20.f}});
+  }
   if (boxes.empty()) {
     return BakeFromObstacles();
   }

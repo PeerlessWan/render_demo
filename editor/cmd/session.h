@@ -48,6 +48,7 @@ struct EditorOp {
     ListContent,
     HotReload,
     Bake,
+    BakeNav,
     Lint,
     Place,
     ApplyPrefab,

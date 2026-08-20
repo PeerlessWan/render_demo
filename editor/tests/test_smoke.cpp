@@ -484,5 +484,6 @@ TEST_CASE("mcp lists set_parent bake lint", "[mcp]") {
       host, R"({"jsonrpc":"2.0","id":1,"method":"tools/list"})");
   REQUIRE(listed.find("editor_set_parent") != std::string::npos);
   REQUIRE(listed.find("editor_bake") != std::string::npos);
+  REQUIRE(listed.find("editor_bake_nav") != std::string::npos);
   REQUIRE(listed.find("editor_lint") != std::string::npos);
 }

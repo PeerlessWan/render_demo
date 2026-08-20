@@ -29,18 +29,27 @@ class DapSession {
 
   bool Listen(std::uint16_t port);
   void CloseListen();
+  [[nodiscard]] std::uint16_t listen_port() const { return listen_port_; }
 
  private:
   std::string Dispatch(std::string_view json);
   void ApplyBreakpoints(std::string_view json);
+  void PumpSockets();
+  void WriteJson(std::string_view json);
 
   ScriptDebugger* dbg_ = nullptr;
   std::deque<std::string> inbox_;
   std::string last_event_;
+  std::string recv_buf_;
   int last_line_ = 0;
   int seq_ = 1;
   bool blocking_ = false;
   std::intptr_t listen_sock_ = -1;
+  std::intptr_t client_sock_ = -1;
+  std::uint16_t listen_port_ = 0;
 };
+
+[[nodiscard]] std::string DapMakeFrame(std::string_view json);
+std::size_t DapTakeMessages(std::string* pending, std::vector<std::string>* out);
 
 }  // namespace game_kit

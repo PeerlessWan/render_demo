@@ -735,6 +735,9 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
     if (ui.Button("烘焙光照", 220.f, 22.f)) {
       cmd->bake = true;
     }
+    if (ui.Button("烘焙导航", 220.f, 22.f)) {
+      cmd->bake_nav = true;
+    }
     if (ui.Button("校验 (C20)", 220.f, 22.f)) {
       cmd->lint = true;
     }

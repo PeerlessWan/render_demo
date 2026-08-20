@@ -8,9 +8,23 @@
 #include "engine/scene/world.h"
 #include "engine/ui/retained_ui.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
+#include <vector>
+
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#ifdef LoadString
+#undef LoadString
+#endif
+#endif
 
 TEST_CASE("lua traceback includes line info", "[gk-script]") {
   game_kit::ScriptVm vm;
@@ -282,6 +296,59 @@ TEST_CASE("lua dap breakpoint variables", "[gk-script]") {
   const auto stack = dap.Handle(R"({"seq":4,"type":"request","command":"stackTrace","arguments":{"threadId":1}})");
   REQUIRE(stack.find("stackFrames") != std::string::npos);
 }
+
+TEST_CASE("dap content-length frame roundtrip", "[gk-script]") {
+  const auto json = std::string(R"({"seq":1,"type":"request","command":"initialize"})");
+  const auto frame = game_kit::DapMakeFrame(json);
+  REQUIRE(frame.find("Content-Length:") != std::string::npos);
+  REQUIRE(frame.find("\r\n\r\n") != std::string::npos);
+  std::string pending = frame;
+  std::vector<std::string> msgs;
+  REQUIRE(game_kit::DapTakeMessages(&pending, &msgs) == 1);
+  REQUIRE(msgs[0] == json);
+  REQUIRE(pending.empty());
+}
+
+#if defined(_WIN32)
+TEST_CASE("dap tcp initialize over loopback", "[gk-script]") {
+  game_kit::DapSession dap;
+  if (!dap.Listen(0) || dap.listen_port() == 0) {
+    return;
+  }
+  SOCKET c = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  REQUIRE(c != INVALID_SOCKET);
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(dap.listen_port());
+  inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+  u_long nb = 1;
+  ioctlsocket(c, FIONBIO, &nb);
+  (void)connect(c, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+  for (int i = 0; i < 40; ++i) {
+    dap.Poll();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  const auto json = std::string(R"({"seq":1,"type":"request","command":"initialize"})");
+  const auto frame = game_kit::DapMakeFrame(json);
+  (void)send(c, frame.data(), static_cast<int>(frame.size()), 0);
+  std::string got;
+  char buf[1024];
+  for (int i = 0; i < 40; ++i) {
+    dap.Poll();
+    const int n = recv(c, buf, sizeof(buf), 0);
+    if (n > 0) {
+      got.append(buf, static_cast<std::size_t>(n));
+    }
+    if (got.find("initialize") != std::string::npos) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  closesocket(c);
+  dap.CloseListen();
+  REQUIRE(got.find("initialize") != std::string::npos);
+}
+#endif
 
 TEST_CASE("lua ui layout panel toggle", "[gk-script]") {
   engine::scene::World world;

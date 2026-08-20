@@ -50,6 +50,7 @@
 | 地形 | Raise/Lower/Smooth；Undo；随场景存盘；视口 Upload |
 | Tilemap | 图集路径 + GID；世界坐标投影为 ScreenQuad；Sprite/Tile 可见可点选 |
 | Bake | 读当前场景灯 CPU 烘 lightmap 并 Upload；失败 isError |
+| NavMesh 烘焙 | `editor_bake_nav`：`BakeFromWorld`；无离线多边形编辑 |
 | Lint | 内置 SceneDocument v3 校验 + manifest 依赖图 |
 | 热重载 | 贴图 UploadLitAlbedoRgba + 地形网格 Upload；脚本 ReloadPath |
 

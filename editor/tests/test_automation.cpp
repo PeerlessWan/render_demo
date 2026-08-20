@@ -3,6 +3,7 @@
 
 #include "kit_test.h"
 
+#include <cmath>
 #include <filesystem>
 #include <string>
 
@@ -80,6 +81,43 @@ TEST_CASE("mcp bake succeeds without baker exe", "[automation]") {
   const auto bake = editor::HandleMcpLine(
       host, R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"editor_bake","arguments":{}}})");
   REQUIRE(bake.find("isError\":false") != std::string::npos);
+}
+
+TEST_CASE("mcp bake_nav from colliders", "[automation]") {
+  editor::EditorHost host;
+  editor::EditorOp ground;
+  ground.kind = editor::EditorOp::Kind::Create;
+  ground.create_kind = "ground";
+  REQUIRE(editor::ApplyOp(host.Bind(), ground).ok);
+  editor::EditorOp wall;
+  wall.kind = editor::EditorOp::Kind::Create;
+  wall.create_kind = "collider";
+  REQUIRE(editor::ApplyOp(host.Bind(), wall).ok);
+  editor::EditorOp mv;
+  mv.kind = editor::EditorOp::Kind::SetTransform;
+  mv.has_x = true;
+  mv.x = 2.f;
+  mv.has_z = true;
+  mv.z = 0.f;
+  REQUIRE(editor::ApplyOp(host.Bind(), mv).ok);
+  const auto bake = editor::HandleMcpLine(
+      host,
+      R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"editor_bake_nav","arguments":{}}})");
+  REQUIRE(bake.find("isError\":false") != std::string::npos);
+  REQUIRE(bake.find("has_navmesh") != std::string::npos);
+#if defined(GAME_KIT_WITH_RECAST) && GAME_KIT_WITH_RECAST
+  REQUIRE(host.rt.nav().has_navmesh());
+  auto pts = host.rt.nav().FindPath({-3.f, 0.5f, 0.f}, {3.f, 0.5f, 0.f});
+  if (!pts.empty()) {
+    bool through_center = false;
+    for (const auto& p : pts) {
+      if (std::fabs(p.x - 2.f) < 0.35f && std::fabs(p.z) < 0.35f) {
+        through_center = true;
+      }
+    }
+    REQUIRE(!through_center);
+  }
+#endif
 }
 
 TEST_CASE("mcp sculpt then undo restores heights", "[automation]") {

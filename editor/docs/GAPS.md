@@ -79,7 +79,7 @@
 | ED-G40 | UMG / 可视化 UI 编辑器 | **不做** |
 | ED-G41 | FBX / USD 一站式导入 | 外部转 glTF + cook |
 | ED-G42 | 内置完整 DCC | **不替代 Blender** |
-| ED-G43 | NavMesh / 联机同步编辑 | 一期不塞；中间件另立 |
+| ED-G43 | NavMesh / 联机同步编辑 | **运行时烘焙入口已写**（`editor_bake_nav` / `BakeFromWorld`）；不做离线多边形编辑器、不做联机同步编辑 |
 | ED-G44 | 粒子 / 时间轴 / 过场编辑器 | 未排期 |
 | ED-G45 | 可视化脚本（蓝图级） | **不做**；脚本在 `game_kit` |
 | ED-G46 | 包管理器 / 协作 / 版本控制套件 | **不做** |

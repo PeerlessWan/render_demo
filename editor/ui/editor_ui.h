@@ -29,6 +29,7 @@ struct EditorCommands {
   bool save_prefab = false;
   bool cook = false;
   bool bake = false;
+  bool bake_nav = false;
   bool lint = false;
   bool rescan = false;
   bool step = false;
