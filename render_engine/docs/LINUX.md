@@ -11,16 +11,25 @@
 | engine/platform/linux/ | **Mega-W11**：`window_x11`；`__linux__` + `ENGINE_HAS_X11` 时 `Window::Create` → X11；headless Ok；非 Linux 树为 Unavailable 桩 |
 | D3D12 | Linux **不做**；CMake 跳过 `engine_d3d12` 与 D3D12 learn samples |
 | X11 clear 路径 | 真窗可开；`TryCreateXlibSurface` + `CreateVulkanDevice` 接 `VK_KHR_xlib_surface`；独立 smoke 见下表 |
-| **Wayland** | **W15 目标**：`window_wayland` + `ENGINE_HAS_WAYLAND`；`WAYLAND_DISPLAY` 探测；X11 仍为 present/CI 基线 |
+| **Wayland** | **W16 已收口**：`window_wayland` + xdg-shell + `VK_KHR_wayland_surface`；失败则回退 X11（不冒充 Wayland Ok）；X11 仍为 CI 基线 |
 
 旧占位页 [LINUX_VULKAN.md](LINUX_VULKAN.md) 已并入本页。
 
-## Wayland（W15 / ADR 0039）
+## Wayland（W16 / ADR 0040）
 
-- `CreateWaylandWindowStub`：有 `libwayland-client` 且 `WAYLAND_DISPLAY` 时 `wl_display_connect`；否则 Unavailable。
-- `Window::Create`：探测 Wayland 后仍映射 **X11** 窗口做 present（xdg-shell 全接线后续）；`ENGINE_FORCE_X11=1` 跳过 Wayland 探测。
+- `CreateWaylandWindowStub`：`WAYLAND_DISPLAY` + `wl_compositor` + `xdg_wm_base` → `wl_surface` + xdg toplevel；否则 Unavailable。
+- `Window::Create`：Wayland Ok 则 **真 present**（不再 fall-through X11）；失败 LogWarn 后试 X11。`ENGINE_FORCE_X11=1` 跳过 Wayland。
+- Vulkan：`VK_KHR_wayland_surface`（与 xlib 扩展一并启用）。
 - CI 基线仍为 **X11** + `xvfb-run`。
-- 全树同步：将本仓库 `render_engine/` 同步到 Linux 主机后 `cmake -B build -DENGINE_LINUX_VK=ON && cmake --build build`。
+
+### 冒烟清单（勾满 = W16 Linux 出门）
+
+| 项 | 命令 / 条件 |
+|---|---|
+| X11 clear | `xvfb-run ./sample_01_clear --backend=vulkan`（有 DISPLAY/xvfb） |
+| X11 Sandbox 一帧 | 同环境跑 Sandbox / harness（可选） |
+| Wayland clear | 有 `WAYLAND_DISPLAY` 时 `./sample_01_clear --backend=vulkan`（应走 wayland-surface） |
+| Wayland 失败诚实 | 无 xdg_wm_base → Unavailable，随后 X11（日志含 ADR 0040） |
 
 ## X11 clear 路径（Mega-W11）
 

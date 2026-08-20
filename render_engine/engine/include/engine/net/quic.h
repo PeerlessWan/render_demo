@@ -11,7 +11,6 @@ namespace engine::net {
 // Never installs SDKs. Sets Feature "quic" when present.
 [[nodiscard]] bool ProbeMsQuicPresent();
 
-// Apply Feature override from ProbeMsQuicPresent(); returns probe result.
 [[nodiscard]] bool ProbeAndSetQuicFeature();
 
 struct QuicProbeInfo {
@@ -22,13 +21,10 @@ struct QuicProbeInfo {
 
 [[nodiscard]] QuicProbeInfo QueryMsQuicProbeInfo();
 
-// Attempt Connect when Feature quic is on. Missing MsQuic → Unavailable SKIP (ADR 0031).
+// W16 ADR 0040: always Unavailable until MsQuic SendReliable API is wired (no session-stub Ok).
 [[nodiscard]] Status TryQuicConnectStub(std::string_view host, int port);
 
-// Mega-W9: loopback reliable stream demo.
-// - MsQuic absent + Feature off → Unavailable SKIP
-// - ENGINE_WITH_MSQUIC + Feature → Ok("simulated-loopback") when full API not linked
-// - Prefer real MsQuic API when headers/API are available (not in this tree by default)
+// W16 ADR 0040: always Unavailable (no simulated-loopback Ok).
 [[nodiscard]] Status TryQuicLoopbackReliableSendRecv();
 
 }  // namespace engine::net

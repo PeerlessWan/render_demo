@@ -70,9 +70,12 @@ Status TryBuildCubeBlasTlasAndDispatchRays(
 // Does not run a fullscreen production RT frame (no SBT/raygen product path).
 [[nodiscard]] Status TryVkTraceRaysDemoStub();
 
-// Mega-W10: half-resolution soft-shadow Feature stub (compose factor only; not production RT).
-// Ok + message when Feature raytracing is on and a DXR demo path is available;
-// else Unavailable SKIP.
+  // W17 ADR 0041: half-res soft-shadow blur grid (compose factor); not fullscreen RT.
 [[nodiscard]] Status TryHalfResSoftShadowCompose(float& out_shadow_factor);
+
+// Alias (W16 name).
+[[nodiscard]] inline Status TrySoftShadowCompose(float& out_shadow_factor) {
+  return TryHalfResSoftShadowCompose(out_shadow_factor);
+}
 
 }  // namespace engine::rt

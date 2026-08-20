@@ -181,7 +181,15 @@ ColorRgba VirtualTexture::Sample(float u, float v, std::uint32_t mip) {
 
 std::uint32_t VirtualTexture::TickNearField(std::span<const VtFeedbackRequest> feedback,
                                            std::uint32_t max_uploads) {
-  ProcessGpuFeedback(feedback);
+  // W17: near-field heuristic — prefer lower mip / higher importance first.
+  std::vector<VtFeedbackRequest> ranked(feedback.begin(), feedback.end());
+  std::sort(ranked.begin(), ranked.end(), [](const VtFeedbackRequest& a, const VtFeedbackRequest& b) {
+    if (a.page.mip != b.page.mip) {
+      return a.page.mip < b.page.mip;
+    }
+    return a.importance > b.importance;
+  });
+  ProcessGpuFeedback(ranked);
   return UploadPendingPages(max_uploads);
 }
 

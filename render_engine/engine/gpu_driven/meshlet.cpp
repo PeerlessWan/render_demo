@@ -14,6 +14,10 @@
 #include <unordered_map>
 #include <vector>
 
+#if defined(ENGINE_WITH_MESHOPTIMIZER) && ENGINE_WITH_MESHOPTIMIZER
+#include "meshoptimizer.h"
+#endif
+
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -397,9 +401,71 @@ MeshletCookResult MeshletizeAabbGrid(std::span<const Vec3> positions,
 MeshletCookResult MeshletizePreferMeshoptimizer(std::span<const Vec3> positions,
                                                 std::span<const std::uint32_t> indices,
                                                 int grid_div) {
-  // third_party/meshoptimizer is not vendored — do not download packages.
-  // Fall back to AABB grid cook (same contract as MeshletizeAabbGrid).
+#if defined(ENGINE_WITH_MESHOPTIMIZER) && ENGINE_WITH_MESHOPTIMIZER
+  (void)grid_div;
+  if (positions.empty() || indices.size() < 3) {
+    return MeshletizeAabbGrid(positions, indices, grid_div);
+  }
+  const size_t max_v = 64;
+  const size_t max_t = 124;  // meshoptimizer requires max_triangles % 4 == 0
+  const size_t bound = meshopt_buildMeshletsBound(indices.size(), max_v, max_t);
+  std::vector<meshopt_Meshlet> mls(bound);
+  std::vector<unsigned int> ml_verts(bound * max_v);
+  std::vector<unsigned char> ml_tris(bound * max_t * 3);
+  std::vector<float> pos_f(positions.size() * 3);
+  for (size_t i = 0; i < positions.size(); ++i) {
+    pos_f[i * 3 + 0] = positions[i].x;
+    pos_f[i * 3 + 1] = positions[i].y;
+    pos_f[i * 3 + 2] = positions[i].z;
+  }
+  const size_t count = meshopt_buildMeshlets(
+      mls.data(), ml_verts.data(), ml_tris.data(), indices.data(), indices.size(), pos_f.data(),
+      positions.size(), sizeof(float) * 3, max_v, max_t, 0.f);
+  if (count == 0) {
+    return MeshletizeAabbGrid(positions, indices, grid_div);
+  }
+  mls.resize(count);
+  MeshletCookResult out;
+  for (size_t mi = 0; mi < count; ++mi) {
+    const meshopt_Meshlet& src = mls[mi];
+    Meshlet m;
+    m.first_index = static_cast<std::uint32_t>(out.indices.size());
+    m.index_count = src.triangle_count * 3u;
+    m.first_vertex = 0;
+    m.vertex_count = src.vertex_count;
+    Aabb box{};
+    bool any = false;
+    for (unsigned int t = 0; t < src.triangle_count; ++t) {
+      for (int k = 0; k < 3; ++k) {
+        const unsigned char local =
+            ml_tris[static_cast<size_t>(src.triangle_offset) + t * 3u + static_cast<size_t>(k)];
+        const unsigned int vi =
+            ml_verts[static_cast<size_t>(src.vertex_offset) + static_cast<size_t>(local)];
+        out.indices.push_back(vi);
+        if (vi < positions.size()) {
+          const Vec3& p = positions[vi];
+          if (!any) {
+            box.min = box.max = p;
+            any = true;
+          } else {
+            box.min.x = (std::min)(box.min.x, p.x);
+            box.min.y = (std::min)(box.min.y, p.y);
+            box.min.z = (std::min)(box.min.z, p.z);
+            box.max.x = (std::max)(box.max.x, p.x);
+            box.max.y = (std::max)(box.max.y, p.y);
+            box.max.z = (std::max)(box.max.z, p.z);
+          }
+        }
+      }
+    }
+    m.aabb = box;
+    out.meshlets.push_back(m);
+  }
+  return out;
+#else
+  (void)grid_div;
   return MeshletizeAabbGrid(positions, indices, grid_div);
+#endif
 }
 
 std::uint32_t CullMeshletsToIndirect(std::span<const Meshlet> meshlets, const Mat4& world,

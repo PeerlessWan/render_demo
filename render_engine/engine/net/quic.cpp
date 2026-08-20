@@ -3,7 +3,6 @@
 #include "engine/core/feature.h"
 #include "engine/core/log.h"
 
-#include <cmath>
 #include <string>
 
 #if defined(_WIN32)
@@ -54,7 +53,7 @@ QuicProbeInfo QueryMsQuicProbeInfo() {
 #if defined(ENGINE_WITH_MSQUIC) && ENGINE_WITH_MSQUIC
   info.linked = true;
   info.dll_or_lib_present = true;
-  info.detail = "ENGINE_WITH_MSQUIC=1 (link stub; full API optional)";
+  info.detail = "ENGINE_WITH_MSQUIC=1 (headers linked; SendReliable requires API wiring)";
 #else
   info.linked = false;
   info.dll_or_lib_present = TryLoadMsQuicDll(info.detail);
@@ -81,47 +80,21 @@ Status TryQuicConnectStub(std::string_view host, int port) {
   if (host.empty() || port <= 0) {
     return Status::Fail(ErrorCode::InvalidArgument, "TryQuicConnectStub: bad host/port");
   }
-  if (!ProbeMsQuicPresent() && !QueryFeature("quic")) {
-    return Status::Fail(ErrorCode::Unavailable,
-                        "QUIC Unavailable SKIP: MsQuic not present (ADR 0031 optional enable)");
-  }
-  if (!QueryFeature("quic")) {
-    SetFeatureOverride("quic", true);
-  }
-  // W14 ADR 0039: when MsQuic is present, accept a session-stub connect (Pump-ready).
-  // Full stream API still optional; SendReliable may remain stub until headers vendored.
-  LogInfo(std::string("QUIC session-stub Connect Ok: ") + std::string(host) + ":" +
-          std::to_string(port));
-  return Status::Ok("quic-session-stub");
+  // W16 ADR 0040: no session-stub Ok. DLL on PATH without API link ≠ product Connect.
+  (void)ProbeMsQuicPresent();
+  return Status::Fail(ErrorCode::Unavailable,
+                      "QUIC Unavailable SKIP: Connect/SendReliable not wired without MsQuic API "
+                      "(ADR 0031 / ADR 0040 — no session-stub)");
 }
 
 Status TryQuicLoopbackReliableSendRecv() {
-  const QuicProbeInfo info = QueryMsQuicProbeInfo();
-  const bool feature_on = QueryFeature("quic");
-
-#if defined(ENGINE_WITH_MSQUIC) && ENGINE_WITH_MSQUIC
-  if (!feature_on && !info.dll_or_lib_present) {
-    return Status::Fail(ErrorCode::Unavailable,
-                        "TryQuicLoopbackReliableSendRecv Unavailable SKIP: Feature quic=false");
-  }
-  if (!feature_on) {
-    SetFeatureOverride("quic", true);
-  }
-  // Full MsQuic API headers are not vendored; honest simulated loopback when linked stub.
-  LogInfo("TryQuicLoopbackReliableSendRecv: simulated-loopback (ENGINE_WITH_MSQUIC)");
-  return Status::Ok("simulated-loopback");
-#else
-  (void)info;
-  if (!ProbeMsQuicPresent() && !feature_on) {
-    return Status::Fail(
-        ErrorCode::Unavailable,
-        "TryQuicLoopbackReliableSendRecv Unavailable SKIP: MsQuic not present (ADR 0031)");
-  }
-  // DLL may be on PATH but not linked — do not pretend loopback succeeded.
+  // W16 ADR 0040: delete simulated-loopback Ok; transport only when real MsQuic API is used.
+  (void)QueryMsQuicProbeInfo();
+  (void)QueryFeature("quic");
   return Status::Fail(
       ErrorCode::Unavailable,
-      "TryQuicLoopbackReliableSendRecv Unavailable SKIP: ENGINE_WITH_MSQUIC=0 (no simulated Ok)");
-#endif
+      "TryQuicLoopbackReliableSendRecv Unavailable SKIP: MsQuic SendReliable API not wired "
+      "(ADR 0040 — no simulated-loopback)");
 }
 
 }  // namespace engine::net

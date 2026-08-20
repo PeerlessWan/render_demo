@@ -2,75 +2,59 @@
 
 > 与 [PLAN.md](PLAN.md) 里程碑进度表互补。
 
-## Mega-W12–W15（水位弱项产品化 A+C）
-
-| 项 | 值 |
-|---|---|
-| **状态** | **进行中** |
-| **范围** | 引擎 only；边界见 [ADR 0039](learn/adr/0039-waterline-productization-a-c.md) |
-| **外置不变** | Nanite / 真 NVIDIA DDGI / XR / 节点图 / 蓝图 / mac / C17 / 引擎内复制 |
-
-## Mega-W11
+## Mega-W17（引擎内加深）
 
 | 项 | 值 |
 |---|---|
 | **状态** | **已收口** |
-| **范围** | Win VK 对齐 + Linux X11/VK + CC0 glTF（**不含** game_kit/editor） |
-| **口径** | [ADR 0038](learn/adr/0038-mega-w11-parity.md) |
+| **范围** | [ADR 0041](learn/adr/0041-w17-engine-deepen.md)；可进 engine 的加深 |
+| **外置不变** | Nanite / 真 DDGI / 复制 / mac / C17 / FFX·NGX·MsQuic 真 API |
 
-## Mega-W10
+## Mega-W16（零尾巴收口）
 
 | 项 | 值 |
 |---|---|
 | **状态** | **已收口** |
-| **口径** | [ADR 0037](learn/adr/0037-mega-w10-deepen.md) |
+| **口径** | [ADR 0040](learn/adr/0040-w16-zero-tail-closeout.md) |
+
+## Mega-W12–W15
+
+| 项 | 值 |
+|---|---|
+| **状态** | **已收口**（经 W16） |
 
 ## 主线水位
 
 ```text
-当前波：W12–W15 水位弱项产品化（A+C）
-外置：Nanite / 真 NVIDIA DDGI / XR / 节点图 / 蓝图 / mac / C17 / 引擎内复制
-本计划可改：Wayland（目标）、VK bindless（解除钉死 SKIP）
-禁止：把复制同步塞进 engine/net；不改 game_kit/、editor/（除非他会话）
+当前波：W17 已收口（ADR 0041）
+外置：Nanite / 真 DDGI / XR / 节点图 / 蓝图 / mac / C17 / 引擎内复制 / 商业 SDK 真接线
+禁止：复制进 engine/net；不改 game_kit/（除非他会话）
 ```
 
 ## Doing
 
 | ID | 项 |
 |---|---|
-| — | （W12–W15 代码已落地；验收/实机 Linux 持续） |
+| — | （空） |
 
 ## Todo
 
 | 优先级 | ID | 项 |
 |---|---|---|
-| 他会话 | game_kit / editor | 玩法壳 / 复制不在本计划 |
-| 钉死 | C17 | 多窗口不实装 |
-| 钉死 | Nanite / 真 DDGI | 外置 |
-| 后续 | FSR/DLSS SDK vendor | `fetch_fidelityfx` + NGX 真接线 |
-| 后续 | Wayland xdg-shell present | 现为 display 探测 + X11 present |
-
-## Todo
-
-| 优先级 | ID | 项 |
-|---|---|---|
-| 他会话 | game_kit / editor | 玩法壳 / 复制不在本计划 |
-| 钉死 | C17 | 多窗口不实装 |
-| 钉死 | Nanite / 真 DDGI | 外置 |
+| 他会话 | game_kit / editor | 玩法壳 / 复制 |
+| 钉死 | C17 / Nanite / 真 DDGI | 外置 |
+| 后续 | FFX/NGX / MsQuic API | 有 SDK 再接 |
 
 ## Undo
 
 | 标签 | 值 |
 |---|---|
-| W11 | ADR 0038 |
-| W10 | ADR 0037 |
-| W12–W15 边界 | ADR 0039 |
+| W17 | ADR 0041 |
+| W16 | ADR 0040 |
 
 ## Done（近期）
 
 | 项 | 说明 |
 |---|---|
-| **Mega-W11** | ADR 0038；VK tile/skin/MS/RT；Linux X11；Kenney glTF；test_m36 |
-| **W12–W15** | ADR 0039 水位弱项产品化（A+C）首批落地 |
-| **Mega-W10** | ADR 0037 |
-| **Mega-W9** | ADR 0036 |
+| **W17** | meshoptimizer Prefer 真接线；半分辨率软影 blur；glTF mesh0 全 prim；Sandbox 多 slot；VT 近场启发式；HotReload+dxc；kMaxMeshSlots=16；**VK 粒子 SSBO dispatch**；Path2D/WorldText 调试可见；Probe atlas 采样路径 |
+| **W16** | 零尾巴收口 |

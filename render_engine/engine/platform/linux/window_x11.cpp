@@ -19,6 +19,9 @@
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
 #endif
+#if defined(__linux__) && defined(ENGINE_HAS_WAYLAND)
+#include <wayland-client.h>
+#endif
 
 namespace engine::platform::linux_x11 {
 
@@ -65,6 +68,7 @@ Status CreateX11WindowStub(const X11WindowDesc& desc, X11Native& out) {
 
   out.display = display;
   out.window = reinterpret_cast<void*>(static_cast<std::uintptr_t>(window));
+  out.kind = platform::LinuxNativeKind::X11;
   return Status::Ok("x11-window");
 }
 
@@ -337,6 +341,50 @@ class WindowX11 final : public Window {
 
 #endif  // ENGINE_HAS_X11
 
+#if defined(__linux__) && defined(ENGINE_HAS_WAYLAND)
+class WindowWayland final : public Window {
+ public:
+  WindowWayland(std::uint32_t width, std::uint32_t height) {
+    native_.width = width;
+    native_.height = height;
+  }
+  ~WindowWayland() override {
+    (void)platform::linux_wayland::DestroyWaylandWindowStub(native_);
+  }
+  [[nodiscard]] bool Attach(platform::linux_wayland::WaylandNative native) {
+    native_ = std::move(native);
+    return native_.display != nullptr && native_.surface != nullptr;
+  }
+  [[nodiscard]] void* native_handle() const override {
+    return const_cast<platform::linux_wayland::WaylandNative*>(&native_);
+  }
+  [[nodiscard]] std::uint32_t width() const override { return native_.width; }
+  [[nodiscard]] std::uint32_t height() const override { return native_.height; }
+  [[nodiscard]] bool should_close() const override { return should_close_; }
+  [[nodiscard]] const WindowInputSnapshot& input_snapshot() const override { return input_; }
+  void PumpEvents() override {
+    input_.text.clear();
+#if defined(ENGINE_HAS_WAYLAND)
+    if (native_.display) {
+      wl_display_dispatch_pending(static_cast<wl_display*>(native_.display));
+      wl_display_flush(static_cast<wl_display*>(native_.display));
+    }
+#endif
+  }
+  void RequestClose() override { should_close_ = true; }
+  void ConsumeMouseDelta() override {
+    input_.mouse_dx = 0.f;
+    input_.mouse_dy = 0.f;
+  }
+  void ConsumeMouseWheel() override { input_.mouse_wheel = 0.f; }
+
+ private:
+  platform::linux_wayland::WaylandNative native_{};
+  bool should_close_ = false;
+  WindowInputSnapshot input_{};
+};
+#endif  // ENGINE_HAS_WAYLAND
+
 }  // namespace
 
 Result<std::unique_ptr<Window>> Window::Create(const WindowDesc& desc) {
@@ -350,7 +398,8 @@ Result<std::unique_ptr<Window>> Window::Create(const WindowDesc& desc) {
         std::unique_ptr<Window>(std::make_unique<WindowHeadless>(desc.width, desc.height)));
   }
 
-  // W15: prefer Wayland when WAYLAND_DISPLAY is set and ENGINE_HAS_WAYLAND; else X11.
+  // W15/W16: prefer Wayland when WAYLAND_DISPLAY is set and ENGINE_HAS_WAYLAND; else X11.
+  // ADR 0040: Wayland Ok ⇒ use Wayland window (no silent X11 fall-through after Ok).
 #if defined(ENGINE_HAS_WAYLAND)
   {
     const char* wd = std::getenv("WAYLAND_DISPLAY");
@@ -363,12 +412,14 @@ Result<std::unique_ptr<Window>> Window::Create(const WindowDesc& desc) {
       platform::linux_wayland::WaylandNative native;
       const auto wst = platform::linux_wayland::CreateWaylandWindowStub(wdesc, native);
       if (wst) {
-        LogInfo("Wayland window probe Ok — falling through to X11 mapped window for "
-                "present until xdg-shell surface is wired (W15)");
-        (void)platform::linux_wayland::DestroyWaylandWindowStub(native);
-      } else {
-        LogWarn(std::string("Wayland probe: ") + wst.message() + "; using X11");
+        auto window = std::make_unique<WindowWayland>(desc.width, desc.height);
+        if (!window->Attach(std::move(native))) {
+          return Result<std::unique_ptr<Window>>::Fail("WindowWayland Attach failed");
+        }
+        LogInfo("Window::Create → Wayland xdg-shell present (W16 ADR 0040)");
+        return Result<std::unique_ptr<Window>>::Ok(std::unique_ptr<Window>(std::move(window)));
       }
+      LogWarn(std::string("Wayland unavailable: ") + wst.message() + "; trying X11");
     }
   }
 #endif

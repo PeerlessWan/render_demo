@@ -1,14 +1,13 @@
 #pragma once
 
 #include "engine/core/result.h"
+#include "engine/platform/linux/window_wayland.h"
 
 #include <cstdint>
 #include <string>
 
 // Mega-W11 / ENGINE_LINUX_VK: X11 window path for Linux Vulkan clear.
-// Windows trees compile this header; real Xlib lives in window_x11.cpp under __linux__ + ENGINE_HAS_X11.
-// On __linux__, Window::Create is implemented here (see window_x11.cpp); Win32 keeps window_win32.cpp.
-// Wayland is explicitly postponed — X11 is required this wave. See docs/LINUX.md.
+// W16: Wayland present when WAYLAND_DISPLAY + xdg_wm_base; X11 remains CI baseline.
 
 namespace engine::platform::linux_x11 {
 
@@ -19,9 +18,9 @@ struct X11WindowDesc {
   bool headless = false;
 };
 
-// Opaque handle stand-in (Display* / Window on real X11).
 // On Linux, Window::native_handle() returns X11Native* for Vulkan VK_KHR_xlib_surface.
 struct X11Native {
+  LinuxNativeKind kind = LinuxNativeKind::X11;
   void* display = nullptr;  // Display*
   void* window = nullptr;   // Window (XID stored as pointer-sized)
   std::uint32_t width = 0;

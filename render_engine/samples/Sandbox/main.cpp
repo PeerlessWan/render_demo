@@ -8,6 +8,7 @@
 #include "engine/assets/image_loader.h"
 #include "engine/assets/asset_hot_reload.h"
 #include "engine/assets/shader_hot_reload.h"
+#include "engine/assets/shader_compile_hook.h"
 #include "engine/assets/streaming_budget.h"
 #include "engine/core/log.h"
 #include "engine/debug/console.h"
@@ -21,6 +22,7 @@
 #include "engine/render/atmosphere.h"
 #include "engine/render/ies_profile.h"
 #include "engine/render2d/bmfont.h"
+#include "engine/render2d/path2d.h"
 #include "engine/render2d/world_text.h"
 #include "engine/render/ibl_pack.h"
 #include "engine/render/instance_draw.h"
@@ -696,6 +698,7 @@ int main(int argc, char** argv) {
   }
   fx.enable_ibl = false;  // enabled after IBL pack load
   fx.enable_reflection_probe = true;
+  fx.enable_vt_near_default = true;  // W16 ADR 0040: Sandbox near-default VT demo
   render.set_effect_tuning(fx);
 
   engine::ui::ImmediateUi imgui;
@@ -1024,6 +1027,9 @@ int main(int argc, char** argv) {
   engine::vfx::GpuParticleSystem gpu_particles;
   gpu_particles.Configure({1.8f, 2.6f, 1.0f}, 28.f, 1.1f, 128);
   engine::SetFeatureOverride("gpu_particles", true);
+  // W16 ADR 0040: VT near-default demo (not full-material default).
+  engine::SetFeatureOverride("virtual_texture", true);
+  engine::SetFeatureOverride("vt_near_default", true);
   engine::vt::VirtualTexture sandbox_vt;
   sandbox_vt.Configure(16, 32, 3);
   engine::vfx::TrailRibbon lamp_trail;
@@ -1055,20 +1061,39 @@ int main(int argc, char** argv) {
                     " fallback=" +
                     (possess_character_mesh.used_capsule_fallback ? "true" : "false"));
   }
-  // W12: lit character mesh (slot 7) for possess; prefer GPU skin Feature when available.
+  // W12/W17: lit character mesh (slot 7+) for possess; draw_parts → slots 8..
   engine::SetFeatureOverride("gpu_skinning", true);
   engine::scene::NodeId character_node = engine::scene::kInvalidNode;
   bool character_mesh_uploaded = false;
+  std::vector<int> character_mesh_slots;
+  std::vector<engine::scene::NodeId> character_part_nodes;
   {
     const auto& cm = possess_character_mesh.mesh;
     if (!cm.vertices.empty() && !cm.indices.empty()) {
-      std::vector<engine::rhi::LitVertex> verts(cm.vertices.size());
-      for (std::size_t i = 0; i < cm.vertices.size(); ++i) {
-        const auto& v = cm.vertices[i];
-        verts[i] = {v.px, v.py, v.pz, v.nx, v.ny, v.nz, v.u, v.v};
-      }
-      if (auto st = a.device().UploadLitGeometry(7, verts, cm.indices); st) {
+      auto upload_one = [&](int slot, const engine::assets::GltfMeshAsset& mesh) -> bool {
+        std::vector<engine::rhi::LitVertex> verts(mesh.vertices.size());
+        for (std::size_t i = 0; i < mesh.vertices.size(); ++i) {
+          const auto& v = mesh.vertices[i];
+          verts[i] = {v.px, v.py, v.pz, v.nx, v.ny, v.nz, v.u, v.v};
+        }
+        return static_cast<bool>(a.device().UploadLitGeometry(slot, verts, mesh.indices));
+      };
+      if (upload_one(7, cm)) {
+        character_mesh_slots.push_back(7);
         character_mesh_uploaded = true;
+        int slot = 8;
+        for (const auto& part : possess_character_mesh.draw_parts) {
+          if (slot >= 16) {
+            break;
+          }
+          if (part.vertices.empty() || part.indices.empty()) {
+            continue;
+          }
+          if (upload_one(slot, part)) {
+            character_mesh_slots.push_back(slot);
+            ++slot;
+          }
+        }
         character_node = a.world().CreateNode("character");
         engine::scene::Transform xf;
         xf.position = possess.position;
@@ -1079,9 +1104,22 @@ int main(int argc, char** argv) {
         mr.local_bounds = {{-0.8f, 0.f, -0.8f}, {0.8f, 2.2f, 0.8f}};
         a.world().set_mesh(character_node, mr);
         a.world().set_visible(character_node, false);
-        engine::LogInfo("W12: character lit mesh uploaded (slot 7)");
+        for (std::size_t i = 1; i < character_mesh_slots.size(); ++i) {
+          const int s = character_mesh_slots[i];
+          auto nid = a.world().CreateNode("character_part");
+          a.world().set_local_transform(nid, xf);
+          engine::scene::MeshRenderer pmr;
+          pmr.mesh_id = "character_" + std::to_string(s);
+          pmr.never_cull = true;
+          pmr.local_bounds = mr.local_bounds;
+          a.world().set_mesh(nid, pmr);
+          a.world().set_visible(nid, false);
+          character_part_nodes.push_back(nid);
+        }
+        engine::LogInfo("W17: character lit mesh uploaded slots=" +
+                        std::to_string(character_mesh_slots.size()));
       } else {
-        engine::LogWarn(std::string("character UploadLitGeometry: ") + st.message());
+        engine::LogWarn("character UploadLitGeometry failed");
       }
     }
   }
@@ -1113,6 +1151,7 @@ int main(int argc, char** argv) {
   bool show_axes = false;
   bool show_physics_debug = false;
   bool show_world_text_debug = false;
+  bool show_path2d_debug = false;
   bool f1_was_down = false;
   bool f2_was_down = false;
   bool f3_was_down = false;
@@ -1215,6 +1254,20 @@ int main(int argc, char** argv) {
   const auto status = a.Run([&](engine::Application& app_ref) {
     profiler.Begin("Frame");
     if (shader_hot.Poll() && shader_hot.ConsumePsoRebuildRequest()) {
+      // W17: optional dxc online compile when on PATH (else SKIP, still rebuild PSO from .cso).
+      const auto lit_hlsl = std::filesystem::path(ENGINE_CONTENT_DIR_A).parent_path() /
+                            "shaders" / "hlsl" / "lit_cube.hlsl";
+      // Prefer repo shaders/hlsl via ENGINE_SHADER sources next to binary.
+      const auto lit_from_shader_dir = shader_dir.parent_path().parent_path() / "shaders" / "hlsl" /
+                                       "lit_cube.hlsl";
+      const auto hlsl_try =
+          std::filesystem::exists(lit_from_shader_dir) ? lit_from_shader_dir : lit_hlsl;
+      if (std::filesystem::exists(hlsl_try)) {
+        const auto cst = engine::assets::TryCompileHlslWithDxc(hlsl_try);
+        if (!cst) {
+          engine::LogInfo(std::string("ShaderHotReload dxc: ") + cst.message());
+        }
+      }
       (void)RebuildLitPsoIfPossible();
     }
     if (asset_hot.Poll() && asset_hot.ConsumeInvalidateRequest()) {
@@ -1318,6 +1371,10 @@ int main(int argc, char** argv) {
         app_ref.world().set_local_transform(character_node, xf);
         const bool show_body = possess_third_person || app_ref.cursor_unlocked();
         app_ref.world().set_visible(character_node, show_body);
+        for (auto nid : character_part_nodes) {
+          app_ref.world().set_local_transform(nid, xf);
+          app_ref.world().set_visible(nid, show_body);
+        }
       }
 
       std::vector<engine::Vec3> attach;
@@ -1372,6 +1429,10 @@ int main(int argc, char** argv) {
         xf.position = possess.position;
         xf.rotation = engine::Quat::FromEulerYxz(possess.facing_yaw, 0.f, 0.f);
         app_ref.world().set_local_transform(character_node, xf);
+        for (auto nid : character_part_nodes) {
+          app_ref.world().set_local_transform(nid, xf);
+          app_ref.world().set_visible(nid, true);
+        }
       }
     }
 
@@ -1457,6 +1518,37 @@ int main(int argc, char** argv) {
         dbg.AddLine(v1, v2, tc);
         dbg.AddLine(v2, v3, tc);
         dbg.AddLine(v3, v0, tc);
+      }
+    }
+    // W17/G13: Path2D fill (XZ plane) as debug wireframe — visible without sprite upload.
+    if (show_path2d_debug) {
+      engine::render2d::Path2D path;
+      path.MoveTo({-1.5f, -1.0f});
+      path.LineTo({1.5f, -1.0f});
+      path.QuadraticTo({2.2f, 0.4f}, {0.8f, 1.6f});
+      path.LineTo({-0.8f, 1.6f});
+      path.LineTo({-1.5f, -1.0f});
+      const auto fill = path.EarClipSimple();
+      const engine::ColorRgba pc{0.35f, 0.85f, 0.95f, 1.f};
+      const float y = 0.08f;
+      auto to_world = [y](const engine::render2d::Path2DVertex& v) {
+        return engine::Vec3{v.position.x, y, v.position.y};
+      };
+      if (fill.topology == engine::render2d::Path2DTopology::TriangleList) {
+        for (std::size_t i = 0; i + 2 < fill.indices.size(); i += 3) {
+          const auto a = to_world(fill.vertices[fill.indices[i]]);
+          const auto b = to_world(fill.vertices[fill.indices[i + 1]]);
+          const auto c = to_world(fill.vertices[fill.indices[i + 2]]);
+          dbg.AddLine(a, b, pc);
+          dbg.AddLine(b, c, pc);
+          dbg.AddLine(c, a, pc);
+        }
+      }
+      const auto stroke = path.BuildLineList();
+      const engine::ColorRgba sc{0.95f, 0.55f, 0.2f, 1.f};
+      for (std::size_t i = 0; i + 1 < stroke.indices.size(); i += 2) {
+        dbg.AddLine(to_world(stroke.vertices[stroke.indices[i]]),
+                    to_world(stroke.vertices[stroke.indices[i + 1]]), sc);
       }
     }
     if (show_physics_debug) {
@@ -1560,6 +1652,7 @@ int main(int argc, char** argv) {
           imgui.Checkbox(Su.show_axes, &show_axes);
           imgui.Checkbox("Physics debug (AABB/SoftBody)", &show_physics_debug);
           imgui.Checkbox("World text debug (W7)", &show_world_text_debug);
+          imgui.Checkbox("Path2D debug (W17)", &show_path2d_debug);
           imgui.Checkbox("Scale instances (1024)", &show_scale_instances);
           if (imgui.Checkbox("Character (F)", &possess.possess_character)) {
             // Edge applied next frame via possess_was; force sync now.
@@ -1882,7 +1975,9 @@ int main(int argc, char** argv) {
       pl.intensity = 1.35f;
       pl.range = 5.5f;
       probes.TickProduct({&pl, 1}, 0.18f);
-      const auto irr = probes.Sample(app_ref.camera().position);
+      // W17: sample via CPU irradiance atlas (same trilinear as Sample).
+      const auto atlas = probes.BuildIrradianceAtlasCpu();
+      const auto irr = probes.SampleAtlasCpu(atlas, app_ref.camera().position);
       env.ambient = {0.12f + irr.r * 0.35f, 0.13f + irr.g * 0.35f, 0.15f + irr.b * 0.35f, 1.f};
     } else {
       env.ambient = {0.20f, 0.21f, 0.24f, 1.f};
@@ -1896,8 +1991,8 @@ int main(int argc, char** argv) {
       particles.Step(app_ref.delta_time());
       gpu_particles.set_origin({1.8f, 2.6f, 1.0f});
       (void)gpu_particles.Step(app_ref.delta_time());
-      // W13: VT near-field tick when Feature on (CPU feedback sim → page upload).
-      if (engine::QueryFeature("virtual_texture")) {
+      // W16: VT near-field when Feature virtual_texture / vt_near_default on.
+      if (engine::QueryFeature("virtual_texture") || engine::QueryFeature("vt_near_default")) {
         engine::vt::VtFeedbackRequest fb{};
         fb.page = sandbox_vt.UvToPage(0.5f, 0.5f, 0);
         fb.importance = 1.f;

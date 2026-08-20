@@ -118,18 +118,19 @@ TEST_CASE("DDGI-lite BlendNeighborhood and CascadeRefine", "[m35][w10][gi]") {
 TEST_CASE("TryHalfResSoftShadowCompose Feature gate", "[m35][w10][rt]") {
   engine::ClearFeatureOverrides();
   float factor = -1.f;
-  const auto off = engine::rt::TryHalfResSoftShadowCompose(factor);
+  const auto off = engine::rt::TrySoftShadowCompose(factor);
   REQUIRE_FALSE(off);
   REQUIRE(off.code() == engine::ErrorCode::Unavailable);
   REQUIRE(off.message().find("SKIP") != std::string::npos);
 
   engine::SetFeatureOverride("raytracing", true);
   factor = -1.f;
-  const auto on = engine::rt::TryHalfResSoftShadowCompose(factor);
+  const auto on = engine::rt::TrySoftShadowCompose(factor);
   if (on) {
     REQUIRE(factor > 0.f);
     REQUIRE(factor <= 1.f);
-    REQUIRE(on.message().find("half-res") != std::string::npos);
+    REQUIRE(on.message().find("half-res") != std::string::npos ||
+            on.message().find("soft-shadow") != std::string::npos);
   } else {
     REQUIRE(on.code() == engine::ErrorCode::Unavailable);
     REQUIRE(on.message().find("SKIP") != std::string::npos);

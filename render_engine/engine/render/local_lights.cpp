@@ -261,13 +261,28 @@ material::PbrMaterial ResolveMeshMaterial(std::string_view mesh_id) {
     m.mesh_slot = 6;
     m.tex_slot = 2;
     m.uv_scale = 1.f;
-  } else if (mesh_id == "character") {
+  } else if (mesh_id == "character" || mesh_id.rfind("character_", 0) == 0) {
     m.base_color = {0.55f, 0.72f, 0.45f, 1.f};
     m.roughness = 0.7f;
     m.metallic = 0.02f;
     m.mesh_slot = 7;
     m.tex_slot = 0;
     m.uv_scale = 1.f;
+    // W17: character_8 / character_9 … → mesh slot from suffix.
+    if (mesh_id.size() > 10 && mesh_id[9] == '_') {
+      int slot = 0;
+      for (std::size_t i = 10; i < mesh_id.size(); ++i) {
+        const char c = mesh_id[i];
+        if (c < '0' || c > '9') {
+          slot = 0;
+          break;
+        }
+        slot = slot * 10 + (c - '0');
+      }
+      if (slot > 0 && slot < 16) {
+        m.mesh_slot = slot;
+      }
+    }
   } else {
     m.base_color = {1.f, 1.f, 1.f, 1.f};
     m.roughness = 0.4f;

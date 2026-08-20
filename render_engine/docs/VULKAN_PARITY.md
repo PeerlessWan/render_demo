@@ -71,10 +71,10 @@ Headless / golden dump 仍关 TAA/SSAO 保稳定；交互可两端同开。
 
 **画质债（W0）**：柱面 CSM 已加 Poisson PCF、tile clamp、法线/斜率 bias、近级联 log 偏置与 overlap；主观残留记看板 `T-csm-pillar-shimmer`（可再录盘绿 mask MAD 对照）。
 
-### 3.4 Bindless（W13 / ADR 0039）
+### 3.4 Bindless（W13 / W16 / ADR 0039–0040）
 
 - D3D：能力位 `bindless`（Tier≥2）；热路径默认 `pad=-1`（classic）。`bindless_hot_path=true` 且非 `gpu_headless` 时按 `tex_slot` 映射 heap 1/4。  
-- Vulkan（**W13 / ADR 0039**）：有 `VK_EXT_descriptor_indexing` 时设置 Feature `bindless`（能力）；`bindless_hot_path` 默认 OFF（classic 描述符）。无 indexing → 诚实 SKIP。`ProbeBindlessMinimalPath` 在有 indexing 时 Ok。  
+- Vulkan：**W16** 有 `VK_EXT_descriptor_indexing` 时 Feature `bindless`；`bindless_hot_path` opt-in 时 `BindlessAlbedoHeapPad` 写 `pad`（2/4），`lit_cube_vk.hlsl` 走热路径分支；无 indexing → 诚实 SKIP。  
 - 黄金图 / C4 默认路径不漂。
 
 ### 3.5 Mega-W11 Win VK Status 路径（摘要）

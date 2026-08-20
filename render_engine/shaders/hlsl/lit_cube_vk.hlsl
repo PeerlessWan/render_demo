@@ -373,7 +373,15 @@ float4 PSMain(VSOutput input) : SV_Target {
   float2 uv = input.uv * max(g_uv_scale, 1.0);
   float3 base = g_base_color.rgb;
   if (g_use_albedo > 0.5) {
-    if (g_tex_slot > 0.5) {
+    // W16 ADR 0040: bindless_hot_path sets g_pad to albedo register (2 or 4).
+    // Default g_pad=-1 keeps classic tex_slot selection (golden/C4 stable).
+    if (g_pad >= 0.0) {
+      if (g_pad > 3.0) {
+        base *= g_albedo_map2.Sample(g_alb2_samp, uv).rgb;
+      } else {
+        base *= g_albedo_map.Sample(g_alb_samp, uv).rgb;
+      }
+    } else if (g_tex_slot > 0.5) {
       base *= g_albedo_map2.Sample(g_alb2_samp, uv).rgb;
     } else {
       base *= g_albedo_map.Sample(g_alb_samp, uv).rgb;

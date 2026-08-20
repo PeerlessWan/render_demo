@@ -156,12 +156,9 @@ class QuicEndpointHook final : public IQuicEndpoint {
     return st;
   }
   Status SendReliable(std::string_view) override {
-    if (!supported()) {
-      return Status::Fail(ErrorCode::Unavailable,
-                          "QUIC Unavailable SKIP: MsQuic not present (ADR 0031 optional enable)");
-    }
+    // W16 ADR 0040: never Ok without real MsQuic stream API (no session-stub success).
     return Status::Fail(ErrorCode::Unavailable,
-                        "QUIC link stub: SendReliable not wired (ADR 0031 optional)");
+                        "QUIC Unavailable SKIP: SendReliable not wired (ADR 0031 / ADR 0040)");
   }
   Status Close() override { return Status::Ok(); }
   bool supported() const override {

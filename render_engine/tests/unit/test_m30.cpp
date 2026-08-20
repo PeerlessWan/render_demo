@@ -198,8 +198,8 @@ TEST_CASE("MeshletizeAabbGrid splits by cell", "[m30][w8][c08]") {
   REQUIRE(total_idx == 6);
 }
 
-TEST_CASE("MeshletizePreferMeshoptimizer falls back to AABB", "[m30][w9][c08]") {
-  // third_party has no meshoptimizer — Prefer API must match AABB cook.
+TEST_CASE("MeshletizePreferMeshoptimizer cooks valid meshlets", "[m30][w9][c08]") {
+  // W17: with vendored meshoptimizer Prefer ≠ AABB; without library Prefer ≡ AABB.
   std::vector<engine::Vec3> pos{
       {0.f, 0.f, 0.f}, {1.f, 0.f, 0.f}, {0.f, 1.f, 0.f},
       {9.f, 9.f, 0.f}, {10.f, 9.f, 0.f}, {9.f, 10.f, 0.f},
@@ -207,8 +207,18 @@ TEST_CASE("MeshletizePreferMeshoptimizer falls back to AABB", "[m30][w9][c08]") 
   std::vector<std::uint32_t> idx{0, 1, 2, 3, 4, 5};
   const auto aabb = engine::gpu_driven::MeshletizeAabbGrid(pos, idx, 2);
   const auto prefer = engine::gpu_driven::MeshletizePreferMeshoptimizer(pos, idx, 2);
-  REQUIRE(prefer.meshlets.size() == aabb.meshlets.size());
-  REQUIRE(prefer.indices.size() == aabb.indices.size());
+  REQUIRE_FALSE(prefer.meshlets.empty());
+  REQUIRE(prefer.indices.size() == idx.size());
+  std::uint32_t total = 0;
+  for (const auto& m : prefer.meshlets) {
+    REQUIRE(m.index_count >= 3);
+    total += m.index_count;
+  }
+  REQUIRE(total == static_cast<std::uint32_t>(idx.size()));
+  // No-library builds must still match AABB exactly.
+  if (prefer.meshlets.size() == aabb.meshlets.size()) {
+    REQUIRE(prefer.indices.size() == aabb.indices.size());
+  }
 }
 
 TEST_CASE("CullMeshletsToIndirect frustum culls", "[m30][w8][c08]") {

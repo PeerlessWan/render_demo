@@ -32,6 +32,7 @@ set(_sky_ps "${_shader_out}/skybox.ps.cso")
            "${_sky_vs}" "${_sky_ps}"
            "${_shader_out}/instance_cull_cs.cso"
            "${_shader_out}/skin_cs.cso"
+           "${_shader_out}/particle_integrate_cs.cso"
            "${_shader_out}/light_tile_cull_cs.cso"
            "${_shader_out}/dxr_shadow_lib.cso"
            "${_shader_out}/meshlet_ms.ms.cso"
@@ -54,6 +55,8 @@ set(_sky_ps "${_shader_out}/skybox.ps.cso")
           "${CMAKE_SOURCE_DIR}/shaders/hlsl/instance_cull_cs.hlsl"
   COMMAND "${DXC_EXECUTABLE}" -T cs_6_0 -E CSMain -Fo "${_shader_out}/skin_cs.cso"
           "${CMAKE_SOURCE_DIR}/shaders/hlsl/skin_cs.hlsl"
+  COMMAND "${DXC_EXECUTABLE}" -T cs_6_0 -E CSMain -Fo "${_shader_out}/particle_integrate_cs.cso"
+          "${CMAKE_SOURCE_DIR}/shaders/hlsl/particle_integrate_cs.hlsl"
   COMMAND "${DXC_EXECUTABLE}" -T cs_6_0 -E CSMain -Fo "${_shader_out}/light_tile_cull_cs.cso"
           "${CMAKE_SOURCE_DIR}/shaders/hlsl/light_tile_cull_cs.hlsl"
   COMMAND "${DXC_EXECUTABLE}" -T lib_6_3 -Fo "${_shader_out}/dxr_shadow_lib.cso"
@@ -65,6 +68,7 @@ set(_sky_ps "${_shader_out}/skybox.ps.cso")
   DEPENDS "${_src}" "${_ui_src}" "${_post_src}" "${_dbg_src}" "${_sky_src}"
           "${CMAKE_SOURCE_DIR}/shaders/hlsl/instance_cull_cs.hlsl"
           "${CMAKE_SOURCE_DIR}/shaders/hlsl/skin_cs.hlsl"
+          "${CMAKE_SOURCE_DIR}/shaders/hlsl/particle_integrate_cs.hlsl"
           "${CMAKE_SOURCE_DIR}/shaders/hlsl/light_tile_cull_cs.hlsl"
           "${CMAKE_SOURCE_DIR}/shaders/hlsl/dxr_shadow_lib.hlsl"
           "${CMAKE_SOURCE_DIR}/shaders/hlsl/meshlet_ms.hlsl"
@@ -77,6 +81,7 @@ add_custom_target(sample_sandbox_shaders DEPENDS
   "${_sky_vs}" "${_sky_ps}"
   "${_shader_out}/instance_cull_cs.cso"
   "${_shader_out}/skin_cs.cso"
+  "${_shader_out}/particle_integrate_cs.cso"
   "${_shader_out}/light_tile_cull_cs.cso"
   "${_shader_out}/dxr_shadow_lib.cso"
   "${_shader_out}/meshlet_ms.ms.cso"
@@ -198,6 +203,18 @@ if(ENGINE_WITH_VULKAN)
     VERBATIM
   )
   add_custom_target(sample_sandbox_vk_skin DEPENDS "${_vk_skin_cs}")
+  # W17: GPU particle CS → SPIR-V
+  set(_vk_particle_cs "${_shader_out}/particle_integrate_cs_vk.cs.spv")
+  add_custom_command(
+    OUTPUT "${_vk_particle_cs}"
+    COMMAND "${DXC_EXECUTABLE}" -T cs_6_0 -E CSMain -spirv -fspv-target-env=vulkan1.1
+            -fvk-use-dx-layout -Fo "${_vk_particle_cs}"
+            "${CMAKE_SOURCE_DIR}/shaders/hlsl/particle_integrate_cs_vk.hlsl"
+    DEPENDS "${CMAKE_SOURCE_DIR}/shaders/hlsl/particle_integrate_cs_vk.hlsl"
+    COMMENT "DXC SPIR-V compile particle_integrate_cs_vk CS"
+    VERBATIM
+  )
+  add_custom_target(sample_sandbox_vk_particle DEPENDS "${_vk_particle_cs}")
   # Mega-W9 C02: light tile cull CS → SPIR-V
   set(_vk_tile_cs "${_shader_out}/light_tile_cull_cs_vk.cs.spv")
   add_custom_command(
@@ -213,5 +230,5 @@ if(ENGINE_WITH_VULKAN)
   add_dependencies(sample_sandbox
     sample_sandbox_vk_lit sample_sandbox_vk_post sample_sandbox_vk_shadow
     sample_sandbox_vk_sky sample_sandbox_vk_ui sample_sandbox_vk_debug sample_sandbox_vk_quad
-    sample_sandbox_vk_cull sample_sandbox_vk_skin sample_sandbox_vk_tile)
+    sample_sandbox_vk_cull sample_sandbox_vk_skin sample_sandbox_vk_particle sample_sandbox_vk_tile)
 endif()

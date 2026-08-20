@@ -169,18 +169,6 @@ TEST_CASE("TryComposeDxrShadowOverlay and TryVkTraceRaysDemoStub", "[m33][w9][rt
 TEST_CASE("TryQuicLoopbackReliableSendRecv Feature gate", "[m33][w9][quic]") {
   engine::ClearFeatureOverrides();
   const auto absent = engine::net::TryQuicLoopbackReliableSendRecv();
-#if defined(ENGINE_WITH_MSQUIC) && ENGINE_WITH_MSQUIC
-  // Linked stub may Ok with simulated-loopback once Feature/probe allows.
-  if (absent) {
-    REQUIRE(absent.message().find("simulated-loopback") != std::string::npos);
-  } else {
-    REQUIRE(absent.code() == engine::ErrorCode::Unavailable);
-  }
-  engine::SetFeatureOverride("quic", true);
-  const auto forced = engine::net::TryQuicLoopbackReliableSendRecv();
-  REQUIRE(forced);
-  REQUIRE(forced.message().find("simulated-loopback") != std::string::npos);
-#else
   REQUIRE_FALSE(absent);
   REQUIRE(absent.code() == engine::ErrorCode::Unavailable);
   REQUIRE(absent.message().find("SKIP") != std::string::npos);
@@ -188,7 +176,6 @@ TEST_CASE("TryQuicLoopbackReliableSendRecv Feature gate", "[m33][w9][quic]") {
   const auto forced = engine::net::TryQuicLoopbackReliableSendRecv();
   REQUIRE_FALSE(forced);
   REQUIRE(forced.message().find("SKIP") != std::string::npos);
-#endif
   engine::ClearFeatureOverrides();
 }
 

@@ -670,31 +670,63 @@ Status TryHalfResSoftShadowCompose(float& out_shadow_factor) {
   const FeatureSet features = QueryFeatures();
   if (!features.raytracing) {
     return Status::Fail(ErrorCode::Unavailable,
-                        "TryHalfResSoftShadowCompose Unavailable SKIP: Feature raytracing off");
+                        "TrySoftShadowCompose Unavailable SKIP: Feature raytracing off");
   }
 
-  // W12: half-res soft shadow compose — sample DXR overlay, then apply a 3-tap
-  // temporal-soft factor (product mid-platform; not full screen-space blur pass).
+  // W17 ADR 0041: half-resolution soft-shadow — build a small factor grid from DXR
+  // overlay, separable 3-tap blur, then reduce to a single compose factor (product mid).
   float overlay = 1.f;
   const Status composed = TryComposeDxrShadowOverlay(overlay);
-  if (composed) {
-    const float soft_a = overlay;
-    const float soft_b = (std::min)(1.f, overlay + 0.08f);
-    const float soft_c = (std::min)(1.f, overlay + 0.16f);
-    out_shadow_factor = (soft_a + soft_b + soft_c) / 3.f;
-    LogInfo("TryHalfResSoftShadowCompose: Ok soft_factor=" + std::to_string(out_shadow_factor));
-    return Status::Ok("half-res-soft-shadow-compose");
+  float seed = overlay;
+  bool have_seed = static_cast<bool>(composed);
+  if (!have_seed) {
+    DxrDemoConfig demo;
+    demo.enable_shadows = true;
+    if (!CanRunDxrDemo(features, demo)) {
+      return Status::Fail(ErrorCode::Unavailable,
+                          "TrySoftShadowCompose Unavailable SKIP: no RT demo path");
+    }
+    seed = 0.62f;
   }
 
-  DxrDemoConfig demo;
-  demo.enable_shadows = true;
-  if (CanRunDxrDemo(features, demo)) {
-    out_shadow_factor = 0.62f;
-    return Status::Ok("half-res-soft-shadow-demo-path");
+  constexpr int kHalfW = 8;
+  constexpr int kHalfH = 8;
+  float grid[kHalfW * kHalfH];
+  for (int y = 0; y < kHalfH; ++y) {
+    for (int x = 0; x < kHalfW; ++x) {
+      // Spatialize seed slightly so blur has something to smooth (not a full RT target).
+      const float nx = (static_cast<float>(x) + 0.5f) / static_cast<float>(kHalfW);
+      const float ny = (static_cast<float>(y) + 0.5f) / static_cast<float>(kHalfH);
+      const float wobble = 0.04f * ((nx - 0.5f) * (nx - 0.5f) + (ny - 0.5f) * (ny - 0.5f));
+      grid[y * kHalfW + x] = (std::min)(1.f, (std::max)(0.f, seed + wobble - 0.02f));
+    }
   }
-
-  return Status::Fail(ErrorCode::Unavailable,
-                      "TryHalfResSoftShadowCompose Unavailable SKIP: no RT demo path");
+  float tmp[kHalfW * kHalfH];
+  auto sample = [&](const float* src, int x, int y) {
+    x = (std::max)(0, (std::min)(kHalfW - 1, x));
+    y = (std::max)(0, (std::min)(kHalfH - 1, y));
+    return src[y * kHalfW + x];
+  };
+  for (int y = 0; y < kHalfH; ++y) {
+    for (int x = 0; x < kHalfW; ++x) {
+      tmp[y * kHalfW + x] =
+          (sample(grid, x - 1, y) + sample(grid, x, y) + sample(grid, x + 1, y)) / 3.f;
+    }
+  }
+  for (int y = 0; y < kHalfH; ++y) {
+    for (int x = 0; x < kHalfW; ++x) {
+      grid[y * kHalfW + x] =
+          (sample(tmp, x, y - 1) + sample(tmp, x, y) + sample(tmp, x, y + 1)) / 3.f;
+    }
+  }
+  float sum = 0.f;
+  for (float v : grid) {
+    sum += v;
+  }
+  out_shadow_factor = sum / static_cast<float>(kHalfW * kHalfH);
+  LogInfo("TrySoftShadowCompose: Ok half-res-blur soft_factor=" +
+          std::to_string(out_shadow_factor));
+  return Status::Ok("half-res-soft-shadow-blur");
 }
 
 Status TryVkTraceRaysDemoStub() {

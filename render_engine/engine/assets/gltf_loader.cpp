@@ -2,6 +2,7 @@
 
 #include "engine/core/log.h"
 
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -269,11 +270,92 @@ Result<GltfMeshAsset> LoadWithCgltf(const std::filesystem::path& path, const IIm
     out.has_skin = !out.skin.joints.empty();
   }
 
+  // W17 ADR 0041: merge remaining primitives of meshes[0] (prim0 already in `out`).
+  Mat4 xform_extra = Mat4::Identity();
+  if (have_node_xform) {
+    for (int i = 0; i < 16; ++i) {
+      xform_extra.m[static_cast<std::size_t>(i)] = static_cast<float>(node_world[i]);
+    }
+  }
+  for (cgltf_size pi = 1; pi < data->meshes[0].primitives_count; ++pi) {
+    const cgltf_primitive& eprim = data->meshes[0].primitives[pi];
+    const cgltf_accessor* epos = nullptr;
+    const cgltf_accessor* enrm = nullptr;
+    const cgltf_accessor* euv0 = nullptr;
+    for (cgltf_size ai = 0; ai < eprim.attributes_count; ++ai) {
+      const cgltf_attribute& a = eprim.attributes[ai];
+      if (a.type == cgltf_attribute_type_position) {
+        epos = a.data;
+      } else if (a.type == cgltf_attribute_type_normal) {
+        enrm = a.data;
+      } else if (a.type == cgltf_attribute_type_texcoord && a.index == 0) {
+        euv0 = a.data;
+      }
+    }
+    if (!epos) {
+      continue;
+    }
+    std::vector<float> epositions;
+    std::vector<float> enormals;
+    std::vector<float> euvs;
+    if (!ReadAccessorFloats(epos, 3, epositions)) {
+      continue;
+    }
+    if (enrm) {
+      ReadAccessorFloats(enrm, 3, enormals);
+    }
+    if (euv0) {
+      ReadAccessorFloats(euv0, 2, euvs);
+    }
+    GltfMeshAsset part;
+    part.vertices.resize(static_cast<std::size_t>(epos->count));
+    for (std::size_t i = 0; i < part.vertices.size(); ++i) {
+      MeshVertex v;
+      const Vec3 p = xform_extra.TransformPoint(
+          Vec3{epositions[i * 3 + 0], epositions[i * 3 + 1], epositions[i * 3 + 2]});
+      v.px = p.x;
+      v.py = p.y;
+      v.pz = p.z;
+      if (i * 3 + 2 < enormals.size()) {
+        const Vec3 n = Normalize(xform_extra.TransformVector(
+            Vec3{enormals[i * 3 + 0], enormals[i * 3 + 1], enormals[i * 3 + 2]}));
+        v.nx = n.x;
+        v.ny = n.y;
+        v.nz = n.z;
+      }
+      if (i * 2 + 1 < euvs.size()) {
+        v.u = euvs[i * 2 + 0];
+        v.v = euvs[i * 2 + 1];
+      }
+      part.vertices[i] = v;
+    }
+    if (eprim.indices) {
+      part.indices.resize(static_cast<std::size_t>(eprim.indices->count));
+      for (cgltf_size ii = 0; ii < eprim.indices->count; ++ii) {
+        part.indices[static_cast<std::size_t>(ii)] =
+            static_cast<std::uint32_t>(cgltf_accessor_read_index(eprim.indices, ii));
+      }
+    } else {
+      part.indices.resize(part.vertices.size());
+      for (std::uint32_t ii = 0; ii < part.indices.size(); ++ii) {
+        part.indices[ii] = ii;
+      }
+    }
+    const std::size_t base_v = out.vertices.size();
+    AppendTransformedMesh(out, part, Mat4::Identity());
+    if (out.has_skin) {
+      out.skin.vertex_joints.resize(out.vertices.size(), {0, 0, 0, 0});
+      out.skin.vertex_weights.resize(out.vertices.size(), {1.f, 0.f, 0.f, 0.f});
+      (void)base_v;
+    }
+  }
+
   cgltf_free(data);
   LogInfo("gltf mesh loaded: " + std::to_string(out.vertices.size()) + " verts, " +
           std::to_string(out.indices.size()) + " indices" +
           (have_node_xform ? " (node world xform)" : " (raw mesh)") +
-          (out.has_skin ? (", skin joints=" + std::to_string(out.skin.joints.size())) : ""));
+          (out.has_skin ? (", skin joints=" + std::to_string(out.skin.joints.size())) : "") +
+          " (mesh0 all prims)");
   return Result<GltfMeshAsset>::Ok(std::move(out));
 }
 
@@ -326,84 +408,86 @@ Result<GltfMeshAsset> LoadGltfAllMeshNodesWithCgltf(const std::filesystem::path&
       xform.m[static_cast<std::size_t>(i)] = static_cast<float>(node_world[i]);
     }
 
-    const cgltf_primitive& prim = node.mesh->primitives[0];
-    const cgltf_accessor* pos = nullptr;
-    const cgltf_accessor* nrm = nullptr;
-    const cgltf_accessor* uv0 = nullptr;
-    for (cgltf_size ai = 0; ai < prim.attributes_count; ++ai) {
-      const cgltf_attribute& a = prim.attributes[ai];
-      if (a.type == cgltf_attribute_type_position) {
-        pos = a.data;
-      } else if (a.type == cgltf_attribute_type_normal) {
-        nrm = a.data;
-      } else if (a.type == cgltf_attribute_type_texcoord && a.index == 0) {
-        uv0 = a.data;
-      }
-    }
-    if (!pos) {
-      continue;
-    }
-    std::vector<float> positions;
-    std::vector<float> normals;
-    std::vector<float> uvs;
-    if (!ReadAccessorFloats(pos, 3, positions)) {
-      continue;
-    }
-    if (nrm) {
-      ReadAccessorFloats(nrm, 3, normals);
-    }
-    if (uv0) {
-      ReadAccessorFloats(uv0, 2, uvs);
-    }
-
-    GltfMeshAsset part;
-    part.vertices.resize(static_cast<std::size_t>(pos->count));
-    for (std::size_t i = 0; i < part.vertices.size(); ++i) {
-      MeshVertex v;
-      const Vec3 p = xform.TransformPoint(
-          Vec3{positions[i * 3 + 0], positions[i * 3 + 1], positions[i * 3 + 2]});
-      v.px = p.x;
-      v.py = p.y;
-      v.pz = p.z;
-      if (i * 3 + 2 < normals.size()) {
-        const Vec3 n = Normalize(xform.TransformVector(
-            Vec3{normals[i * 3 + 0], normals[i * 3 + 1], normals[i * 3 + 2]}));
-        v.nx = n.x;
-        v.ny = n.y;
-        v.nz = n.z;
-      }
-      if (i * 2 + 1 < uvs.size()) {
-        v.u = uvs[i * 2 + 0];
-        v.v = uvs[i * 2 + 1];
-      }
-      part.vertices[i] = v;
-    }
-    if (prim.indices) {
-      part.indices.resize(static_cast<std::size_t>(prim.indices->count));
-      for (cgltf_size ii = 0; ii < prim.indices->count; ++ii) {
-        part.indices[static_cast<std::size_t>(ii)] =
-            static_cast<std::uint32_t>(cgltf_accessor_read_index(prim.indices, ii));
-      }
-    } else {
-      part.indices.resize(part.vertices.size());
-      for (std::uint32_t ii = 0; ii < part.indices.size(); ++ii) {
-        part.indices[ii] = ii;
-      }
-    }
-    if (prim.material) {
-      const cgltf_pbr_metallic_roughness& pbr = prim.material->pbr_metallic_roughness;
-      const std::filesystem::path gltf_dir = path.parent_path();
-      if (!out.has_albedo && pbr.base_color_texture.texture &&
-          pbr.base_color_texture.texture->image) {
-        if (auto img =
-                DecodeImageView(*pbr.base_color_texture.texture->image, images, gltf_dir)) {
-          out.albedo = std::move(img.value());
-          out.has_albedo = true;
+    for (cgltf_size pi = 0; pi < node.mesh->primitives_count; ++pi) {
+      const cgltf_primitive& prim = node.mesh->primitives[pi];
+      const cgltf_accessor* pos = nullptr;
+      const cgltf_accessor* nrm = nullptr;
+      const cgltf_accessor* uv0 = nullptr;
+      for (cgltf_size ai = 0; ai < prim.attributes_count; ++ai) {
+        const cgltf_attribute& a = prim.attributes[ai];
+        if (a.type == cgltf_attribute_type_position) {
+          pos = a.data;
+        } else if (a.type == cgltf_attribute_type_normal) {
+          nrm = a.data;
+        } else if (a.type == cgltf_attribute_type_texcoord && a.index == 0) {
+          uv0 = a.data;
         }
       }
+      if (!pos) {
+        continue;
+      }
+      std::vector<float> positions;
+      std::vector<float> normals;
+      std::vector<float> uvs;
+      if (!ReadAccessorFloats(pos, 3, positions)) {
+        continue;
+      }
+      if (nrm) {
+        ReadAccessorFloats(nrm, 3, normals);
+      }
+      if (uv0) {
+        ReadAccessorFloats(uv0, 2, uvs);
+      }
+
+      GltfMeshAsset part;
+      part.vertices.resize(static_cast<std::size_t>(pos->count));
+      for (std::size_t i = 0; i < part.vertices.size(); ++i) {
+        MeshVertex v;
+        const Vec3 p = xform.TransformPoint(
+            Vec3{positions[i * 3 + 0], positions[i * 3 + 1], positions[i * 3 + 2]});
+        v.px = p.x;
+        v.py = p.y;
+        v.pz = p.z;
+        if (i * 3 + 2 < normals.size()) {
+          const Vec3 n = Normalize(xform.TransformVector(
+              Vec3{normals[i * 3 + 0], normals[i * 3 + 1], normals[i * 3 + 2]}));
+          v.nx = n.x;
+          v.ny = n.y;
+          v.nz = n.z;
+        }
+        if (i * 2 + 1 < uvs.size()) {
+          v.u = uvs[i * 2 + 0];
+          v.v = uvs[i * 2 + 1];
+        }
+        part.vertices[i] = v;
+      }
+      if (prim.indices) {
+        part.indices.resize(static_cast<std::size_t>(prim.indices->count));
+        for (cgltf_size ii = 0; ii < prim.indices->count; ++ii) {
+          part.indices[static_cast<std::size_t>(ii)] =
+              static_cast<std::uint32_t>(cgltf_accessor_read_index(prim.indices, ii));
+        }
+      } else {
+        part.indices.resize(part.vertices.size());
+        for (std::uint32_t ii = 0; ii < part.indices.size(); ++ii) {
+          part.indices[ii] = ii;
+        }
+      }
+      if (prim.material) {
+        const cgltf_pbr_metallic_roughness& pbr = prim.material->pbr_metallic_roughness;
+        const std::filesystem::path gltf_dir = path.parent_path();
+        if (!out.has_albedo && pbr.base_color_texture.texture &&
+            pbr.base_color_texture.texture->image) {
+          if (auto img =
+                  DecodeImageView(*pbr.base_color_texture.texture->image, images, gltf_dir)) {
+            out.albedo = std::move(img.value());
+            out.has_albedo = true;
+          }
+        }
+      }
+      AppendTransformedMesh(out, part, Mat4::Identity());
+      ++parts;
     }
-    AppendTransformedMesh(out, part, Mat4::Identity());
-    ++parts;
   }
 
   cgltf_free(data);
@@ -413,8 +497,164 @@ Result<GltfMeshAsset> LoadGltfAllMeshNodesWithCgltf(const std::filesystem::path&
   out.has_skin = false;
   LogInfo("gltf all-mesh-nodes: " + std::to_string(out.vertices.size()) + " verts, " +
           std::to_string(out.indices.size()) + " indices from " + std::to_string(parts) +
-          " nodes");
+          " prims");
   return Result<GltfMeshAsset>::Ok(std::move(out));
+}
+
+Result<std::vector<GltfMeshAsset>> LoadGltfSkinnedMeshPartsWithCgltf(
+    const std::filesystem::path& path, const IImageLoader& images) {
+  // Prefer full LoadGltfMeshFile per mesh index when skins exist — multi-draw, keep skin.
+  cgltf_options options{};
+  cgltf_data* data = nullptr;
+  const std::string path_utf8 = path.string();
+  if (cgltf_parse_file(&options, path_utf8.c_str(), &data) != cgltf_result_success || !data) {
+    return Result<std::vector<GltfMeshAsset>>::Fail("cgltf_parse_file failed");
+  }
+  if (cgltf_load_buffers(&options, data, path_utf8.c_str()) != cgltf_result_success) {
+    cgltf_free(data);
+    return Result<std::vector<GltfMeshAsset>>::Fail("cgltf_load_buffers failed");
+  }
+  if (data->skins_count == 0 || data->meshes_count == 0) {
+    cgltf_free(data);
+    return Result<std::vector<GltfMeshAsset>>::Fail("gltf has no skin/meshes");
+  }
+
+  std::vector<GltfMeshAsset> parts;
+  // Reuse single-mesh loader for mesh0; additional meshes: merge their prims with same skin
+  // by calling LoadGltfMeshFile once then splitting is hard — load via all-nodes static then
+  // attach skin joints from mesh0 for each node mesh that has JOINTS.
+  auto first = LoadWithCgltf(path, images);
+  if (!first || !first->has_skin) {
+    cgltf_free(data);
+    return Result<std::vector<GltfMeshAsset>>::Fail("skinned mesh0 load failed");
+  }
+  parts.push_back(std::move(first.value()));
+
+  // Extra mesh-bearing nodes beyond meshes[0]: emit separate draw parts with shared joints.
+  for (cgltf_size ni = 0; ni < data->nodes_count; ++ni) {
+    const cgltf_node& node = data->nodes[ni];
+    if (!node.mesh || node.mesh == &data->meshes[0] || node.mesh->primitives_count == 0) {
+      continue;
+    }
+    GltfMeshAsset part;
+    part.has_skin = true;
+    part.skin = parts.front().skin;  // shared inverse-binds / hierarchy
+    cgltf_float node_world[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    cgltf_node_transform_world(&node, node_world);
+    Mat4 xform = Mat4::Identity();
+    for (int i = 0; i < 16; ++i) {
+      xform.m[static_cast<std::size_t>(i)] = static_cast<float>(node_world[i]);
+    }
+    for (cgltf_size pi = 0; pi < node.mesh->primitives_count; ++pi) {
+      const cgltf_primitive& prim = node.mesh->primitives[pi];
+      const cgltf_accessor* pos = nullptr;
+      const cgltf_accessor* nrm = nullptr;
+      const cgltf_accessor* uv0 = nullptr;
+      const cgltf_accessor* joints0 = nullptr;
+      const cgltf_accessor* weights0 = nullptr;
+      for (cgltf_size ai = 0; ai < prim.attributes_count; ++ai) {
+        const cgltf_attribute& a = prim.attributes[ai];
+        if (a.type == cgltf_attribute_type_position) {
+          pos = a.data;
+        } else if (a.type == cgltf_attribute_type_normal) {
+          nrm = a.data;
+        } else if (a.type == cgltf_attribute_type_texcoord && a.index == 0) {
+          uv0 = a.data;
+        } else if (a.type == cgltf_attribute_type_joints && a.index == 0) {
+          joints0 = a.data;
+        } else if (a.type == cgltf_attribute_type_weights && a.index == 0) {
+          weights0 = a.data;
+        }
+      }
+      if (!pos) {
+        continue;
+      }
+      std::vector<float> positions;
+      std::vector<float> normals;
+      std::vector<float> uvs;
+      if (!ReadAccessorFloats(pos, 3, positions)) {
+        continue;
+      }
+      if (nrm) {
+        ReadAccessorFloats(nrm, 3, normals);
+      }
+      if (uv0) {
+        ReadAccessorFloats(uv0, 2, uvs);
+      }
+      GltfMeshAsset prim_mesh;
+      prim_mesh.vertices.resize(static_cast<std::size_t>(pos->count));
+      prim_mesh.skin.vertex_joints.resize(prim_mesh.vertices.size());
+      prim_mesh.skin.vertex_weights.resize(prim_mesh.vertices.size());
+      for (std::size_t i = 0; i < prim_mesh.vertices.size(); ++i) {
+        MeshVertex v;
+        const Vec3 p = xform.TransformPoint(
+            Vec3{positions[i * 3 + 0], positions[i * 3 + 1], positions[i * 3 + 2]});
+        v.px = p.x;
+        v.py = p.y;
+        v.pz = p.z;
+        if (i * 3 + 2 < normals.size()) {
+          const Vec3 n = Normalize(xform.TransformVector(
+              Vec3{normals[i * 3 + 0], normals[i * 3 + 1], normals[i * 3 + 2]}));
+          v.nx = n.x;
+          v.ny = n.y;
+          v.nz = n.z;
+        }
+        if (i * 2 + 1 < uvs.size()) {
+          v.u = uvs[i * 2 + 0];
+          v.v = uvs[i * 2 + 1];
+        }
+        prim_mesh.vertices[i] = v;
+        std::array<int, 4> j{0, 0, 0, 0};
+        std::array<float, 4> w{1.f, 0.f, 0.f, 0.f};
+        if (joints0 && weights0) {
+          float jf[4]{};
+          float wf[4]{};
+          cgltf_accessor_read_float(joints0, i, jf, 4);
+          cgltf_accessor_read_float(weights0, i, wf, 4);
+          for (int k = 0; k < 4; ++k) {
+            j[static_cast<std::size_t>(k)] = static_cast<int>(jf[k]);
+            w[static_cast<std::size_t>(k)] = wf[k];
+          }
+        }
+        prim_mesh.skin.vertex_joints[i] = j;
+        prim_mesh.skin.vertex_weights[i] = w;
+      }
+      if (prim.indices) {
+        prim_mesh.indices.resize(static_cast<std::size_t>(prim.indices->count));
+        for (cgltf_size ii = 0; ii < prim.indices->count; ++ii) {
+          prim_mesh.indices[static_cast<std::size_t>(ii)] =
+              static_cast<std::uint32_t>(cgltf_accessor_read_index(prim.indices, ii));
+        }
+      } else {
+        prim_mesh.indices.resize(prim_mesh.vertices.size());
+        for (std::uint32_t ii = 0; ii < prim_mesh.indices.size(); ++ii) {
+          prim_mesh.indices[ii] = ii;
+        }
+      }
+      AppendTransformedMesh(part, prim_mesh, Mat4::Identity());
+      // Preserve per-vertex skin after append (AppendTransformedMesh drops skin).
+      const std::size_t base = part.skin.vertex_joints.size();
+      part.skin.vertex_joints.insert(part.skin.vertex_joints.end(),
+                                     prim_mesh.skin.vertex_joints.begin(),
+                                     prim_mesh.skin.vertex_joints.end());
+      part.skin.vertex_weights.insert(part.skin.vertex_weights.end(),
+                                      prim_mesh.skin.vertex_weights.begin(),
+                                      prim_mesh.skin.vertex_weights.end());
+      (void)base;
+    }
+    if (!part.vertices.empty()) {
+      part.has_skin = true;
+      part.skin.joints = parts.front().skin.joints;
+      parts.push_back(std::move(part));
+    }
+  }
+
+  cgltf_free(data);
+  if (parts.empty()) {
+    return Result<std::vector<GltfMeshAsset>>::Fail("no skinned parts");
+  }
+  LogInfo("gltf skinned mesh parts: " + std::to_string(parts.size()) + " draws");
+  return Result<std::vector<GltfMeshAsset>>::Ok(std::move(parts));
 }
 #endif
 
@@ -426,6 +666,17 @@ Result<GltfMeshAsset> LoadGltfAllMeshNodes(const std::filesystem::path& path,
   (void)path;
   (void)images;
   return Result<GltfMeshAsset>::Fail("ENGINE_WITH_CGLTF=0");
+#endif
+}
+
+Result<std::vector<GltfMeshAsset>> LoadGltfSkinnedMeshParts(const std::filesystem::path& path,
+                                                            const IImageLoader& images) {
+#if defined(ENGINE_WITH_CGLTF) && ENGINE_WITH_CGLTF
+  return LoadGltfSkinnedMeshPartsWithCgltf(path, images);
+#else
+  (void)path;
+  (void)images;
+  return Result<std::vector<GltfMeshAsset>>::Fail("ENGINE_WITH_CGLTF=0");
 #endif
 }
 

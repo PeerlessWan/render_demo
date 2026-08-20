@@ -5,7 +5,7 @@
 > 定位：**Windows（D3D12 + Vulkan）/ Linux（Vulkan）通用 2D·3D 渲染引擎**  
 > 范围分段：M1–M16（既有能力）+ M17–M19（后端/Linux/网络）+ **M20–M25 引擎缺口补齐（P2）**。  
 > **当前迭代看板**（Doing / Undo / Todo）：[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)  
-> **引擎状态：Mega-W11 已收口**；**进行中：W12–W15 水位弱项产品化（A+C）** — [ADR 0039](learn/adr/0039-waterline-productization-a-c.md)。  
+> **引擎状态：W12–W17 已收口** — [ADR 0040](learn/adr/0040-w16-zero-tail-closeout.md)、[ADR 0041](learn/adr/0041-w17-engine-deepen.md)。  
 > **游戏可用 ≠ 渲染可用**：工作区可玩产品水位见 **§1.9**（主缺口 `game_kit` GK0–GK3）。
 
 ## 1. 总验收目标
@@ -559,16 +559,17 @@ Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
 
 > 无 vendor 100% 口径见看板；测试门禁：`ci_headless.ps1 -Golden`（Q1+Q3+C2+C3+C6）+ matrix 比图 + C4 薄对标（默认记回归）；可选 `-Validation`（C1）。**Harness 冻结；MCP 不进门禁。** §3.1：**Q1–Q3 / C1–C6 已落地（C4 记对标）**；Q4/Q5 / 严 C4 仍后置。
 
-## 6.1 水位弱项产品化（W12–W15，ADR 0039）
+## 6.1 水位弱项产品化（W12–W16，ADR 0039 + 0040）
 
-边界：**A** 渲染中台（无 Nanite / 真 DDGI / 引擎内复制）；**C** Sandbox 演示观感。详见 [KNOWN_GAPS.md](KNOWN_GAPS.md) §3、[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)。
+边界：**A** 渲染中台（无 Nanite / 真 DDGI / 引擎内复制）；**C** Sandbox 演示观感。W16 清假壳。详见 [KNOWN_GAPS.md](KNOWN_GAPS.md) §3、[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)。
 
 | 波 | 目标 | 出门标准 |
 |---|---|---|
-| **W12** | 角色蒙皮闭环；DLSS→FSR2→builtin；DDGI-lite 帧预算 + D3D12 半分辨率软影 | F 附身 lit 蒙皮角色；超分可切；Probe GI 开关可感 |
-| **W13** | VT 近默认可开；VK bindless 真接线或诚实 SKIP；Cull+Indirect+meshoptimizer | 大规模实例 Cull 可跑；VK bindless Feature 诚实 |
-| **W14** | GPU 粒子；ChunkStream/FFT 海/植被 GPU instance；WS/QUIC 传输抛光 | Sandbox 可开关演示；传输冒烟 PASS/SKIP |
-| **W15** | Linux 全树同步；Wayland + `VK_KHR_wayland_surface`；X11 CI 基线 | Linux Vulkan clear/Sandbox 冒烟；Wayland clear（有显示） |
+| **W12** | 角色蒙皮闭环；超分诚实链；DDGI-lite 帧预算 + 软影 compose | F 附身 lit；超分 name 诚实；Probe GI 可感 |
+| **W13** | VT 近默认可开；VK bindless 热路径；Cull+Indirect | 大规模 Cull；bindless Feature 诚实 |
+| **W14** | GPU 粒子 CS；ChunkStream/FFT/植被；WS/QUIC 传输诚实 | Sandbox 可演示；QUIC 无 API → SKIP |
+| **W15** | Linux；Wayland xdg + wayland surface；X11 CI | Linux Vulkan clear；Wayland present 或诚实回退 |
+| **W16** | 零尾巴收口（ADR 0040） | 看板无「后续」；无假壳 Ok |
 
 
 

@@ -12,10 +12,15 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 #elif defined(__linux__)
 #define VK_USE_PLATFORM_XLIB_KHR
+#define VK_USE_PLATFORM_WAYLAND_KHR
 #if defined(ENGINE_HAS_X11)
 #include <X11/Xlib.h>
 #endif
+#if defined(ENGINE_HAS_WAYLAND)
+#include <wayland-client.h>
+#endif
 #include "engine/platform/linux/window_x11.h"
+#include "engine/platform/linux/window_wayland.h"
 #endif
 #include <vulkan/vulkan.h>
 
@@ -40,7 +45,7 @@ constexpr std::uint32_t kMaxLitDraws = 2048;
 constexpr VkDeviceSize kUniformAlign = 256;
 constexpr std::uint32_t kShadowMapSize = 2048;
 constexpr std::uint32_t kLocalShadowMapSize = 2048;
-constexpr int kMaxMeshSlots = 8;
+constexpr int kMaxMeshSlots = 16;
 constexpr std::uint32_t kMaxScreenQuads = 1024;
 constexpr std::uint32_t kMaxDebugVerts = 16384;
 constexpr std::uint32_t kMaxUiVerts = 16384;
@@ -232,10 +237,21 @@ class VulkanDevice final : public IDevice {
 #if defined(_WIN32)
     hwnd_ = static_cast<HWND>(desc.native_window);
 #elif defined(__linux__)
-    x11_ = static_cast<const platform::linux_x11::X11Native*>(desc.native_window);
-    if (!x11_ || !x11_->display || !x11_->window) {
-      return Status::Fail(ErrorCode::InvalidArgument,
-                          "Invalid DeviceDesc for Vulkan (need X11Native* with display+window)");
+    {
+      const auto* kind = static_cast<const platform::LinuxNativeKind*>(desc.native_window);
+      if (kind && *kind == platform::LinuxNativeKind::Wayland) {
+        wayland_ = static_cast<const platform::linux_wayland::WaylandNative*>(desc.native_window);
+        if (!wayland_ || !wayland_->display || !wayland_->surface) {
+          return Status::Fail(ErrorCode::InvalidArgument,
+                              "Invalid DeviceDesc for Vulkan (need WaylandNative* display+surface)");
+        }
+      } else {
+        x11_ = static_cast<const platform::linux_x11::X11Native*>(desc.native_window);
+        if (!x11_ || !x11_->display || !x11_->window) {
+          return Status::Fail(ErrorCode::InvalidArgument,
+                              "Invalid DeviceDesc for Vulkan (need X11Native* with display+window)");
+        }
+      }
     }
 #else
     return Status::Fail(ErrorCode::Unavailable, "Vulkan surface platform unsupported");
@@ -274,7 +290,7 @@ class VulkanDevice final : public IDevice {
       bindless_capable_ = true;
       engine::SetFeatureOverride("bindless", true);
       LogInfo("Vulkan bindless Feature path enabled (descriptor-indexing); "
-              "bindless_hot_path default OFF (classic descriptors)");
+              "bindless_hot_path opt-in (default OFF; W16 ADR 0040)");
     } else {
       bindless_capable_ = false;
       LogInfo("Vulkan bindless SKIP (no VK_EXT_descriptor_indexing; classic only)");
@@ -1782,8 +1798,7 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
 
-  // W13 ADR 0039: capability Feature when descriptor-indexing present.
-  // bindless_hot_path stays opt-in (default OFF) — classic draw until hot path wired.
+  // W16 ADR 0040: capability when descriptor-indexing present; hot path opt-in like D3D12.
   Status ProbeBindlessMinimalPath(std::uint32_t /*srv_heap_slot*/) override {
     if (!descriptor_indexing_available_) {
       return Status::Fail(ErrorCode::Unavailable,
@@ -1792,6 +1807,15 @@ class VulkanDevice final : public IDevice {
     bindless_capable_ = true;
     engine::SetFeatureOverride("bindless", true);
     return Status::Ok("vulkan-bindless-capability");
+  }
+
+  // Align D3D12 BindlessAlbedoHeapPad: tex_slot==0 → t2 (binding albedo0), else → t4.
+  // Shader uses g_pad>=0 to take the hot-path branch (classic registers still bound).
+  float BindlessAlbedoHeapPad(float tex_slot) const {
+    if (!bindless_capable_ || !engine::QueryFeature("bindless_hot_path")) {
+      return -1.f;
+    }
+    return tex_slot > 0.5f ? 4.f : 2.f;
   }
 
   Status DrawLitCube(const LitDrawItem& item) override {
@@ -1855,7 +1879,7 @@ class VulkanDevice final : public IDevice {
       od.tex_slot = static_cast<float>(items[i].tex_slot);
       od.uv_scale = items[i].uv_scale > 0.f ? items[i].uv_scale : 1.f;
       od.use_instances = 0.f;
-      od.pad = -1.f;  // classic only; VK has no bindless_hot_path
+      od.pad = BindlessAlbedoHeapPad(od.tex_slot);
 
       const std::uint32_t draw_slot = lit_draws_this_frame_ % kMaxLitDraws;
       const VkDeviceSize slot =
@@ -3758,7 +3782,9 @@ class VulkanDevice final : public IDevice {
 #if defined(_WIN32)
     const char* exts[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
 #elif defined(__linux__)
-    const char* exts[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_XLIB_SURFACE_EXTENSION_NAME};
+    // W16: enable both xlib + wayland; unused surface ext is fine if present.
+    const char* exts[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
+                          VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME};
 #else
     const char* exts[] = {VK_KHR_SURFACE_EXTENSION_NAME};
 #endif
@@ -3767,7 +3793,11 @@ class VulkanDevice final : public IDevice {
     VkInstanceCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ci.pApplicationInfo = &app;
+#if defined(__linux__)
+    ci.enabledExtensionCount = 3;
+#else
     ci.enabledExtensionCount = 2;
+#endif
     ci.ppEnabledExtensionNames = exts;
     if (enable_validation_) {
       ci.enabledLayerCount = 1;
@@ -3827,6 +3857,21 @@ class VulkanDevice final : public IDevice {
     }
     return Status::Ok();
 #elif defined(__linux__)
+    if (wayland_) {
+#if defined(ENGINE_HAS_WAYLAND)
+      VkWaylandSurfaceCreateInfoKHR ci{};
+      ci.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
+      ci.display = static_cast<wl_display*>(wayland_->display);
+      ci.surface = static_cast<wl_surface*>(wayland_->surface);
+      const VkResult r = vkCreateWaylandSurfaceKHR(instance_, &ci, nullptr, &surface_);
+      if (r != VK_SUCCESS) {
+        return Status::Fail("vkCreateWaylandSurfaceKHR failed: " + VkErr(r));
+      }
+      return Status::Ok("wayland-surface");
+#else
+      return Status::Fail(ErrorCode::Unavailable, "CreateSurface: ENGINE_HAS_WAYLAND off");
+#endif
+    }
     return TryCreateXlibSurface(instance_, x11_->display, x11_->window, &surface_);
 #else
     return Status::Fail(ErrorCode::Unavailable, "CreateSurface: unsupported platform");
@@ -6475,6 +6520,7 @@ class VulkanDevice final : public IDevice {
   HWND hwnd_ = nullptr;
 #elif defined(__linux__)
   const platform::linux_x11::X11Native* x11_ = nullptr;
+  const platform::linux_wayland::WaylandNative* wayland_ = nullptr;
 #endif
   std::uint32_t width_ = 0;
   std::uint32_t height_ = 0;

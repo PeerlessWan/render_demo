@@ -63,8 +63,6 @@ CharacterLoadResult CharacterAsset::TryLoadGltfOrCapsule(const std::filesystem::
                                "missing path; capsule fallback");
   }
 
-  // Skinned: keep mesh0 + joints. Static multi-mesh (Kenney blocky): merge all
-  // mesh-bearing nodes — LoadGltfMeshFile alone only kept the left leg.
   auto first = LoadGltfMeshFile(gltf_or_glb_path, images);
   if (!first) {
     return MakeCapsuleFallback(capsule_radius, capsule_height,
@@ -75,7 +73,19 @@ CharacterLoadResult CharacterAsset::TryLoadGltfOrCapsule(const std::filesystem::
   r.used_capsule_fallback = false;
   r.source_path = gltf_or_glb_path;
   if (first->has_skin) {
-    r.mesh = std::move(first.value());
+    // W16: multi-draw skinned parts; never merge-clear skin.
+    auto parts = LoadGltfSkinnedMeshParts(gltf_or_glb_path, images);
+    if (parts && !parts.value().empty()) {
+      r.mesh = parts.value()[0];
+      if (parts.value().size() > 1) {
+        r.draw_parts.assign(parts.value().begin() + 1, parts.value().end());
+      }
+      r.note = std::string("loaded ") + gltf_or_glb_path.filename().string() + " (skinned, " +
+               std::to_string(parts.value().size()) + " draws)";
+    } else {
+      r.mesh = std::move(first.value());
+      r.note = std::string("loaded ") + gltf_or_glb_path.filename().string() + " (skinned)";
+    }
   } else {
     auto merged = LoadGltfAllMeshNodes(gltf_or_glb_path, images);
     if (merged && merged->vertices.size() >= first->vertices.size()) {
@@ -83,10 +93,9 @@ CharacterLoadResult CharacterAsset::TryLoadGltfOrCapsule(const std::filesystem::
     } else {
       r.mesh = std::move(first.value());
     }
+    r.note = std::string("loaded ") + gltf_or_glb_path.filename().string() + " (static multi-mesh)";
   }
   r.has_skin = r.mesh.has_skin;
-  r.note = std::string("loaded ") + gltf_or_glb_path.filename().string() +
-           (r.has_skin ? " (skinned)" : " (static multi-mesh)");
   return r;
 }
 

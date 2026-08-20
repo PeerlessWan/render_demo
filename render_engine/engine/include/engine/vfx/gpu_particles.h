@@ -2,6 +2,7 @@
 
 #include "engine/core/math.h"
 #include "engine/core/result.h"
+#include "engine/gpu_driven/indirect_draw.h"
 #include "engine/vfx/particles.h"
 
 #include <cstdint>
@@ -10,8 +11,8 @@
 
 namespace engine::vfx {
 
-// W14 / ADR 0039: GPU particle path. When compute is unavailable, Step falls back to
-// CPU ParticleEmitter semantics and reports path via last_path().
+// W16 / ADR 0040: GPU particle path. Feature gpu_particles → D3D12 CS integrate +
+// IndirectDrawArgs; on failure honest cpu-fallback (never fake gpu-contract names).
 class GpuParticleSystem {
  public:
   void Configure(const Vec3& origin, float rate, float lifetime, std::uint32_t max_particles = 256);
@@ -20,8 +21,8 @@ class GpuParticleSystem {
   [[nodiscard]] bool enabled() const { return enabled_; }
   [[nodiscard]] const std::vector<Particle>& particles() const { return particles_; }
   [[nodiscard]] const char* last_path() const { return last_path_.c_str(); }
+  [[nodiscard]] const gpu_driven::IndirectDrawArgs& last_indirect() const { return last_indirect_; }
 
-  // Prefer GPU CS update; on failure use CPU integrate (honest path string).
   Status Step(float dt);
 
  private:
@@ -34,10 +35,13 @@ class GpuParticleSystem {
   std::uint32_t rng_ = 7u;
   std::vector<Particle> particles_;
   std::string last_path_{"idle"};
+  gpu_driven::IndirectDrawArgs last_indirect_{};
 
   float NextRand();
   void EmitCpu(int count);
   void IntegrateCpu(float dt);
+  void CullDead();
+  void FillIndirect();
 };
 
 }  // namespace engine::vfx

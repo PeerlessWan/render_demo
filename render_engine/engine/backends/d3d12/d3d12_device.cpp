@@ -3189,7 +3189,7 @@ class D3D12Device final : public IDevice {
     const int s = (std::max)(0, (std::min)(slot, static_cast<int>(kShadowVpSlots) - 1));
     return (static_cast<UINT64>(frame_index_) * kShadowVpSlots + static_cast<UINT64>(s)) * 256ull;
   }
-  static constexpr int kMaxMeshSlots = 8;
+  static constexpr int kMaxMeshSlots = 16;
   static constexpr UINT kShadowMapSize = 2048;
   static constexpr UINT kLocalShadowMapSize = 2048;
 
