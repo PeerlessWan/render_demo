@@ -75,6 +75,10 @@ cbuffer ObjectCB : register(b1) {
   float g_uv_scale;
   float g_use_instances;
   float g_pad;
+  float g_detail_blend;
+  float g_detail_uv_scale;
+  float g_triplanar;
+  float g_triplanar_sharpness;
 };
 
 // Lit set packing (Vulkan, -fvk-t/s-shift 2):
@@ -450,6 +454,19 @@ float4 PSMain(VSOutput input) : SV_Target {
     } else {
       base *= g_albedo_map.Sample(g_alb_samp, uv).rgb;
     }
+  }
+  if (g_triplanar > 0.5 && g_use_albedo > 0.5) {
+    float3 bw = pow(abs(n), max(g_triplanar_sharpness, 1.0));
+    bw /= max(bw.x + bw.y + bw.z, 1e-4);
+    float3 tx = g_albedo_map.Sample(g_alb_samp, input.world_pos.yz * g_uv_scale).rgb;
+    float3 ty = g_albedo_map.Sample(g_alb_samp, input.world_pos.xz * g_uv_scale).rgb;
+    float3 tz = g_albedo_map.Sample(g_alb_samp, input.world_pos.xy * g_uv_scale).rgb;
+    base = tx * bw.x + ty * bw.y + tz * bw.z;
+  }
+  if (g_detail_blend > 1e-4 && g_use_albedo > 0.5) {
+    float2 duv = uv * max(g_detail_uv_scale, 1.0);
+    float3 detail = g_albedo_map2.Sample(g_alb2_samp, duv).rgb;
+    base = lerp(base, base * detail, saturate(g_detail_blend));
   }
 
   float metallic = g_metallic;

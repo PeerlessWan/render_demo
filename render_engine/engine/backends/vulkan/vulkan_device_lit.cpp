@@ -279,6 +279,11 @@ Status VulkanDevice::DrawLitInstanced(const LitDrawItem& prototype, std::uint32_
     od.uv_scale = prototype.uv_scale > 0.f ? prototype.uv_scale : 1.f;
     od.use_instances = 1.f;
     od.pad = -1.f;
+    od.detail_blend = prototype.detail_blend;
+    od.detail_uv_scale = prototype.detail_uv_scale > 0.f ? prototype.detail_uv_scale : 4.f;
+    od.triplanar = prototype.triplanar;
+    od.triplanar_sharpness =
+            prototype.triplanar_sharpness > 0.f ? prototype.triplanar_sharpness : 4.f;
 
     // Dedicated late slot (matches D3D kMaxLitDraws-1 pattern).
     const std::uint32_t draw_slot = kMaxLitDraws - 1;
@@ -364,6 +369,11 @@ Status VulkanDevice::DrawLitCubesWithPipeline(std::span<const LitDrawItem> items
         od.uv_scale = items[i].uv_scale > 0.f ? items[i].uv_scale : 1.f;
         od.use_instances = 0.f;
         od.pad = BindlessAlbedoHeapPad(od.tex_slot);
+        od.detail_blend = items[i].detail_blend;
+        od.detail_uv_scale = items[i].detail_uv_scale > 0.f ? items[i].detail_uv_scale : 4.f;
+        od.triplanar = items[i].triplanar;
+        od.triplanar_sharpness =
+                items[i].triplanar_sharpness > 0.f ? items[i].triplanar_sharpness : 4.f;
 
         const std::uint32_t draw_slot = lit_draws_this_frame_ % kMaxLitDraws;
         const VkDeviceSize slot =

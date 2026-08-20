@@ -48,8 +48,14 @@
   float g_lens_distortion;
   float g_light_dirt_strength;
   float g_flare_strength;
-  float g_pad_c04_a;
-  float g_pad_c04_b;
+  float g_enable_gtao;
+  float g_enable_fxaa;
+  float g_enable_color_grading;
+  float g_color_grading_strength;
+  float3 g_fog_box_min;
+  float g_enable_fog_box;
+  float3 g_fog_box_max;
+  float g_ssr_roughness_fade;
 };
 
 [[vk::binding(1, 0)]] Texture2D g_scene_color;
@@ -87,6 +93,50 @@ float2 WorldToUv(float3 world, out float ndc_z) {
   float3 ndc = clip.xyz / max(clip.w, 1e-5);
   ndc_z = ndc.z;
   return ndc.xy * float2(0.5, -0.5) + 0.5;
+}
+
+float GTAO(float2 uv, float3 origin, float3 normal) {
+  float ao = 0.0;
+  const int kSlices = 4;
+  const int kSteps = 4;
+  [unroll] for (int s = 0; s < kSlices; ++s) {
+    float ang = (float)s * 3.14159265 / (float)kSlices;
+    float2 dir = float2(cos(ang), sin(ang));
+    float h = -1.0;
+    [unroll] for (int t = 1; t <= kSteps; ++t) {
+      float2 suv = saturate(uv + dir * g_inv_res * (g_ssao_radius * 0.35 * (float)t));
+      float sd = g_scene_depth.Sample(g_point, suv).r;
+      if (sd >= 0.9999) continue;
+      float3 sp = ReconstructWorld(suv, sd);
+      float3 v = sp - origin;
+      float dist = length(v);
+      float3 vd = v / max(dist, 1e-5);
+      float hz = dot(vd, normal);
+      h = max(h, hz);
+    }
+    ao += saturate(1.0 - max(h, 0.0));
+  }
+  return lerp(1.0, ao / (float)kSlices, saturate(g_ssao_intensity));
+}
+
+float3 Fxaa(float2 uv, float3 color) {
+  float3 nw = g_scene_color.Sample(g_linear, saturate(uv + float2(-1, -1) * g_inv_res)).rgb;
+  float3 ne = g_scene_color.Sample(g_linear, saturate(uv + float2(1, -1) * g_inv_res)).rgb;
+  float3 sw = g_scene_color.Sample(g_linear, saturate(uv + float2(-1, 1) * g_inv_res)).rgb;
+  float3 se = g_scene_color.Sample(g_linear, saturate(uv + float2(1, 1) * g_inv_res)).rgb;
+  float luma = Luma(color);
+  float luma_min = min(luma, min(min(Luma(nw), Luma(ne)), min(Luma(sw), Luma(se))));
+  float luma_max = max(luma, max(max(Luma(nw), Luma(ne)), max(Luma(sw), Luma(se))));
+  float range = luma_max - luma_min;
+  if (range < 0.0312) return color;
+  float3 blur = (nw + ne + sw + se) * 0.25;
+  return lerp(color, blur, saturate(range * 4.0));
+}
+
+float3 ApplyColorGrade(float3 color) {
+  float3 graded = saturate(color * 1.02 - 0.01);
+  graded = lerp(color, graded, 0.35);
+  return lerp(color, graded, saturate(g_color_grading_strength));
 }
 
 float SSAO(float2 uv, float3 origin, float3 normal) {
@@ -235,13 +285,16 @@ float4 PSMain(VSOut input) : SV_Target {
     normal = normalize(cross(p1 - origin, p2 - origin));
   }
 
-  if (g_enable_ssao > 0.5 && has_surface) {
+  if (g_enable_gtao > 0.5 && has_surface) {
+    color *= GTAO(uv, origin, normal);
+  } else if (g_enable_ssao > 0.5 && has_surface) {
     color *= SSAO(uv, origin, normal);
   }
 
   if (g_enable_ssr > 0.5 && has_surface) {
     float upright = saturate(abs(normal.y));
-    float ssr_w = max(g_ssr_intensity, 0.0) * (1.0 - upright * 0.85);
+    float rough_fade = saturate(1.0 - upright * g_ssr_roughness_fade);
+    float ssr_w = max(g_ssr_intensity, 0.0) * (1.0 - upright * 0.85) * rough_fade;
     if (ssr_w > 1e-3) {
       color += TraceSSR(uv, origin, normal) * ssr_w;
     }
@@ -291,6 +344,8 @@ float4 PSMain(VSOut input) : SV_Target {
       blend *= 0.15;
     }
     color = lerp(color, hist, saturate(blend));
+  } else if (g_enable_fxaa > 0.5) {
+    color = Fxaa(uv, color);
   } else if (g_enable_motion_blur > 0.5) {
     float3 hist = g_history.Sample(g_linear, uv).rgb;
     color = lerp(color, hist, saturate(g_motion_blur_strength));
@@ -314,7 +369,20 @@ float4 PSMain(VSOut input) : SV_Target {
     float dist = length(origin - g_eye);
     float fog_d = max(0.0, dist - max(g_fog_start, 0.0));
     float fog = 1.0 - exp(-max(g_fog_density, 0.0) * fog_d);
-    color = lerp(color, g_fog_color, saturate(fog));
+    float box_w = 1.0;
+    if (g_enable_fog_box > 0.5) {
+      float inside = (origin.x >= g_fog_box_min.x && origin.x <= g_fog_box_max.x &&
+                      origin.y >= g_fog_box_min.y && origin.y <= g_fog_box_max.y &&
+                      origin.z >= g_fog_box_min.z && origin.z <= g_fog_box_max.z)
+                         ? 1.0
+                         : 0.15;
+      box_w = inside;
+    }
+    color = lerp(color, g_fog_color, saturate(fog * box_w));
+  }
+
+  if (g_enable_color_grading > 0.5) {
+    color = ApplyColorGrade(color);
   }
 
   if (g_enable_tonemap > 0.5) {

@@ -151,6 +151,10 @@ struct ObjectGpu {
     float uv_scale;
     float use_instances;
     float pad;
+    float detail_blend;
+    float detail_uv_scale;
+    float triplanar;
+    float triplanar_sharpness;
 };
 
 struct MeshSlotGpu {
@@ -211,10 +215,16 @@ struct PostCB {
     float lens_distortion;
     float light_dirt_strength;
     float flare_strength;
-    float pad_c04_a;
-    float pad_c04_b;
+    float enable_gtao;
+    float enable_fxaa;
+    float enable_color_grading;
+    float color_grading_strength;
+    float fog_box_min[3];
+    float enable_fog_box;
+    float fog_box_max[3];
+    float ssr_roughness_fade;
 };
-static_assert(sizeof(PostCB) <= 512, "post CB exceeds upload buffer");
+static_assert(sizeof(PostCB) <= 768, "post CB exceeds upload buffer");
 constexpr VkDeviceSize kPostUbSize =
         (sizeof(PostCB) + kUniformAlign - 1) / kUniformAlign * kUniformAlign;
 

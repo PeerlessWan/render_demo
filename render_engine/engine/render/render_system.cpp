@@ -633,6 +633,14 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
       post.lens_distortion = effect_.lens_distortion;
       post.light_dirt_strength = effect_.light_dirt_strength;
       post.flare_strength = effect_.flare_strength;
+      post.enable_gtao = effect_.enable_gtao && want_ssao;
+      post.enable_fxaa = effect_.enable_fxaa && !want_taa;
+      post.enable_color_grading = effect_.enable_color_grading;
+      post.color_grading_strength = effect_.color_grading_strength;
+      post.enable_fog_box = effect_.enable_fog_box && want_fog;
+      post.fog_box_min = effect_.fog_box_min;
+      post.fog_box_max = effect_.fog_box_max;
+      post.ssr_roughness_fade = effect_.ssr_roughness_fade;
       if (auto st = device.ResolvePostEffects(post); !st) {
         LogError(st.message());
       }

@@ -39,6 +39,21 @@ struct ParticleAttractor {
   bool enabled = false;
 };
 
+// W23: triangle-mesh collision (CPU) — AABB of triangles + plane bounce per face.
+struct ParticleMeshCollision {
+  std::vector<Vec3> positions;
+  std::vector<std::uint32_t> indices;  // triangles
+  float bounce = 0.25f;
+  bool enabled = false;
+};
+
+// W23: sub-emitter tree — child rate when parent dies (depth capped).
+struct ParticleSubEmitTree {
+  ParticleSubEmit child{};
+  int max_depth = 2;
+  bool enabled = false;
+};
+
 class GpuParticleSystem {
  public:
   void Configure(const Vec3& origin, float rate, float lifetime, std::uint32_t max_particles = 256);
@@ -53,6 +68,8 @@ class GpuParticleSystem {
   void set_kill_box(const ParticleKillBox& box) { kill_box_ = box; }
   void set_sub_emit(const ParticleSubEmit& s) { sub_emit_ = s; }
   void set_attractor(const ParticleAttractor& a) { attractor_ = a; }
+  void set_mesh_collision(const ParticleMeshCollision& m) { mesh_collision_ = m; }
+  void set_sub_emit_tree(const ParticleSubEmitTree& t) { sub_tree_ = t; }
   void set_trail_enabled(bool on);
   [[nodiscard]] TrailRibbon& trail() { return trail_; }
   [[nodiscard]] const TrailRibbon& trail() const { return trail_; }
@@ -74,6 +91,8 @@ class GpuParticleSystem {
   ParticleKillBox kill_box_{};
   ParticleSubEmit sub_emit_{};
   ParticleAttractor attractor_{};
+  ParticleMeshCollision mesh_collision_{};
+  ParticleSubEmitTree sub_tree_{};
   float sub_accum_ = 0.f;
   bool trail_enabled_ = false;
   TrailRibbon trail_{};
@@ -84,6 +103,7 @@ class GpuParticleSystem {
   void IntegrateCpu(float dt);
   void ApplyAttractor(float dt);
   void ApplyCollisionAndKill();
+  void ApplyMeshCollision();
   void CullDead();
   void FillIndirect();
   void UpdateTrail();

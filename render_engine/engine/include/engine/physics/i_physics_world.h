@@ -67,6 +67,48 @@ class IPhysicsWorld {
   [[nodiscard]] virtual int SoftBodyGetIndexCount(int /*id*/) const { return 0; }
   virtual bool SoftBodyGetIndices(int /*id*/, std::vector<std::uint32_t>& /*out*/) { return false; }
 
+  // W23 / ADR 0046: joints / ragdoll / vehicle / destruction (defaults SKIP).
+  enum class JointType : std::uint8_t { Hinge = 0, BallSocket = 1 };
+  struct JointDesc {
+    int body_a = -1;
+    int body_b = -1;
+    Vec3 anchor_a{};
+    Vec3 anchor_b{};
+    Vec3 axis{0, 1, 0};
+    JointType type = JointType::Hinge;
+  };
+  virtual int CreateJoint(const JointDesc& /*desc*/) { return -1; }
+  virtual bool DestroyJoint(int /*joint_id*/) { return false; }
+
+  struct RagdollBoneDesc {
+    int body_id = -1;
+    int parent_body_id = -1;  // -1 = root
+    JointType joint = JointType::BallSocket;
+  };
+  // Builds ball/hinge joints between bone bodies; returns joint count created.
+  virtual int CreateRagdoll(const std::vector<RagdollBoneDesc>& /*bones*/) { return 0; }
+
+  struct VehicleDesc {
+    Vec3 position{};
+    Vec3 chassis_half{1.1f, 0.35f, 2.2f};
+    float mass = 1200.f;
+    float wheel_radius = 0.35f;
+    float suspension = 2.5f;
+  };
+  // Returns chassis body id; -1 if unsupported.
+  virtual int CreateVehicle(const VehicleDesc& /*desc*/) { return -1; }
+  virtual bool SetVehicleInput(int /*vehicle_id*/, float /*throttle*/, float /*steer*/) {
+    return false;
+  }
+
+  struct BreakableDesc {
+    int body_id = -1;
+    int fragment_count = 4;
+    float impulse = 4.f;
+  };
+  // Replaces body with fragment boxes; returns fragment count (0 = SKIP).
+  virtual int ShatterBody(const BreakableDesc& /*desc*/) { return 0; }
+
   // Mega-W8 buoyancy: apply linear impulse (Δv = impulse / mass). Default false.
   virtual bool ApplyImpulse(int /*body_id*/, const Vec3& /*impulse*/) { return false; }
 

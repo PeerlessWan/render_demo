@@ -539,7 +539,106 @@ class JoltWorld final : public IPhysicsWorld {
     return !out.empty();
   }
 
+  int CreateJoint(const JointDesc& desc) override {
+    if (desc.body_a < 0 || desc.body_b < 0 ||
+        desc.body_a >= static_cast<int>(body_ids_.size()) ||
+        desc.body_b >= static_cast<int>(body_ids_.size())) {
+      return -1;
+    }
+    // Teaching stand-in: record joint without full Jolt constraint API surface.
+    joints_.push_back(desc);
+    return static_cast<int>(joints_.size() - 1);
+  }
+
+  bool DestroyJoint(int joint_id) override {
+    if (joint_id < 0 || joint_id >= static_cast<int>(joints_.size())) {
+      return false;
+    }
+    joints_[static_cast<std::size_t>(joint_id)].body_a = -1;
+    return true;
+  }
+
+  int CreateRagdoll(const std::vector<RagdollBoneDesc>& bones) override {
+    int created = 0;
+    for (const auto& b : bones) {
+      if (b.body_id < 0 || b.parent_body_id < 0) {
+        continue;
+      }
+      JointDesc j;
+      j.body_a = b.parent_body_id;
+      j.body_b = b.body_id;
+      j.type = b.joint;
+      j.anchor_a = body_position(b.parent_body_id);
+      j.anchor_b = body_position(b.body_id);
+      if (CreateJoint(j) >= 0) {
+        ++created;
+      }
+    }
+    return created;
+  }
+
+  int CreateVehicle(const VehicleDesc& desc) override {
+    RigidBodyDesc chassis;
+    chassis.position = desc.position;
+    chassis.half_extents = desc.chassis_half;
+    chassis.mass = desc.mass > 0.f ? desc.mass : 1200.f;
+    const int id = CreateBox(chassis);
+    if (id < 0) {
+      return -1;
+    }
+    vehicles_.push_back({id, desc.wheel_radius, desc.suspension, 0.f, 0.f});
+    return id;
+  }
+
+  bool SetVehicleInput(int vehicle_id, float throttle, float steer) override {
+    for (auto& v : vehicles_) {
+      if (v.chassis_id == vehicle_id) {
+        v.throttle = throttle;
+        v.steer = steer;
+        // Simple impulse drive along local +Z with lateral steer nudge.
+        Vec3 drive{steer * 200.f, 0.f, throttle * 800.f};
+        ApplyImpulse(vehicle_id, drive);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  int ShatterBody(const BreakableDesc& desc) override {
+    if (desc.body_id < 0 || desc.body_id >= static_cast<int>(body_ids_.size())) {
+      return 0;
+    }
+    const Vec3 p = body_position(desc.body_id);
+    const Vec3 h = body_half_extents(desc.body_id);
+    const int n = std::clamp(desc.fragment_count, 2, 16);
+    int made = 0;
+    for (int i = 0; i < n; ++i) {
+      RigidBodyDesc frag;
+      frag.position = {p.x + ((i & 1) ? h.x * 0.35f : -h.x * 0.35f),
+                       p.y + h.y * 0.2f,
+                       p.z + ((i & 2) ? h.z * 0.35f : -h.z * 0.35f)};
+      frag.half_extents = {h.x * 0.35f, h.y * 0.35f, h.z * 0.35f};
+      frag.mass = 1.f;
+      const int fid = CreateBox(frag);
+      if (fid < 0) {
+        continue;
+      }
+      Vec3 imp{(frag.position.x - p.x) * desc.impulse, desc.impulse * 0.5f,
+               (frag.position.z - p.z) * desc.impulse};
+      ApplyImpulse(fid, imp);
+      ++made;
+    }
+    return made;
+  }
+
  private:
+  struct VehicleState {
+    int chassis_id = -1;
+    float wheel_radius = 0.35f;
+    float suspension = 2.5f;
+    float throttle = 0.f;
+    float steer = 0.f;
+  };
   BPLayerInterfaceImpl broadphase_layers_;
   ObjectVsBroadPhaseLayerFilterImpl object_vs_broadphase_;
   ObjectLayerPairFilterImpl object_vs_object_;
@@ -552,6 +651,8 @@ class JoltWorld final : public IPhysicsWorld {
   std::vector<std::vector<std::uint32_t>> soft_body_indices_;
   JPH::BodyID floor_id_;
   std::unique_ptr<ContactCollector> contacts_;
+  std::vector<JointDesc> joints_;
+  std::vector<VehicleState> vehicles_;
 };
 
 }  // namespace

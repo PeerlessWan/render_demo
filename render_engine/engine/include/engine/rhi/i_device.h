@@ -101,10 +101,20 @@ struct PostResolveDesc {
   float lens_distortion = 0.f;
   float light_dirt_strength = 0.f;
   float flare_strength = 0.f;
+  // W23 / ADR 0046 post deepen
+  bool enable_gtao = false;           // when set with SSAO, shader prefers GTAO
+  bool enable_fxaa = false;           // TAA-off fallback
+  bool enable_color_grading = false;  // 3D LUT (identity if no LUT bound)
+  float color_grading_strength = 1.f;
+  bool enable_fog_box = false;
+  Vec3 fog_box_min{0, 0, 0};
+  Vec3 fog_box_max{0, 0, 0};
+  float ssr_roughness_fade = 0.65f;  // higher = stronger fade with glancing/rough
 
   [[nodiscard]] bool NeedsResolve() const {
-    return enable_ssao || enable_taa || enable_tonemap || enable_auto_exposure || enable_bloom ||
-           enable_fog || enable_ssr || enable_dof || enable_motion_blur ||
+    return enable_ssao || enable_gtao || enable_taa || enable_fxaa || enable_tonemap ||
+           enable_auto_exposure || enable_bloom || enable_fog || enable_ssr || enable_dof ||
+           enable_motion_blur || enable_color_grading ||
            (exposure > 1.0001f || exposure < 0.9999f) || vignette_strength > 1e-4f ||
            film_grain_strength > 1e-4f || chromatic_aberration > 1e-4f ||
            lens_distortion > 1e-4f || light_dirt_strength > 1e-4f || flare_strength > 1e-4f;
@@ -199,6 +209,11 @@ struct LitDrawItem {
   int mesh_slot = 0;   // 0 = unit cube; custom via UploadLitGeometry
   int tex_slot = 0;    // 0 = primary albedo/ORM; 1 = secondary
   float uv_scale = 1.f;
+  // W23: detail / triplanar (albedo_map2 used as detail when detail_blend>0)
+  float detail_blend = 0.f;
+  float detail_uv_scale = 4.f;
+  float triplanar = 0.f;  // >0.5 enables
+  float triplanar_sharpness = 4.f;
 };
 
 struct GpuPassTiming {

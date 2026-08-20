@@ -56,4 +56,22 @@ struct PbrMaterial {
   return m.uv_scale > 0.f ? m.uv_scale : 1.f;
 }
 
+// W23: pack detail/triplanar into LitDrawItem-compatible floats.
+[[nodiscard]] inline float GpuDetailBlend(const PbrMaterial& m) {
+  return m.detail_blend > 0.f && !m.detail_albedo_tex.empty() ? m.detail_blend : 0.f;
+}
+[[nodiscard]] inline float GpuDetailUvScale(const PbrMaterial& m) {
+  return m.detail_uv_scale > 0.f ? m.detail_uv_scale : 4.f;
+}
+[[nodiscard]] inline float GpuTriplanar(const PbrMaterial& m) { return m.triplanar ? 1.f : 0.f; }
+[[nodiscard]] inline float GpuTriplanarSharpness(const PbrMaterial& m) {
+  return m.triplanar_sharpness > 0.f ? m.triplanar_sharpness : 4.f;
+}
+
+// Minimal SSS / anisotropy opt-in (CPU fields for future lit wiring).
+struct AdvancedShading {
+  float subsurface = 0.f;     // [0,1]
+  float anisotropy = 0.f;     // [-1,1]
+};
+
 }  // namespace engine::material

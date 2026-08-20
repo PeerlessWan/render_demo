@@ -72,6 +72,10 @@ cbuffer ObjectCB : register(b1) {
   float g_uv_scale;
   float g_use_instances;
   float g_pad;
+  float g_detail_blend;
+  float g_detail_uv_scale;
+  float g_triplanar;
+  float g_triplanar_sharpness;
 };
 
 StructuredBuffer<float4x4> g_instances : register(t9);
@@ -445,11 +449,6 @@ float4 PSMain(VSOutput input) : SV_Target {
   if (g_use_albedo > 0.5) {
 #if defined(__SHADER_TARGET_MAJOR) && (__SHADER_TARGET_MAJOR > 6 || \
     (__SHADER_TARGET_MAJOR == 6 && __SHADER_TARGET_MINOR >= 6))
-    // Optional bindless: g_pad >= 0 → shadow_srv_heap slot (must match tex_slot:
-    //   tex_slot==0 → heap 1 / t1; tex_slot>0 → heap 4 / t4).
-    // Default hot path keeps g_pad=-1 (classic t1/t4) so golden/C4 stay stable.
-    // Feature "bindless_hot_path" (requires capability "bindless", not gpu_headless)
-    // is the only supported way to set pad>=0 on opaque draws.
     if (g_pad >= 0.0) {
       Texture2D bindless_albedo = ResourceDescriptorHeap[(uint)g_pad];
       base *= bindless_albedo.Sample(g_linear_samp, uv).rgb;
@@ -460,6 +459,22 @@ float4 PSMain(VSOutput input) : SV_Target {
     } else {
       base *= g_albedo_map.Sample(g_linear_samp, uv).rgb;
     }
+  }
+  // W23: triplanar blend (world-space) + detail layer from albedo_map2
+  if (g_triplanar > 0.5 && g_use_albedo > 0.5) {
+    float3 wp = abs(input.world_pos);
+    float3 bw = pow(abs(n), max(g_triplanar_sharpness, 1.0));
+    bw /= max(bw.x + bw.y + bw.z, 1e-4);
+    float3 tx = g_albedo_map.Sample(g_linear_samp, input.world_pos.yz * g_uv_scale).rgb;
+    float3 ty = g_albedo_map.Sample(g_linear_samp, input.world_pos.xz * g_uv_scale).rgb;
+    float3 tz = g_albedo_map.Sample(g_linear_samp, input.world_pos.xy * g_uv_scale).rgb;
+    base = tx * bw.x + ty * bw.y + tz * bw.z;
+    (void)wp;
+  }
+  if (g_detail_blend > 1e-4 && g_use_albedo > 0.5) {
+    float2 duv = uv * max(g_detail_uv_scale, 1.0);
+    float3 detail = g_albedo_map2.Sample(g_linear_samp, duv).rgb;
+    base = lerp(base, base * detail, saturate(g_detail_blend));
   }
 
   float metallic = g_metallic;

@@ -207,6 +207,32 @@ if(ENGINE_WITH_NGX)
   message(STATUS "ENGINE_WITH_NGX=ON (ADR 0044; Upscale dispatches only with real NGX)")
 endif()
 
+# RTXGI / true DDGI optional SDK (ADR 0046). No SDK → CascadeGi default; honest SKIP.
+set(ENGINE_RTXGI_DIR "${CMAKE_SOURCE_DIR}/third_party/rtxgi" CACHE PATH "NVIDIA RTXGI SDK root")
+set(_ENGINE_RTXGI_HEADER_FOUND OFF)
+foreach(_rtxgi_probe IN ITEMS
+    "${ENGINE_RTXGI_DIR}/include/ddgi/DDGIVolume.h"
+    "${ENGINE_RTXGI_DIR}/include/rtxgi/ddgi/DDGIVolume.h"
+    "${ENGINE_RTXGI_DIR}/ddgi/DDGIVolume.h"
+    "${ENGINE_RTXGI_DIR}/include/RTXGI.h"
+    "${ENGINE_RTXGI_DIR}/RTXGI.h"
+    "${ENGINE_RTXGI_DIR}/include/rtxgi.h"
+    "${ENGINE_RTXGI_DIR}/rtxgi.h")
+  if(EXISTS "${_rtxgi_probe}")
+    set(_ENGINE_RTXGI_HEADER_FOUND ON)
+    break()
+  endif()
+endforeach()
+if(_ENGINE_RTXGI_HEADER_FOUND)
+  set(ENGINE_WITH_RTXGI_DEFAULT ON)
+else()
+  set(ENGINE_WITH_RTXGI_DEFAULT OFF)
+endif()
+option(ENGINE_WITH_RTXGI "Optional NVIDIA RTXGI / true DDGI (ADR 0046)" ${ENGINE_WITH_RTXGI_DEFAULT})
+if(ENGINE_WITH_RTXGI)
+  message(STATUS "ENGINE_WITH_RTXGI=ON (ADR 0046; TryCreateRtxgiVolume only with real RTXGI)")
+endif()
+
 if(MSVC)
   add_compile_options(/W4 /permissive- /Zc:__cplusplus /utf-8)
 else()

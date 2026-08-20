@@ -71,12 +71,21 @@ Status TryBuildCubeBlasTlasAndDispatchRays(
 // Does not run a fullscreen production RT frame (no SBT/raygen product path).
 [[nodiscard]] Status TryVkTraceRaysDemoStub();
 
-    // W17/W20 ADR 0041/0043: half-res soft-shadow blur grid; not fullscreen RT.
+// W17/W20 ADR 0041/0043: half-res soft-shadow blur grid; not fullscreen RT.
 // Fills mean factor; optional out_grid (w*h floats in [0,1]) for UploadSoftShadowMask.
 [[nodiscard]] Status TryHalfResSoftShadowCompose(float& out_shadow_factor);
 [[nodiscard]] Status TryHalfResSoftShadowCompose(float& out_shadow_factor,
-                                                                                                 std::vector<float>& out_grid, int& out_w,
-                                                                                                 int& out_h);
+                                                 std::vector<float>& out_grid, int& out_w,
+                                                 int& out_h);
+
+// W23 / ADR 0046: productize one step — prefer DXR overlay into soft-shadow mask grid.
+// Falls back to TryHalfResSoftShadowCompose when DXR unavailable (honest).
+[[nodiscard]] Status TryProductSoftShadowMask(std::vector<float>& out_grid, int& out_w, int& out_h);
+
+// W23: half-res RT reflection stand-in — fills RGBA8 buffer (w*h*4) from DXR demo when
+// enable_reflections; otherwise Unavailable SKIP (SSR remains the raster product path).
+[[nodiscard]] Status TryHalfResRtReflectionCompose(std::vector<std::uint8_t>& out_rgba, int& out_w,
+                                                   int& out_h);
 
 // Alias (W16 name).
 [[nodiscard]] inline Status TrySoftShadowCompose(float& out_shadow_factor) {

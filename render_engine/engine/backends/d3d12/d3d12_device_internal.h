@@ -147,7 +147,7 @@ class D3D12Device final : public IDevice {
     static constexpr UINT kMaxLitDraws = 64;
     static constexpr UINT kShadowVpSlots = 16;  // 4 cascades + local tiles
     static constexpr UINT64 kFrameCbBytes = 16384;  // ≥ FrameData (32 lights + 8×4×4 clusters)
-    static constexpr UINT64 kPostCbBytes = 512;
+    static constexpr UINT64 kPostCbBytes = 768;  // W23: fog box + GTAO/FXAA/LUT knobs
 
     UINT64 FrameCbOffset() const;
 

@@ -1,7 +1,7 @@
 # 与主流引擎能力对标（自评）
 
 > **性质：** 工程观感自评，不是跑分或功能勾选表。  
-> **基准日期：** 2026-08-20（**W22** [ADR 0045](learn/adr/0045-w22-godot-kernel-100.md)；看板 [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)）。  
+> **基准日期：** 2026-08-20（**W23** [ADR 0046](learn/adr/0046-w23-nanite-ddgi-gaps.md)；看板 [DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)）。  
 > **本引擎定位：** 桌面 **渲染中台**（Win D3D12+Vulkan），**不是** 全能游戏引擎。
 
 ## 1. 两把尺子
@@ -15,42 +15,42 @@
 
 | 参照 | 当渲染内核 | 当完整游戏引擎 | 读法 |
 |---|---:|---:|---|
-| **Godot 4** | **约 100%** | **约 35–45%** | 桌面 Forward+ 产品观感口径；非整引擎 |
-| **Unity** | **约 55–65%** | **约 20–30%** | 内核抬一截；整引擎仍扣 Editor/C# |
-| **UE5** | **约 30–40%** | **约 10–20%** | 仍被 Lumen/Nanite/TSR 拉开 |
+| **Godot 4** | **约 100%** | **约 35–45%** | 桌面 Forward+；W23 为质量加深 |
+| **Unity** | **约 60–70%** | **约 22–32%** | VirtualGeometry / Post / Phys 抬一档 |
+| **UE5** | **约 35–45%** | **约 12–22%** | Nanite-like + 可选 RTXGI；仍无 Lumen/FG |
 
-**相对 W21**
+**相对 W22**
 
-| 参照 | 渲染内核 W21 → W22 |
+| 参照 | 渲染内核 W22 → W23 |
 |---|---|
-| Godot 4 | ~80–85% → **~100%** |
-| Unity | ~50–60% → **~55–65%** |
-| UE5 | ~28–38% → **~30–40%** |
+| Godot 4 | ~100% → **~100%**（质量） |
+| Unity | ~55–65% → **~60–70%** |
+| UE5 | ~30–40% → **~35–45%** |
 
 ## 3. 分域粗表（渲染向）
 
-| 功能域 | vs Godot | vs Unity | vs UE5 | 本引擎要点（W22） |
+| 功能域 | vs Godot | vs Unity | vs UE5 | 本引擎要点（W23） |
 |---|---:|---:|---:|---|
 | 基础 3D 光栅 | 85–100% | 65–75% | 50–60% | Forward+ / CSM / IBL |
-| 后处理 | 80–95% | 60–70% | 40–50% | 全套 + Weather/雾盒 |
-| 动态 GI | 85–100% | 40–50% | 20–30% | CascadeGi SDF+漏光抑制；非 Lumen/真 DDGI |
-| 光追 | 35–50% | 25–35% | 15–25% | DXR 示范 + 软影 |
-| GPU Driven | 55–70% | 40–50% | 20–30% | Cull/Indirect；无 Nanite |
-| 超分 | 70–90% | 25–40% | 15–25% | DLSS→FSR→bilinear；**XeSS 不做**；无 SDK 诚实 |
-| 材质 / 粒子 | 80–95% | 50–60% | 30–40% | Standard 子集 + detail/triplanar；吸引子/拖尾 |
-| 2D | 85–100% | 55–65% | 45–55% | Light2D + Occluder 阴影 + CanvasModulate |
-| 物理 | 55–65% | 45–55% | 35–45% | Jolt |
+| 后处理 | 90–100% | 65–75% | 45–55% | GTAO / FXAA / LUT / fog box |
+| 动态 GI | 85–100% | 45–55% | 25–35% | CascadeGi 默认；可选 RTXGI |
+| 光追 | 45–60% | 30–40% | 18–28% | 产品软影/半分辨率反射一步 |
+| GPU Driven | 70–85% | 50–60% | 30–40% | **VirtualGeometry（Nanite-like）** |
+| 超分 | 70–90% | 25–40% | 15–25% | DLSS→FSR→bilinear；XeSS 不做 |
+| 材质 / 粒子 | 85–100% | 55–65% | 35–45% | detail/triplanar GPU；mesh 碰撞 |
+| 2D | 85–100% | 55–65% | 45–55% | Light2D + Occluder |
+| 物理 | 65–75% | 50–60% | 40–50% | Joints / Vehicle / Shatter |
 | 音频 | 20–30% | 15–25% | 10–20% | 播控 only |
 | 编辑器/脚本 | 15–25% / ~0% | 低 | 低 | 外挂 |
 | 网络/复制 | 20–30% | 12–22% | 5–15% | 无状态同步 |
 | 平台 | 30–40% | 25–35% | 20–30% | Win+Linux；无 mac |
 | 双后端纪律 | 85–100% | 70–90% | 60–80% | VULKAN_PARITY |
 
-## 4. W22 抬分 / 仍外置
+## 4. W23 抬分 / 仍外置
 
-**抬分：** CascadeGi 隔帧远 cascade + 漏光抑制；2D 遮挡阴影；材质 detail；粒子吸引子/trail；雾盒；DLSS+FSR 设备绑定；Low 档弱端。
+**抬分：** VirtualGeometry；RTXGI Bind；NGX+RTXGI 一并安装脚本；GTAO/FXAA/LUT/fog box；RT 产品软影；lit detail/triplanar；粒子 mesh 碰撞；Joints/Vehicle/Shatter。
 
-**仍外置：** Nanite / 真 DDGI / Lumen / FG / XeSS / mac / 引擎内脚本·复制 / 编辑器级 SDFGI 商标复刻。
+**仍外置：** Lumen / Frame Generation / XeSS / mac / C17 / 引擎内脚本·复制 / 宣称 UE Nanite。
 
 ## 5. 修订记录
 
@@ -58,4 +58,5 @@
 |---|---|---|
 | 2026-08-20 | W20 | Godot 内核 ~60–70% |
 | 2026-08-20 | W21 | ~80–85% |
-| 2026-08-20 | **W22** | Godot 渲染内核 **约 100%**（ADR 0045） |
+| 2026-08-20 | W22 | Godot 渲染内核 **约 100%**（ADR 0045） |
+| 2026-08-20 | **W23** | 缺口 + Nanite-like + 真 DDGI（ADR 0046） |

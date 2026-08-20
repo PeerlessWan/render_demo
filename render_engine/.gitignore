@@ -22,6 +22,12 @@ compile_commands.json
 *.exp
 *.log
 
+# NVIDIA optional SDKs (ADR 0046): keep README_ENGINE.txt only; no proprietary bins in git.
+third_party/ngx/**
+!third_party/ngx/README_ENGINE.txt
+third_party/rtxgi/**
+!third_party/rtxgi/README_ENGINE.txt
+
 # OS
 Thumbs.db
 Desktop.ini

@@ -33,13 +33,13 @@
 
 ## 3. 补齐 M25 后仍保留的引擎缺陷（摘要）
 
-详见 [POSITIONING.md](POSITIONING.md) §2。下列弱项经 **W12–W20**（[ADR 0039](learn/adr/0039-waterline-productization-a-c.md)–[0043](learn/adr/0043-w20-product-deepen.md)）已关门并**封板**；完成后仍**不**宣称 UE/Nanite/真 DDGI/引擎内复制：
+详见 [POSITIONING.md](POSITIONING.md) §2。下列弱项经 **W12–W23**（[ADR 0039](learn/adr/0039-waterline-productization-a-c.md)–[0046](learn/adr/0046-w23-nanite-ddgi-gaps.md)）已推进；完成后仍**不**宣称 UE Nanite 商标 / Lumen / Frame Generation / 引擎内复制：
 
 | 弱项 | 收口状态 | 仍不宣称 |
 |---|---|---|
-| GI / RT | **W20**：DDGI-lite atlas→GPU+lit；软影 half-res→FrameCB（非全屏 RT） | Lumen / RTXGI |
-| 超分 | 诚实链；可选 NGX/FFX（ADR 0044）；无 SDK → `builtin_bilinear` | Frame Generation |
-| VT / GPU Driven | **W20**：物理页 atlas + lit opt-in；Cull+Indirect；meshoptimizer Prefer | Nanite / 全材质默认 VT |
+| GI / RT | **W23**：CascadeGi 默认；可选 RTXGI Bind；产品软影/半分辨率反射缓冲 | Lumen / 全屏 RT 产品路径 |
+| 超分 | 诚实链；可选 NGX/FFX（ADR 0044/0046 一并安装脚本）；无 SDK → `builtin_bilinear` | Frame Generation |
+| VT / GPU Driven | **W23**：VirtualGeometry（Nanite-like）层次 LOD+驻留+Indirect | UE Nanite 商标 / 全材质默认 VT |
 | GPU 粒子 | D3D12 CS；**W17** VK `gpu-cs-vk` SSBO dispatch（缺 SPIR-V → cpu-fallback） | Niagara |
 | 角色 | mesh0 全 prim；蒙皮多 draw（Sandbox 多 slot） | 服装/完整 IK |
 | 地形水植被 | ChunkStream / FFT 海 / 植被 GPU instance（W14） | 开放世界全家桶 |
@@ -48,7 +48,7 @@
 产品水位（非忘排期、本计划也不做）：
 
 - **引擎内**无编辑器与脚本（外挂见 [HOSTING.md](HOSTING.md)、[LAYERS](../../docs/LAYERS.md)、`game_kit/` / `genre_kits/` / `games/` / `editor/`）；工具侧仅最小 CLI + 可选 C20  
-- 开放世界 **无 Nanite**；真 NVIDIA DDGI 外置  
+- 开放世界 **VirtualGeometry（Nanite-like）**；真 NVIDIA DDGI = 可选 RTXGI（无 SDK SKIP）  
 - 音频/物理/网络能力边界；非 ECS；双后端与硬解视频约束；无资产生态  
 
 这些是**产品水位**，不是「忘了排期」。

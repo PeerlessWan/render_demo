@@ -356,9 +356,18 @@ add_library(engine_gi STATIC
   gi/reflection_probe.cpp
   gi/scene_capture.cpp
   gi/lightmap.cpp
+  gi/rtxgi.cpp
 )
 target_include_directories(engine_gi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_gi PUBLIC engine_core)
+if(ENGINE_WITH_RTXGI)
+  target_compile_definitions(engine_gi PUBLIC ENGINE_WITH_RTXGI=1)
+  if(EXISTS "${ENGINE_RTXGI_DIR}")
+    target_include_directories(engine_gi PRIVATE "${ENGINE_RTXGI_DIR}" "${ENGINE_RTXGI_DIR}/include")
+  endif()
+else()
+  target_compile_definitions(engine_gi PUBLIC ENGINE_WITH_RTXGI=0)
+endif()
 
 add_library(engine_terrain STATIC
   terrain/heightmap.cpp
@@ -417,6 +426,7 @@ add_library(engine_gpu_driven STATIC
   gpu_driven/path.cpp
   gpu_driven/indirect_draw.cpp
   gpu_driven/meshlet.cpp
+  gpu_driven/virtual_geometry.cpp
 )
 target_include_directories(engine_gpu_driven PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_gpu_driven PUBLIC engine_core engine_rhi)

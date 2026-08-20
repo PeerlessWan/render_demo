@@ -583,6 +583,10 @@ Status D3D12Device::DrawLitCubesWithPso(std::span<const LitDrawItem> items, ID3D
         float uv_scale;
         float use_instances;
         float pad;
+        float detail_blend;
+        float detail_uv_scale;
+        float triplanar;
+        float triplanar_sharpness;
     };
 
     if (auto* ib = CurrentInstanceBuf()) {
@@ -613,6 +617,11 @@ Status D3D12Device::DrawLitCubesWithPso(std::span<const LitDrawItem> items, ID3D
         // Default classic (pad=-1). Feature bindless_hot_path + capable + !headless →
         // ResourceDescriptorHeap[tex_slot?4:1]. Hardcoded pad=1 previously drifted golden.
         od.pad = BindlessAlbedoHeapPad(od.tex_slot);
+        od.detail_blend = items[i].detail_blend;
+        od.detail_uv_scale = items[i].detail_uv_scale > 0.f ? items[i].detail_uv_scale : 4.f;
+        od.triplanar = items[i].triplanar;
+        od.triplanar_sharpness =
+                items[i].triplanar_sharpness > 0.f ? items[i].triplanar_sharpness : 4.f;
 
         const auto offset = ObjectCbOffset(i);
         void* ptr = nullptr;
@@ -727,6 +736,10 @@ Status D3D12Device::DrawLitInstanced(const LitDrawItem& prototype, std::uint32_t
         float uv_scale;
         float use_instances;
         float pad;
+        float detail_blend;
+        float detail_uv_scale;
+        float triplanar;
+        float triplanar_sharpness;
     } od{};
     std::memcpy(od.world, Mat4::Identity().m.data(), sizeof(od.world));
     od.color[0] = prototype.color.r;
@@ -742,6 +755,11 @@ Status D3D12Device::DrawLitInstanced(const LitDrawItem& prototype, std::uint32_t
     od.use_instances = 1.f;
     // Instanced path stays classic; bindless_hot_path is opaque DrawLit only.
     od.pad = -1.f;
+    od.detail_blend = prototype.detail_blend;
+    od.detail_uv_scale = prototype.detail_uv_scale > 0.f ? prototype.detail_uv_scale : 4.f;
+    od.triplanar = prototype.triplanar;
+    od.triplanar_sharpness =
+            prototype.triplanar_sharpness > 0.f ? prototype.triplanar_sharpness : 4.f;
 
     const auto offset = ObjectCbOffset(kMaxLitDraws - 1);  // dedicated late/instanced slot
     void* ptr = nullptr;

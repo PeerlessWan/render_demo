@@ -211,10 +211,17 @@ Status D3D12Device::ResolvePostEffects(const PostResolveDesc& desc) {
         float lens_distortion;
         float light_dirt_strength;
         float flare_strength;
-        float pad_c04_a;
-        float pad_c04_b;
+        // W23
+        float enable_gtao;
+        float enable_fxaa;
+        float enable_color_grading;
+        float color_grading_strength;
+        float fog_box_min[3];
+        float enable_fog_box;
+        float fog_box_max[3];
+        float ssr_roughness_fade;
     } cb{};
-    static_assert(sizeof(PostCB) <= 512, "post CB exceeds upload buffer");
+    static_assert(sizeof(PostCB) <= 768, "post CB exceeds upload buffer");
     cb.inv_res[0] = 1.f / static_cast<float>((std::max)(1u, width_));
     cb.inv_res[1] = 1.f / static_cast<float>((std::max)(1u, height_));
     cb.enable_ssao = desc.enable_ssao ? 1.f : 0.f;
@@ -259,6 +266,18 @@ Status D3D12Device::ResolvePostEffects(const PostResolveDesc& desc) {
     cb.lens_distortion = desc.lens_distortion;
     cb.light_dirt_strength = desc.light_dirt_strength;
     cb.flare_strength = desc.flare_strength;
+    cb.enable_gtao = desc.enable_gtao ? 1.f : 0.f;
+    cb.enable_fxaa = desc.enable_fxaa ? 1.f : 0.f;
+    cb.enable_color_grading = desc.enable_color_grading ? 1.f : 0.f;
+    cb.color_grading_strength = desc.color_grading_strength;
+    cb.enable_fog_box = desc.enable_fog_box ? 1.f : 0.f;
+    cb.fog_box_min[0] = desc.fog_box_min.x;
+    cb.fog_box_min[1] = desc.fog_box_min.y;
+    cb.fog_box_min[2] = desc.fog_box_min.z;
+    cb.fog_box_max[0] = desc.fog_box_max.x;
+    cb.fog_box_max[1] = desc.fog_box_max.y;
+    cb.fog_box_max[2] = desc.fog_box_max.z;
+    cb.ssr_roughness_fade = desc.ssr_roughness_fade;
 
     void* mapped = nullptr;
     if (FAILED(post_cb_->Map(0, nullptr, &mapped))) {

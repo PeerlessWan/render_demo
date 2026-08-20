@@ -52,7 +52,8 @@
 |---|---|---|---|
 | **物理** | [Jolt Physics](https://github.com/jrouwe/JoltPhysics) | 刚体、查询、角色控制器；薄 SoftBody 见 C22 | PhysX 可替代；见 ADR 0015 / **0029** |
 | **调试 UI** | [Dear ImGui](https://github.com/ocornut/imgui) | 控制台、Profiler、工具面板 | D3D12 + Vulkan backend |
-| **超分（NVIDIA）** | NVIDIA **DLSS / Streamline（NGX）** | `IUpscaler`（可选，ADR 0044） | 许可与再分发单独合规；无 SDK → bilinear |
+| **超分（NVIDIA）** | NVIDIA **DLSS / Streamline（NGX）** | `IUpscaler`（可选，ADR 0044/0046） | `tools/fetch_nvidia_ngx_rtxgi.ps1` → `third_party/ngx`；不可随意再分发；无 SDK → bilinear |
+| **真 DDGI（NVIDIA）** | NVIDIA **RTXGI** | `TryCreateRtxgiVolume`（可选，ADR 0046） | 同脚本 → `third_party/rtxgi`；无 SDK → CascadeGi；禁止假名 |
 | **着色器编译** | **DirectXShaderCompiler (DXC)** | HLSL → DXIL；HLSL → SPIR-V（Vulkan） | Windows SDK / NuGet / 官方包；构建时调用 |
 | **Vulkan** | **Vulkan SDK**（LunarG） | Device/Swapchain/校验层 | M17+；Linux 必选 |
 | **视频硬解** | **D3D12VA**（Win+D3D12）；**Vulkan Video**（Win/Linux+Vulkan） | 与当前渲染 Device 绑定 | 跟随 RHI；**无软解、不跨 API** |
@@ -143,7 +144,8 @@
 | cgltf / fastgltf | TBD | TBD | TBD | |
 | stb / dr_libs | **stb_image**（`third_party/stb/stb_image.h`） | 公有域/MIT | 头文件 | 经 `IImageLoader`；Sample 不直链 |
 | FSR | TBD | AMD 许可 | TBD | 遵守 NOTICE |
-| DLSS / Streamline | TBD | NVIDIA 协议 | 通常动态 | **不可随意再分发**；随安装包条款 |
+| DLSS / Streamline | TBD（本机 drop-in） | NVIDIA 协议 | 通常动态 | `third_party/ngx`；**不可 git 再分发**；`fetch_nvidia_ngx_rtxgi.ps1` |
+| RTXGI | TBD（本机 drop-in） | NVIDIA 协议 | 静态/动态 | `third_party/rtxgi`；**不可 git 再分发**；无头 → `ENGINE_WITH_RTXGI=OFF` |
 | DXC | TBD | 随工具链 | 构建机 | 运行时不一定需要 |
 | D3D12MA | TBD | MIT | TBD | |
 | miniaudio | TBD | 可选许可 | 单文件 | |

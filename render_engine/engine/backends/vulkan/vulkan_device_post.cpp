@@ -263,6 +263,18 @@ Status VulkanDevice::UploadPostCB(const PostResolveDesc& desc) {
     cb.lens_distortion = desc.lens_distortion;
     cb.light_dirt_strength = desc.light_dirt_strength;
     cb.flare_strength = desc.flare_strength;
+    cb.enable_gtao = desc.enable_gtao ? 1.f : 0.f;
+    cb.enable_fxaa = desc.enable_fxaa ? 1.f : 0.f;
+    cb.enable_color_grading = desc.enable_color_grading ? 1.f : 0.f;
+    cb.color_grading_strength = desc.color_grading_strength;
+    cb.enable_fog_box = desc.enable_fog_box ? 1.f : 0.f;
+    cb.fog_box_min[0] = desc.fog_box_min.x;
+    cb.fog_box_min[1] = desc.fog_box_min.y;
+    cb.fog_box_min[2] = desc.fog_box_min.z;
+    cb.fog_box_max[0] = desc.fog_box_max.x;
+    cb.fog_box_max[1] = desc.fog_box_max.y;
+    cb.fog_box_max[2] = desc.fog_box_max.z;
+    cb.ssr_roughness_fade = desc.ssr_roughness_fade;
 
     const VkDeviceSize off = static_cast<VkDeviceSize>(frame_index_) * kPostUbSize;
     void* mapped = nullptr;

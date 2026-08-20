@@ -28,6 +28,7 @@ FeatureSet QueryFeatures() {
   f.quic = false;
   f.dlss = false;
   f.fsr2 = false;
+  f.rtxgi = false;
   f.multithread_submit = true;
   f.bindless = false;
   f.bindless_hot_path = false;
@@ -53,6 +54,7 @@ FeatureSet QueryFeatures() {
   apply("quic", f.quic);
   apply("dlss", f.dlss);
   apply("fsr2", f.fsr2);
+  apply("rtxgi", f.rtxgi);
   apply("gpu_instancing", f.gpu_instancing);
   apply("execute_indirect", f.execute_indirect);
   apply("hiz", f.hiz);
@@ -76,6 +78,7 @@ bool QueryFeature(std::string_view name) {
   if (name == "quic") return f.quic;
   if (name == "dlss") return f.dlss;
   if (name == "fsr2") return f.fsr2;
+  if (name == "rtxgi") return f.rtxgi;
   if (name == "multithread_submit") return f.multithread_submit;
   if (name == "bindless") return f.bindless;
   if (name == "bindless_hot_path") return f.bindless_hot_path;

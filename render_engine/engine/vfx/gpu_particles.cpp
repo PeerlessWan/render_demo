@@ -94,6 +94,56 @@ void GpuParticleSystem::EmitSubCpu(const Particle& parent, int count) {
   }
 }
 
+void GpuParticleSystem::ApplyMeshCollision() {
+  if (!mesh_collision_.enabled || mesh_collision_.indices.size() < 3 ||
+      mesh_collision_.positions.empty()) {
+    return;
+  }
+  const float bounce = std::clamp(mesh_collision_.bounce, 0.f, 1.f);
+  for (auto& p : particles_) {
+    for (std::size_t t = 0; t + 2 < mesh_collision_.indices.size(); t += 3) {
+      const Vec3& a = mesh_collision_.positions[mesh_collision_.indices[t]];
+      const Vec3& b = mesh_collision_.positions[mesh_collision_.indices[t + 1]];
+      const Vec3& c = mesh_collision_.positions[mesh_collision_.indices[t + 2]];
+      Vec3 e1 = b - a;
+      Vec3 e2 = c - a;
+      Vec3 n{e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x};
+      const float nlen = n.length();
+      if (nlen < 1e-5f) {
+        continue;
+      }
+      n = n * (1.f / nlen);
+      const float dist = (p.position.x - a.x) * n.x + (p.position.y - a.y) * n.y +
+                         (p.position.z - a.z) * n.z;
+      if (dist >= 0.f || dist < -0.35f) {
+        continue;
+      }
+      // Coarse point-in-triangle via barycentric in plane projection.
+      const Vec3 q = p.position - n * dist;
+      const Vec3 v0 = c - a;
+      const Vec3 v1 = b - a;
+      const Vec3 v2 = q - a;
+      const float dot00 = v0.x * v0.x + v0.y * v0.y + v0.z * v0.z;
+      const float dot01 = v0.x * v1.x + v0.y * v1.y + v0.z * v1.z;
+      const float dot02 = v0.x * v2.x + v0.y * v2.y + v0.z * v2.z;
+      const float dot11 = v1.x * v1.x + v1.y * v1.y + v1.z * v1.z;
+      const float dot12 = v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+      const float inv = 1.f / std::max(dot00 * dot11 - dot01 * dot01, 1e-8f);
+      const float u = (dot11 * dot02 - dot01 * dot12) * inv;
+      const float v = (dot00 * dot12 - dot01 * dot02) * inv;
+      if (u < 0.f || v < 0.f || (u + v) > 1.f) {
+        continue;
+      }
+      p.position = q;
+      const float vn = p.velocity.x * n.x + p.velocity.y * n.y + p.velocity.z * n.z;
+      if (vn < 0.f) {
+        p.velocity = p.velocity - n * (vn * (1.f + bounce));
+      }
+      break;
+    }
+  }
+}
+
 void GpuParticleSystem::ApplyCollisionAndKill() {
   if (collision_.enabled) {
     Vec3 n = collision_.normal;
@@ -139,6 +189,7 @@ void GpuParticleSystem::IntegrateCpu(float dt) {
   }
   ApplyAttractor(dt);
   ApplyCollisionAndKill();
+  ApplyMeshCollision();
   if (sub_emit_.enabled && !parents_for_sub.empty()) {
     sub_accum_ += sub_emit_.rate * dt * static_cast<float>(parents_for_sub.size()) * 0.05f;
     const int burst = static_cast<int>(sub_accum_);
@@ -146,6 +197,18 @@ void GpuParticleSystem::IntegrateCpu(float dt) {
       sub_accum_ -= static_cast<float>(burst);
       const auto& parent = parents_for_sub[static_cast<std::size_t>(rng_ % parents_for_sub.size())];
       EmitSubCpu(parent, std::min(burst, 8));
+    }
+  }
+  // W23: sub-emitter tree — on death spawn child burst once (depth via child lifetime).
+  if (sub_tree_.enabled && sub_tree_.child.enabled) {
+    for (const auto& p : particles_) {
+      if (p.life > 0.f) {
+        continue;
+      }
+      ParticleSubEmit saved = sub_emit_;
+      sub_emit_ = sub_tree_.child;
+      EmitSubCpu(p, 2);
+      sub_emit_ = saved;
     }
   }
   CullDead();

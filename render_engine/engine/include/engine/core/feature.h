@@ -14,6 +14,7 @@ struct FeatureSet {
   bool quic = false;
   bool dlss = false;  // ADR 0044: set when NGX probe succeeds (Upscale may still be unbound)
   bool fsr2 = false;  // ADR 0044: set when FFX headers/probe succeed
+  bool rtxgi = false; // ADR 0046: set when RTXGI headers + GI device bound
   bool multithread_submit = true;
   // Capability: D3D12 ResourceBindingTier>=2 (ProbeBindlessMinimalPath).
   bool bindless = false;

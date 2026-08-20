@@ -105,6 +105,15 @@ struct EffectTuning {
   int probe_nz = 0;
   // W20 L0: half-res soft-shadow mask modulates sun. Default OFF.
   bool enable_soft_shadow_mask = false;
+  // W23 / ADR 0046
+  bool enable_gtao = false;
+  bool enable_fxaa = false;
+  bool enable_color_grading = false;
+  float color_grading_strength = 1.f;
+  bool enable_fog_box = false;
+  Vec3 fog_box_min{0, 0, 0};
+  Vec3 fog_box_max{0, 0, 0};
+  float ssr_roughness_fade = 0.65f;
 };
 
 class RenderSystem {
