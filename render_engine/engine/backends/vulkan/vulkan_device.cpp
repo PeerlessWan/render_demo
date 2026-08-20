@@ -1348,10 +1348,9 @@ class VulkanDevice final : public IDevice {
     return Status::Ok();
   }
 
-  // Mega-W11 C02: SPIR-V required (else Unavailable SKIP). Validates module; Dispatch fills
-  // out_* via SimulateLightTileCullCs (same math as light_tile_cull_cs_vk / Assign).
+  // W19: VK light tile cull — real CS pipeline + one-shot Dispatch/readback; fail → Simulate.
   Status SetupLightTileCullCompute(const std::filesystem::path& cs_spirv) override {
-    tile_cull_ready_ = false;
+    DestroyTileCullCompute();
     if (device_ == VK_NULL_HANDLE || cs_spirv.empty()) {
       return Status::Fail(ErrorCode::Unavailable,
                           "SetupLightTileCullCompute SKIP: invalid device/path");
@@ -1362,18 +1361,71 @@ class VulkanDevice final : public IDevice {
                           "SetupLightTileCullCompute SKIP: no/invalid SPIR-V " +
                               cs_spirv.string());
     }
+
+    VkDescriptorSetLayoutBinding binds[4]{};
+    binds[0].binding = 0;
+    binds[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    binds[0].descriptorCount = 1;
+    binds[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    binds[1].binding = 1;
+    binds[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    binds[1].descriptorCount = 1;
+    binds[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    binds[2].binding = 2;
+    binds[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    binds[2].descriptorCount = 1;
+    binds[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    binds[3].binding = 3;
+    binds[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    binds[3].descriptorCount = 1;
+    binds[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    VkDescriptorSetLayoutCreateInfo dsl{};
+    dsl.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dsl.bindingCount = 4;
+    dsl.pBindings = binds;
+    if (vkCreateDescriptorSetLayout(device_, &dsl, nullptr, &tile_cull_set_layout_) !=
+        VK_SUCCESS) {
+      tile_cull_ready_ = true;
+      LogInfo("Vulkan light tile cull: set layout failed; CPU Simulate only");
+      return Status::Ok("cpu-simulate-only");
+    }
+    VkPipelineLayoutCreateInfo pl{};
+    pl.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pl.setLayoutCount = 1;
+    pl.pSetLayouts = &tile_cull_set_layout_;
+    if (vkCreatePipelineLayout(device_, &pl, nullptr, &tile_cull_pipeline_layout_) != VK_SUCCESS) {
+      DestroyTileCullCompute();
+      tile_cull_ready_ = true;
+      LogInfo("Vulkan light tile cull: pipeline layout failed; CPU Simulate only");
+      return Status::Ok("cpu-simulate-only");
+    }
     VkShaderModule mod = VK_NULL_HANDLE;
     if (auto st = CreateShaderModule(bytes.value(), mod); !st) {
+      DestroyTileCullCompute();
       return Status::Fail(ErrorCode::Unavailable,
                           "SetupLightTileCullCompute SKIP: SPIR-V module failed " +
                               cs_spirv.string());
     }
+    VkComputePipelineCreateInfo ci{};
+    ci.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    ci.stage.module = mod;
+    ci.stage.pName = "CSMain";
+    ci.layout = tile_cull_pipeline_layout_;
+    const VkResult pr =
+        vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr, &tile_cull_pipeline_);
     vkDestroyShaderModule(device_, mod, nullptr);
+    if (pr != VK_SUCCESS) {
+      DestroyTileCullCompute();
+      tile_cull_ready_ = true;
+      LogInfo("Vulkan light tile cull: PSO failed; CPU Simulate only");
+      return Status::Ok("cpu-simulate-only");
+    }
     tile_cull_ready_ = true;
-    // W18: D3D12 path runs real CS; VK Dispatch still Simulate until SSBO wiring matches.
-    LogInfo("Vulkan light tile cull ready (SPIR-V Ok; Dispatch=SimulateLightTileCullCs; "
-            "D3D12 has GPU CS — ADR 0042)");
-    return Status::Ok("spirv-ok-cpu-simulate");
+    tile_cull_gpu_ = true;
+    LogInfo("Vulkan light tile cull CS ready (GPU Dispatch; Simulate fallback)");
+    return Status::Ok("gpu-cs");
   }
 
   Status DispatchLightTileCull(const Mat4& view_proj, std::span<const Vec3> positions,
@@ -1386,10 +1438,219 @@ class VulkanDevice final : public IDevice {
       return Status::Fail(ErrorCode::Unavailable,
                           "DispatchLightTileCull SKIP: not set up (no SPIR-V)");
     }
-    // Equivalent buffer fill to CS UAV outputs (parity with D3D12 Simulate fallback).
+    if (tile_cull_gpu_ && tile_cull_pipeline_ != VK_NULL_HANDLE &&
+        TryDispatchLightTileCullGpu(view_proj, positions, ranges, out_counts, out_indices, eye,
+                                    cam_forward)) {
+      return Status::Ok("gpu-cs");
+    }
     engine::render::SimulateLightTileCullCs(view_proj, positions, ranges, out_counts, out_indices,
                                             eye, cam_forward);
     return Status::Ok("cpu-simulate");
+  }
+
+  bool TryDispatchLightTileCullGpu(const Mat4& view_proj, std::span<const Vec3> positions,
+                                   std::span<const float> ranges, std::array<int, 128>& out_counts,
+                                   std::array<int, 1024>& out_indices, const Vec3& eye,
+                                   const Vec3& cam_forward) {
+    if (device_ == VK_NULL_HANDLE || graphics_queue_ == VK_NULL_HANDLE ||
+        command_pool_ == VK_NULL_HANDLE) {
+      return false;
+    }
+    const std::uint32_t n =
+        static_cast<std::uint32_t>((std::min)(positions.size(), ranges.size()));
+    if (n == 0) {
+      out_counts.fill(0);
+      out_indices.fill(-1);
+      return true;
+    }
+    struct LightPacked {
+      float px, py, pz, range;
+    };
+    struct TileCullCB {
+      float vp[16];
+      float eye[3];
+      std::uint32_t light_count;
+      float cam_forward[3];
+      float z_near;
+      float z_far;
+      std::uint32_t pad[3];
+    };
+    alignas(16) TileCullCB cb{};
+    std::memcpy(cb.vp, view_proj.m.data(), sizeof(cb.vp));
+    cb.eye[0] = eye.x;
+    cb.eye[1] = eye.y;
+    cb.eye[2] = eye.z;
+    cb.light_count = n;
+    cb.cam_forward[0] = cam_forward.x;
+    cb.cam_forward[1] = cam_forward.y;
+    cb.cam_forward[2] = cam_forward.z;
+    cb.z_near = engine::render::kLightZNear;
+    cb.z_far = engine::render::kLightZFar;
+
+    std::vector<LightPacked> lights(n);
+    for (std::uint32_t i = 0; i < n; ++i) {
+      lights[i] = {positions[i].x, positions[i].y, positions[i].z, ranges[i]};
+    }
+
+    const VkMemoryPropertyFlags host =
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    const VkDeviceSize cb_bytes = 256;
+    const VkDeviceSize light_bytes = sizeof(LightPacked) * n;
+    const VkDeviceSize count_bytes = sizeof(int) * 128;
+    const VkDeviceSize index_bytes = sizeof(int) * 1024;
+    VkBuffer cb_buf = VK_NULL_HANDLE, light_buf = VK_NULL_HANDLE, count_buf = VK_NULL_HANDLE,
+             index_buf = VK_NULL_HANDLE;
+    VkDeviceMemory cb_mem = VK_NULL_HANDLE, light_mem = VK_NULL_HANDLE, count_mem = VK_NULL_HANDLE,
+                   index_mem = VK_NULL_HANDLE;
+    auto cleanup_bufs = [&]() {
+      if (cb_buf) {
+        vkDestroyBuffer(device_, cb_buf, nullptr);
+      }
+      if (light_buf) {
+        vkDestroyBuffer(device_, light_buf, nullptr);
+      }
+      if (count_buf) {
+        vkDestroyBuffer(device_, count_buf, nullptr);
+      }
+      if (index_buf) {
+        vkDestroyBuffer(device_, index_buf, nullptr);
+      }
+      if (cb_mem) {
+        vkFreeMemory(device_, cb_mem, nullptr);
+      }
+      if (light_mem) {
+        vkFreeMemory(device_, light_mem, nullptr);
+      }
+      if (count_mem) {
+        vkFreeMemory(device_, count_mem, nullptr);
+      }
+      if (index_mem) {
+        vkFreeMemory(device_, index_mem, nullptr);
+      }
+    };
+    if (auto st = CreateBuffer(cb_bytes, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, host, cb_buf, cb_mem);
+        !st) {
+      cleanup_bufs();
+      return false;
+    }
+    if (auto st =
+            CreateBuffer(light_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, host, light_buf, light_mem);
+        !st) {
+      cleanup_bufs();
+      return false;
+    }
+    if (auto st =
+            CreateBuffer(count_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, host, count_buf, count_mem);
+        !st) {
+      cleanup_bufs();
+      return false;
+    }
+    if (auto st =
+            CreateBuffer(index_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, host, index_buf, index_mem);
+        !st) {
+      cleanup_bufs();
+      return false;
+    }
+    {
+      void* mapped = nullptr;
+      if (vkMapMemory(device_, cb_mem, 0, sizeof(cb), 0, &mapped) != VK_SUCCESS || !mapped) {
+        cleanup_bufs();
+        return false;
+      }
+      std::memcpy(mapped, &cb, sizeof(cb));
+      vkUnmapMemory(device_, cb_mem);
+    }
+    {
+      void* mapped = nullptr;
+      if (vkMapMemory(device_, light_mem, 0, light_bytes, 0, &mapped) != VK_SUCCESS || !mapped) {
+        cleanup_bufs();
+        return false;
+      }
+      std::memcpy(mapped, lights.data(), static_cast<size_t>(light_bytes));
+      vkUnmapMemory(device_, light_mem);
+    }
+
+    VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
+                                     {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3}};
+    VkDescriptorPoolCreateInfo dpi{};
+    dpi.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    dpi.maxSets = 1;
+    dpi.poolSizeCount = 2;
+    dpi.pPoolSizes = sizes;
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+    if (vkCreateDescriptorPool(device_, &dpi, nullptr, &pool) != VK_SUCCESS) {
+      cleanup_bufs();
+      return false;
+    }
+    VkDescriptorSetAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    ai.descriptorPool = pool;
+    ai.descriptorSetCount = 1;
+    ai.pSetLayouts = &tile_cull_set_layout_;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    if (vkAllocateDescriptorSets(device_, &ai, &set) != VK_SUCCESS) {
+      vkDestroyDescriptorPool(device_, pool, nullptr);
+      cleanup_bufs();
+      return false;
+    }
+    VkDescriptorBufferInfo infos[4]{};
+    infos[0] = {cb_buf, 0, sizeof(TileCullCB)};
+    infos[1] = {light_buf, 0, light_bytes};
+    infos[2] = {count_buf, 0, count_bytes};
+    infos[3] = {index_buf, 0, index_bytes};
+    VkWriteDescriptorSet writes[4]{};
+    for (int i = 0; i < 4; ++i) {
+      writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writes[i].dstSet = set;
+      writes[i].dstBinding = static_cast<std::uint32_t>(i);
+      writes[i].descriptorCount = 1;
+      writes[i].descriptorType =
+          i == 0 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+      writes[i].pBufferInfo = &infos[i];
+    }
+    vkUpdateDescriptorSets(device_, 4, writes, 0, nullptr);
+
+    VkCommandBuffer cmd = BeginOneShot();
+    if (cmd == VK_NULL_HANDLE) {
+      vkDestroyDescriptorPool(device_, pool, nullptr);
+      cleanup_bufs();
+      return false;
+    }
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, tile_cull_pipeline_);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, tile_cull_pipeline_layout_, 0, 1,
+                            &set, 0, nullptr);
+    vkCmdDispatch(cmd, 8, 4, 4);
+    VkMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0,
+                         1, &barrier, 0, nullptr, 0, nullptr);
+    EndOneShot(cmd);
+
+    {
+      void* mapped = nullptr;
+      if (vkMapMemory(device_, count_mem, 0, count_bytes, 0, &mapped) != VK_SUCCESS || !mapped) {
+        vkDestroyDescriptorPool(device_, pool, nullptr);
+        cleanup_bufs();
+        return false;
+      }
+      std::memcpy(out_counts.data(), mapped, count_bytes);
+      vkUnmapMemory(device_, count_mem);
+    }
+    {
+      void* mapped = nullptr;
+      if (vkMapMemory(device_, index_mem, 0, index_bytes, 0, &mapped) != VK_SUCCESS || !mapped) {
+        vkDestroyDescriptorPool(device_, pool, nullptr);
+        cleanup_bufs();
+        return false;
+      }
+      std::memcpy(out_indices.data(), mapped, index_bytes);
+      vkUnmapMemory(device_, index_mem);
+    }
+    vkDestroyDescriptorPool(device_, pool, nullptr);
+    cleanup_bufs();
+    return true;
   }
 
   Status UploadIndirectIndexedArgs(std::span<const std::uint32_t> raw_u32) override {
@@ -6312,6 +6573,23 @@ class VulkanDevice final : public IDevice {
     vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
   }
 
+  void DestroyTileCullCompute() {
+    tile_cull_gpu_ = false;
+    tile_cull_ready_ = false;
+    if (tile_cull_pipeline_ != VK_NULL_HANDLE) {
+      vkDestroyPipeline(device_, tile_cull_pipeline_, nullptr);
+      tile_cull_pipeline_ = VK_NULL_HANDLE;
+    }
+    if (tile_cull_pipeline_layout_ != VK_NULL_HANDLE) {
+      vkDestroyPipelineLayout(device_, tile_cull_pipeline_layout_, nullptr);
+      tile_cull_pipeline_layout_ = VK_NULL_HANDLE;
+    }
+    if (tile_cull_set_layout_ != VK_NULL_HANDLE) {
+      vkDestroyDescriptorSetLayout(device_, tile_cull_set_layout_, nullptr);
+      tile_cull_set_layout_ = VK_NULL_HANDLE;
+    }
+  }
+
   void DestroyCullCompute() {
     cull_ready_ = false;
     cull_desc_set_ = VK_NULL_HANDLE;
@@ -6380,6 +6658,7 @@ class VulkanDevice final : public IDevice {
     shadow_pass_active_ = false;
     bound_cascade_ = -1;
     DestroyCullCompute();
+    DestroyTileCullCompute();
     DestroyIndirectArgsBuffers(/*keep_uploads=*/false);
     DestroyPostResources();
     DestroySkyResources();
@@ -6586,6 +6865,7 @@ class VulkanDevice final : public IDevice {
 
   bool cull_ready_ = false;
   bool tile_cull_ready_ = false;
+  bool tile_cull_gpu_ = false;
   bool descriptor_indexing_available_ = false;
   bool bindless_capable_ = false;
   VkDescriptorSetLayout cull_set_layout_ = VK_NULL_HANDLE;
@@ -6596,6 +6876,9 @@ class VulkanDevice final : public IDevice {
   VkBuffer cull_compact_buf_ = VK_NULL_HANDLE;
   VkDeviceMemory cull_compact_mem_ = VK_NULL_HANDLE;
   VkDeviceSize cull_compact_bytes_ = 0;
+  VkDescriptorSetLayout tile_cull_set_layout_ = VK_NULL_HANDLE;
+  VkPipelineLayout tile_cull_pipeline_layout_ = VK_NULL_HANDLE;
+  VkPipeline tile_cull_pipeline_ = VK_NULL_HANDLE;
 
   VkPipeline post_pipeline_ = VK_NULL_HANDLE;
   VkPipelineLayout post_pipeline_layout_ = VK_NULL_HANDLE;

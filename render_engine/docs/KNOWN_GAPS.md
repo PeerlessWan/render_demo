@@ -64,7 +64,7 @@
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
 | C01 | 产品级 Deferred / Forward+ 路径钉死 | **已落地（M26）**：Forward+ 钉死 + Pass 名冻结；见 [FORWARD_PLUS.md](FORWARD_PLUS.md)、[ADR 0032](learn/adr/0032-m26-forward-plus-cluster.md) | 高（影响扩展方式） |
-| C02 | 集群 / 分块多灯光 | **W18**：D3D12 真 CS Dispatch+readback（失败 → Simulate）；VK 仍 Simulate（诚实日志） | 高 |
+| C02 | 集群 / 分块多灯光 | **W18/W19**：D3D12+VK 真 CS Dispatch+readback（失败 → Simulate） | 高 |
 | C03 | IES / Light Function | **Mega-W9**：IES + `EvalLightFunctionFactor` / `LocalLight::light_function_id` | 中 |
 | C04 | 更细电影级镜头后处理 | **Mega-W8**：vignette/grain/色差 + 畸变/脏点/眩光（默认 0） | 低 |
 | C05 | 大气 / 体积云 / 天气降水 | **Mega-W8**：`WeatherSystem` + 降水/积雪/雷闪；大气见 W4/W7 | 中 |

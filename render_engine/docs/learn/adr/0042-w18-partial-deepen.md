@@ -27,6 +27,6 @@ W17 收口后仍有一批「API/着色器已有、主路径半落地」项。用
 
 ## 收口备注（2026-08-20）
 
-- C02：**D3D12** 真 CS one-shot + readback（`gpu-cs` / `cpu-simulate`）；**VK** 仍 Simulate（诚实日志），对称 SSBO 列后续。
+- C02：**D3D12** 真 CS one-shot + readback（`gpu-cs` / `cpu-simulate`）；**VK** 同路径（W19 SSBO+UBO Dispatch）。
 - Sandbox：WorldText/Path2D lit slots 13/14；HLOD slot15；软影×sun；MS 探测；VT packed；dxc 写 vs/ps cso。
 - 单测：187 passed / 0 failed。

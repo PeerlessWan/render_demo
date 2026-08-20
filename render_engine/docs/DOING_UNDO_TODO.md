@@ -44,7 +44,6 @@
 |---|---|---|
 | 他会话 | game_kit / editor | 玩法壳 / 复制 |
 | 钉死 | C17 / Nanite / 真 DDGI | 外置 |
-| 后续 | VK tile cull 真 SSBO | 与 D3D12 GPU 对称 |
 | 后续 | FFX/NGX / MsQuic API | 有 SDK 再接 |
 
 ## Undo
@@ -59,6 +58,6 @@
 
 | 项 | 说明 |
 |---|---|
-| **W18** | D3D12 light tile GPU CS；WorldText/Path2D lit mesh；VT packed ingest；软影+Sandbox；MS 探测；dxc 写 cso；HLOD Sandbox+rgba bake |
+| **W18** | D3D12 light tile GPU CS；WorldText/Path2D lit mesh；VT packed；软影/MS/HLOD/dxc；**W19 VK tile cull GPU** |
 | **W17** | meshoptimizer Prefer；VK 粒子 SSBO；软影 blur；glTF 多 prim |
 | **W16** | 零尾巴收口 |
