@@ -41,6 +41,8 @@ void RenderSystem::set_quality(const QualitySettings& q) {
   effect_.enable_ssr = q.enable_ssr;
   effect_.enable_dof = q.enable_dof;
   effect_.enable_motion_blur = q.enable_motion_blur;
+  effect_.enable_gtao = q.enable_gtao;
+  effect_.enable_rt_reflection = q.enable_rt_reflection;
   effect_.shadow_cascades = q.shadow_cascades;
   max_shadow_distance_ = q.max_shadow_distance;
   if (q.shadow_atlas_size > 0 && q.shadow_atlas_size != atlas_.size()) {

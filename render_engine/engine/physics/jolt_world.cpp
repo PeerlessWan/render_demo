@@ -258,6 +258,7 @@ class JoltWorld final : public IPhysicsWorld {
     }
     body_ids_.push_back(id);
     half_extents_.push_back(desc.half_extents);
+    body_is_trigger_.push_back(desc.is_trigger);
     return index;
   }
 
@@ -290,6 +291,7 @@ class JoltWorld final : public IPhysicsWorld {
     body_ids_.push_back(id);
     // AABB half-extents approx for queries / ground snap.
     half_extents_.push_back({radius, half_h + radius, radius});
+    body_is_trigger_.push_back(false);
     return index;
   }
 
@@ -399,6 +401,91 @@ class JoltWorld final : public IPhysicsWorld {
 
     bodies.SetPosition(id, new_pos, JPH::EActivation::Activate);
     return Status::Ok();
+  }
+
+  Status MoveCharacterEx(int body_id, const Vec3& displacement,
+                         const CharacterMoveParams& params) override {
+    if (body_id < 0 || body_id >= static_cast<int>(body_ids_.size())) {
+      return Status::Fail(ErrorCode::NotFound, "body not found");
+    }
+    CharacterMoveParams p = params;
+    if (p.max_step_height < 0.f) {
+      p.max_step_height = 0.f;
+    }
+    const Vec3 he = half_extents_[static_cast<std::size_t>(body_id)];
+    const JPH::BodyID id = body_ids_[static_cast<std::size_t>(body_id)];
+    JPH::BodyInterface& bodies = physics_.GetBodyInterface();
+    const JPH::RVec3 start = bodies.GetPosition(id);
+
+    Status st = MoveCharacter(body_id, displacement);
+    if (!st) {
+      return st;
+    }
+
+    const JPH::RVec3 after = bodies.GetPosition(id);
+    // Slope limit via ground normal.
+    const float snap_dist = he.y * 2.f + 0.75f;
+    const JPH::RVec3 ray_origin(after.GetX(), after.GetY() + 0.05f, after.GetZ());
+    const JPH::RRayCast ray(ray_origin, JPH::Vec3(0, -1, 0) * snap_dist);
+    JPH::RayCastResult hit;
+    JPH::IgnoreSingleBodyFilter body_filter(id);
+    if (physics_.GetNarrowPhaseQuery().CastRay(ray, hit, {}, {}, body_filter)) {
+      JPH::BodyLockRead lock(physics_.GetBodyLockInterface(), hit.mBodyID);
+      if (lock.Succeeded()) {
+        const JPH::Vec3 n = lock.GetBody().GetWorldSpaceSurfaceNormal(
+            hit.mSubShapeID2, ray.GetPointOnRay(hit.mFraction));
+        const float slope_rad = std::acos(std::clamp(n.GetY(), -1.f, 1.f));
+        const float max_rad = p.max_slope_deg * 3.14159265f / 180.f;
+        if (slope_rad > max_rad + 1e-3f) {
+          bodies.SetPosition(id, start, JPH::EActivation::Activate);
+          return Status::Ok();
+        }
+      }
+    }
+
+    // Step-up retry if horizontal blocked.
+    if (p.max_step_height > 1e-4f &&
+        (std::fabs(displacement.x) + std::fabs(displacement.z)) > 1e-4f) {
+      const float moved_h = std::fabs(static_cast<float>(after.GetX() - start.GetX())) +
+                            std::fabs(static_cast<float>(after.GetZ() - start.GetZ()));
+      const float want_h = std::fabs(displacement.x) + std::fabs(displacement.z);
+      if (moved_h < 0.15f * want_h) {
+        bodies.SetPosition(id, start, JPH::EActivation::Activate);
+        Vec3 stepped = displacement;
+        stepped.y += p.max_step_height;
+        (void)MoveCharacter(body_id, stepped);
+      }
+    }
+    return Status::Ok();
+  }
+
+  std::vector<int> QueryTriggerOverlaps(const Vec3& center, const Vec3& half) const override {
+    std::vector<int> all = OverlapAabb(center, half);
+    std::vector<int> out;
+    out.reserve(all.size());
+    for (int id : all) {
+      if (id >= 0 && id < static_cast<int>(body_is_trigger_.size()) &&
+          body_is_trigger_[static_cast<std::size_t>(id)]) {
+        out.push_back(id);
+      }
+    }
+    return out;
+  }
+
+  void SetBodyTrigger(int body_id, bool is_trigger) override {
+    if (body_id < 0 || body_id >= static_cast<int>(body_is_trigger_.size())) {
+      return;
+    }
+    body_is_trigger_[static_cast<std::size_t>(body_id)] = is_trigger;
+    const JPH::BodyID id = body_ids_[static_cast<std::size_t>(body_id)];
+    physics_.GetBodyInterface().SetIsSensor(id, is_trigger);
+  }
+
+  bool IsBodyTrigger(int body_id) const override {
+    if (body_id < 0 || body_id >= static_cast<int>(body_is_trigger_.size())) {
+      return false;
+    }
+    return body_is_trigger_[static_cast<std::size_t>(body_id)];
   }
 
   Vec3 body_position(int body_id) const override {
@@ -647,6 +734,7 @@ class JoltWorld final : public IPhysicsWorld {
   std::unique_ptr<JPH::JobSystemSingleThreaded> job_system_;
   std::vector<JPH::BodyID> body_ids_;
   std::vector<Vec3> half_extents_;
+  std::vector<bool> body_is_trigger_;
   std::vector<JPH::BodyID> soft_body_ids_;
   std::vector<std::vector<std::uint32_t>> soft_body_indices_;
   JPH::BodyID floor_id_;

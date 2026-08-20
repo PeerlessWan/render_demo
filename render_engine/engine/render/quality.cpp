@@ -21,6 +21,9 @@ QualitySettings QualitySettings::FromTier(QualityTier t) {
       q.enable_cascade_gi = false;
       q.enable_volumetric_fog = false;
       q.enable_soft_shadow = false;
+      q.enable_gtao = false;
+      q.enable_virtual_geometry = false;
+      q.enable_rt_reflection = false;
       break;
     case QualityTier::Medium:
       q.shadow_cascades = 2;
@@ -30,13 +33,16 @@ QualitySettings QualitySettings::FromTier(QualityTier t) {
       q.vegetation_cap = 24;
       q.enable_bloom = true;
       q.enable_ssao = true;
-      q.enable_taa = true;
-      q.enable_ssr = false;
+      q.enable_taa = true;  // Quality default; Sandbox may force FX TAA off for FPS
+      q.enable_ssr = true;
       q.enable_dof = false;
       q.enable_motion_blur = false;
       q.enable_cascade_gi = true;
       q.enable_volumetric_fog = true;
       q.enable_soft_shadow = true;
+      q.enable_gtao = true;
+      q.enable_virtual_geometry = true;
+      q.enable_rt_reflection = false;
       break;
     case QualityTier::High:
       q.shadow_cascades = 4;
@@ -47,13 +53,16 @@ QualitySettings QualitySettings::FromTier(QualityTier t) {
       q.enable_bloom = true;
       q.enable_ssao = true;
       q.enable_taa = true;
-      q.enable_ssr = false;
+      q.enable_ssr = true;
       q.enable_dof = true;
       q.enable_motion_blur = false;
       q.enable_raytracing = true;
       q.enable_cascade_gi = true;
       q.enable_volumetric_fog = true;
       q.enable_soft_shadow = true;
+      q.enable_gtao = true;
+      q.enable_virtual_geometry = true;
+      q.enable_rt_reflection = true;
       break;
   }
   return q;

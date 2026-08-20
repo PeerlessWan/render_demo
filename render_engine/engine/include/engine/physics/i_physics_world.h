@@ -67,6 +67,23 @@ class IPhysicsWorld {
   [[nodiscard]] virtual int SoftBodyGetIndexCount(int /*id*/) const { return 0; }
   virtual bool SoftBodyGetIndices(int /*id*/, std::vector<std::uint32_t>& /*out*/) { return false; }
 
+  // W24 / ADR 0047: character step/slope + trigger areas
+  struct CharacterMoveParams {
+    float max_step_height = 0.35f;
+    float max_slope_deg = 45.f;
+  };
+  virtual Status MoveCharacterEx(int body_id, const Vec3& displacement,
+                                 const CharacterMoveParams& /*params*/) {
+    return MoveCharacter(body_id, displacement);
+  }
+  // Bodies created with RigidBodyDesc::is_trigger; default filters OverlapAabb by trigger flag.
+  [[nodiscard]] virtual std::vector<int> QueryTriggerOverlaps(const Vec3& center,
+                                                              const Vec3& half) const {
+    return OverlapAabb(center, half);
+  }
+  virtual void SetBodyTrigger(int /*body_id*/, bool /*is_trigger*/) {}
+  [[nodiscard]] virtual bool IsBodyTrigger(int /*body_id*/) const { return false; }
+
   // W23 / ADR 0046: joints / ragdoll / vehicle / destruction (defaults SKIP).
   enum class JointType : std::uint8_t { Hinge = 0, BallSocket = 1 };
   struct JointDesc {

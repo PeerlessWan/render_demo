@@ -114,6 +114,8 @@ struct EffectTuning {
   Vec3 fog_box_min{0, 0, 0};
   Vec3 fog_box_max{0, 0, 0};
   float ssr_roughness_fade = 0.65f;
+  // W24 / ADR 0047: DXR reflection buffer ready → boost SSR product path
+  bool enable_rt_reflection = false;
 };
 
 class RenderSystem {

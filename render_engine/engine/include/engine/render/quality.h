@@ -23,6 +23,10 @@ struct QualitySettings {
   bool enable_cascade_gi = true;
   bool enable_volumetric_fog = true;
   bool enable_soft_shadow = true;
+  // W24 / ADR 0047 domain seal
+  bool enable_gtao = false;
+  bool enable_virtual_geometry = true;
+  bool enable_rt_reflection = false;
 
   static QualitySettings FromTier(QualityTier t);
 };

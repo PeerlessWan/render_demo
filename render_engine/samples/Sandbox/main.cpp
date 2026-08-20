@@ -22,6 +22,7 @@
 #include "engine/gi/scene_capture.h"
 #include "engine/gpu_driven/indirect_draw.h"
 #include "engine/gpu_driven/meshlet.h"
+#include "engine/gpu_driven/virtual_geometry.h"
 #include "engine/hlod/billboard_impostor.h"
 #include "engine/rt/raytracing.h"
 #include "engine/render/atmosphere.h"
@@ -668,11 +669,13 @@ int main(int argc, char** argv) {
   fx.sun_intensity = env.sun_intensity;
   fx.ambient_scale = 1.05f;
   fx.exposure = use_vulkan ? 1.f : 1.0f;
-  fx.enable_ssao = false;  // Medium tier opts SSAO on; Sandbox keeps it off for interactive FPS.
-  // Default TAA off: Halton lit jitter reads as whole-screen shake when history is weak.
-  // Opt-in via Effects panel (still available on both backends).
-  fx.enable_taa = false;
+  // W24: sync Quality→Effect for domain seal (headless still forces stable FX off).
+  fx.enable_ssao = rdesc.quality.enable_ssao;
+  fx.enable_gtao = rdesc.quality.enable_gtao;
   fx.enable_ssr = rdesc.quality.enable_ssr;
+  fx.enable_rt_reflection = rdesc.quality.enable_rt_reflection;
+  // Default TAA off for interactive FPS; High still exposes via Quality apply.
+  fx.enable_taa = false;
   fx.enable_bloom = false;  // Bloom turns the horizon band into a floating white slab on LDR.
   fx.bloom_threshold = 1.1f;
   fx.bloom_intensity = 0.2f;
@@ -683,9 +686,14 @@ int main(int argc, char** argv) {
     fx.shadow_cascades = 1;
     fx.enable_taa = false;
     fx.enable_ssao = false;
+    fx.enable_gtao = false;
+    fx.enable_ssr = false;
+    fx.enable_rt_reflection = false;
     fx.enable_motion_blur = false;
     auto q = engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
     q.enable_ssao = false;
+    q.enable_gtao = false;
+    q.enable_ssr = false;
     q.enable_taa = false;
     q.shadow_cascades = 1;
     render.set_quality(q);
@@ -733,6 +741,31 @@ int main(int argc, char** argv) {
     engine::scene::MeshRenderer mesh;
     mesh.mesh_id = "cube";
     a.world().set_mesh(phys_node, mesh);
+  }
+
+  // W24: character capsule + trigger area + optional vehicle (Jolt).
+  int char_body = -1;
+  int trigger_body = -1;
+  int vehicle_body = -1;
+  int last_trigger_hits = 0;
+  {
+    engine::physics::CapsuleDesc cap;
+    cap.position = {-3.f, 1.2f, 2.f};
+    cap.radius = 0.35f;
+    cap.half_height = 0.5f;
+    cap.mass = 0.f;
+    char_body = physics->CreateCapsule(cap);
+    engine::physics::RigidBodyDesc trig;
+    trig.position = {0.f, 1.f, 3.f};
+    trig.half_extents = {1.2f, 1.f, 1.2f};
+    trig.mass = 0.f;
+    trig.is_trigger = true;
+    trigger_body = physics->CreateBox(trig);
+    if (std::string(physics->backend_name()) == "jolt") {
+      engine::physics::IPhysicsWorld::VehicleDesc vd;
+      vd.position = {4.f, 1.f, -3.f};
+      vehicle_body = physics->CreateVehicle(vd);
+    }
   }
 
   // C22 thin SoftBody: soft cube near the falling rigid body (Jolt only; builtin SKIP).
@@ -921,10 +954,15 @@ int main(int argc, char** argv) {
   engine::render::WeatherSystem weather;
   weather.SetState(engine::render::WeatherState::Cloudy, 0.45f);
   bool enable_gi = false;
-  bool enable_cascade_gi = false;
+  bool enable_cascade_gi = !desc.gpu_headless && !harness_stdio &&
+                           rdesc.quality.enable_cascade_gi;  // W24: CascadeGi on by default
   bool gi_cascade_refined = false;
   bool soft_shadow_mask_ready = false;
-  bool enable_soft_shadow_product = false;  // opt-in: DXR demo AS rebuild is expensive
+  // W24: soft-shadow product when quality asks and Feature raytracing (probe later).
+  bool enable_soft_shadow_product =
+      !desc.gpu_headless && !harness_stdio && rdesc.quality.enable_soft_shadow;
+  bool enable_rt_reflection_product =
+      !desc.gpu_headless && !harness_stdio && rdesc.quality.enable_rt_reflection;
   bool show_vt_debug = false;               // opt-in: VT atlas → lit slot1
   constexpr int kProbeAtlasUploadInterval = 8;
 
@@ -977,6 +1015,23 @@ int main(int argc, char** argv) {
   engine::render::OcclusionBuffer scale_occ;
   scale_occ.Configure(64, 64);
   // Soft HiZ: far-plane default (no occluders) so frustum cull still runs.
+
+  // W24: VirtualGeometry hot path (Feature/quality gated).
+  engine::gpu_driven::VirtualGeometryAsset vg_asset;
+  engine::gpu_driven::VirtualGeometryResidency vg_residency;
+  vg_residency.page_budget = 48;
+  std::uint32_t vg_visible_count = 0;
+  bool enable_virtual_geometry =
+      !desc.gpu_headless && !harness_stdio && rdesc.quality.enable_virtual_geometry;
+  {
+    std::vector<engine::Vec3> vg_pos = {
+        {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}, {0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1},
+        {0.5f, 1.5f, 0.5f}};
+    std::vector<std::uint32_t> vg_idx = {0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7,
+                                         0, 1, 8, 1, 2, 8, 2, 3, 8, 3, 0, 8};
+    vg_asset = engine::gpu_driven::BuildVirtualGeometry(vg_pos, vg_idx, 2);
+    engine::SetFeatureOverride("virtual_geometry", enable_virtual_geometry);
+  }
   {
     std::vector<float> depth(64 * 64, 1.f);
     scale_occ.UploadDepthFinest(depth);
@@ -1402,6 +1457,19 @@ int main(int argc, char** argv) {
         engine::scene::Transform t = app_ref.world().local_transform(phys_node);
         t.position = physics->body_position(phys_id);
         app_ref.world().set_local_transform(phys_node, t);
+      }
+      if (char_body >= 0) {
+        engine::physics::IPhysicsWorld::CharacterMoveParams cmp;
+        cmp.max_step_height = 0.35f;
+        cmp.max_slope_deg = 50.f;
+        const float dt = app_ref.delta_time();
+        (void)physics->MoveCharacterEx(char_body, {0.35f * dt, 0.f, 0.2f * dt}, cmp);
+        const auto cp = physics->body_position(char_body);
+        last_trigger_hits =
+            static_cast<int>(physics->QueryTriggerOverlaps(cp, {0.5f, 1.f, 0.5f}).size());
+      }
+      if (vehicle_body >= 0 && (app_ref.frame_index() % 120) < 60) {
+        (void)physics->SetVehicleInput(vehicle_body, 0.15f, 0.05f);
       }
     }
     app_ref.world().UpdateTransforms();
@@ -1922,12 +1990,16 @@ int main(int argc, char** argv) {
           imgui.Checkbox("Path2D debug (W17)", &show_path2d_debug);
           imgui.Checkbox("HLOD debug (W18)", &show_hlod_debug);
           imgui.Checkbox("VT debug → slot1 (W20)", &show_vt_debug);
-          imgui.Checkbox("Soft shadow mask (W20 RT)", &enable_soft_shadow_product);
+          imgui.Checkbox("Soft shadow mask (W24)", &enable_soft_shadow_product);
+          imgui.Checkbox("RT reflection → SSR (W24)", &enable_rt_reflection_product);
           {
             char w18[128];
             std::snprintf(w18, sizeof(w18), "soft_shadow_factor  %.3f", soft_shadow_factor);
             imgui.Text(w18);
             std::snprintf(w18, sizeof(w18), "mesh_shader  %s", mesh_shader_last_status.c_str());
+            imgui.Text(w18);
+            std::snprintf(w18, sizeof(w18), "vg_visible  %u  triggers %d", vg_visible_count,
+                          last_trigger_hits);
             imgui.Text(w18);
             std::snprintf(w18, sizeof(w18), "VT resident_count  %u",
                           sandbox_vt.resident_count());
@@ -2564,6 +2636,22 @@ int main(int argc, char** argv) {
     }
 
     profiler.Begin("DrawFrame");
+    // W24 VirtualGeometry: screen-error select + residency + Indirect cull contract.
+    vg_visible_count = 0;
+    if (enable_virtual_geometry && render.quality().enable_virtual_geometry &&
+        engine::QueryFeature("virtual_geometry") && !vg_asset.nodes.empty()) {
+      const auto vp = scene.camera.view_proj_matrix(aspect);
+      const engine::Mat4 world =
+          engine::Mat4::TRS({-5.f, 0.5f, 4.f}, {}, {1.5f, 1.5f, 1.5f});
+      auto sel = engine::gpu_driven::SelectClusters(vg_asset, world, vp, 4.f, &vg_residency);
+      std::vector<engine::gpu_driven::IndirectDrawArgs> vg_args;
+      vg_visible_count = engine::gpu_driven::CullVirtualGeometryToIndirect(
+          vg_asset, sel, world, vp, vg_args);
+      if (!vg_args.empty()) {
+        const auto packed = engine::gpu_driven::PackIndirectArgsU32(vg_args.front());
+        (void)app_ref.device().UploadIndirectIndexedArgs(packed);
+      }
+    }
     // Scale path BEFORE DrawFrame so instancing runs in OpaqueLit (pre-post).
     if (!gpu_headless_assert && show_scale_instances) {
       std::vector<engine::Mat4> visible;
@@ -2627,21 +2715,21 @@ int main(int argc, char** argv) {
       }
       reflection_probe.ClearDirty();
     }
-    // W20 L0: half-res soft-shadow mask → lit sun modulate (not sun_intensity multiply).
-    // Opt-in only: TryHalfResSoftShadowCompose used to rebuild DXR AS every call (both backends
-    // hit it via a side D3D12 device) → <20 FPS. Quality High still exposes the Feature path.
+    // W24 L0: product soft-shadow + optional RT reflection → SSR boost (D3D12).
     fx.enable_soft_shadow_mask = false;
-    const bool want_soft_shadow = enable_soft_shadow_product &&
-                                  render.quality().enable_raytracing &&
-                                  engine::QueryFeature("raytracing");
+    const bool want_soft_shadow =
+        enable_soft_shadow_product && render.quality().enable_soft_shadow;
     if (want_soft_shadow && (app_ref.frame_index() % 30) == 0) {
-      float factor = 1.f;
       std::vector<float> grid;
       int gw = 0;
       int gh = 0;
-      if (auto st = engine::rt::TryHalfResSoftShadowCompose(factor, grid, gw, gh); st) {
-        soft_shadow_factor = factor;
+      if (auto st = engine::rt::TryProductSoftShadowMask(grid, gw, gh); st) {
         if (!grid.empty() && gw > 0 && gh > 0) {
+          float sum = 0.f;
+          for (float v : grid) {
+            sum += v;
+          }
+          soft_shadow_factor = sum / static_cast<float>(grid.size());
           if (auto up = app_ref.device().UploadSoftShadowMask(grid.data(), gw, gh); up) {
             soft_shadow_mask_ready = true;
           } else {
@@ -2655,6 +2743,19 @@ int main(int argc, char** argv) {
       soft_shadow_mask_ready = false;
     }
     fx.enable_soft_shadow_mask = soft_shadow_mask_ready;
+
+    if (enable_rt_reflection_product && render.quality().enable_rt_reflection &&
+        (app_ref.frame_index() % 45) == 0) {
+      std::vector<std::uint8_t> rgba;
+      int rw = 0;
+      int rh = 0;
+      if (auto st = engine::rt::TryHalfResRtReflectionCompose(rgba, rw, rh); st && !rgba.empty()) {
+        fx.enable_rt_reflection = true;
+        fx.enable_ssr = true;
+        fx.ssr_intensity = (std::max)(fx.ssr_intensity, 0.65f);
+      }
+    }
+    fx.enable_gtao = render.quality().enable_gtao && fx.enable_ssao;
     render.set_effect_tuning(fx);
     if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites, nullptr, &dbg);
         !st) {

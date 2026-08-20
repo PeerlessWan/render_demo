@@ -163,7 +163,9 @@ TEST_CASE("Quality tiers differ", "[render]") {
   REQUIRE_FALSE(low.enable_ssao);
   REQUIRE(high.enable_ssao);
   REQUIRE_FALSE(low.enable_ssr);
-  REQUIRE_FALSE(high.enable_ssr);  // SSR default-off until floor-stable
+  REQUIRE(high.enable_ssr);  // W24 domain seal: SSR on High/Medium
+  REQUIRE(high.enable_gtao);
+  REQUIRE(med.enable_virtual_geometry);
 }
 
 TEST_CASE("Spot light shadow matrix uses direction", "[render][m11]") {

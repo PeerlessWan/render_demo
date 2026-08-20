@@ -1,7 +1,7 @@
 # D3D12 ↔ Vulkan 差异与对齐
 
 > **原则：D3D12 是功能与观感参考路径；Vulkan 负责追上。**  
-> **引擎水位：W12–W22 封板；W23 Doing**（[ADR 0046](learn/adr/0046-w23-nanite-ddgi-gaps.md)）。  
+> **引擎水位：W12–W24 封板**（[ADR 0047](learn/adr/0047-w24-godot-domain-100.md)）。  
 > **口径（Win 双后端 100%）：** Windows 上 D3D12 + Vulkan 渲染与近端物理对齐到「可同场景发版」——lit/阴影/IBL/探针、完整基础后处理（含 SSR/DoF/MB）、GPU 实例 + Cull/Indirect、Bindless 热路径（Feature 门控）、薄 SoftBody Demo；Sandbox 中英文 UI 可实时切换。默认质量 **Medium**；SSAO/软影/VT→slot1 默认关。  
 > **不算进本口径：** Linux 全量发版树 / 大气 / 编辑器 / game_kit / 完整多语言框架；超分/MsQuic **可选 SDK**（无则 SKIP/bilinear）。  
 > 自动化：`python tests/scripts/run_backend_parity.py --config Debug`（见 [TESTING.md](TESTING.md) C4）。
@@ -125,6 +125,16 @@ Headless / golden dump 仍关 TAA/SSAO 保稳定；交互可两端同开。
 | RTXGI Bind/Create | L1 | L1 | 无 SDK → SKIP；CascadeGi 默认 |
 | 产品软影 mask / 半分辨率 RT 反射缓冲 | L1 | stub/SKIP | 全屏 RT 有意差 |
 | Joints / Vehicle / Shatter | Jolt | Jolt | builtin SKIP |
+
+### 3.10 W24 分域 vs Godot ≈100%（ADR 0047）
+
+| 能力 | D3D12 | Vulkan | 层级 |
+|---|---|---|---|
+| 产品软影 mask 进帧 | L0（Feature/Quality） | CPU compose 同波；DXR overlay 有意差 | 光追分域按 Win D3D12 |
+| RT 反射 → SSR 增强 | L0 High | SKIP / 无 DXR | 有意差 |
+| VirtualGeometry Sandbox 热路径 | 同波 | 同波 | L0 Feature |
+| CharacterMoveEx / Triggers | Jolt | Jolt | L0 |
+| Quality↔Effect 默认同步 | 同波 | 同波 | L0 |
 
 
 | 路径 | Ok 条件 | SKIP |
