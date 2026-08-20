@@ -7,7 +7,8 @@
 namespace engine::assets {
 
 // M26/C16: mtime poll for .hlsl / .cso under a shader directory.
-// W6/W9: Poll sets a PSO rebuild request; Sandbox RebuildLitPsoIfPossible consumes it.
+// W20 product loop: Poll → TryCompileHlslWithDxc(-Fo cso) → RebuildLitPso; on SetupLitMesh
+// failure backends keep the previous lit PSO (D3D12 swap-on-success; VK pipeline swap).
 class ShaderHotReload {
  public:
   void SetShaderDir(std::filesystem::path dir) { dir_ = std::move(dir); }

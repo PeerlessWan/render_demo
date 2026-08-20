@@ -44,6 +44,8 @@ class ProbeVolume {
   [[nodiscard]] int grid_nx() const { return nx_; }
   [[nodiscard]] int grid_ny() const { return ny_; }
   [[nodiscard]] int grid_nz() const { return nz_; }
+  [[nodiscard]] Vec3 origin() const { return origin_; }
+  [[nodiscard]] Vec3 spacing() const { return spacing_; }
 
   // Mega-W9: flatten probe irradiance RGB into a CPU atlas (3 floats per probe, x-y-z order).
   [[nodiscard]] std::vector<float> BuildIrradianceAtlasCpu() const;

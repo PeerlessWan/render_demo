@@ -1,6 +1,9 @@
 #include "engine/vt/virtual_texture.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <vector>
 
 namespace engine::vt {
 
@@ -211,6 +214,54 @@ std::uint32_t VirtualTexture::IngestFeedbackPackedU32(std::span<const std::uint3
   }
   ProcessGpuFeedback(reqs);
   return static_cast<std::uint32_t>(reqs.size());
+}
+
+bool VirtualTexture::BuildPhysicalAtlasRgba(std::uint32_t page_texels,
+                                            std::vector<std::uint8_t>& out_rgba, int& out_w,
+                                            int& out_h) const {
+  out_rgba.clear();
+  out_w = 0;
+  out_h = 0;
+  if (cache_.empty()) {
+    return false;
+  }
+  const std::uint32_t pt = std::max(page_texels, 1u);
+  const std::uint32_t slots = static_cast<std::uint32_t>(cache_.size());
+  const std::uint32_t grid =
+      std::max(1u, static_cast<std::uint32_t>(std::ceil(std::sqrt(static_cast<float>(slots)))));
+  out_w = static_cast<int>(grid * pt);
+  out_h = static_cast<int>(grid * pt);
+  out_rgba.assign(static_cast<std::size_t>(out_w * out_h * 4), 0);
+  for (std::uint32_t s = 0; s < slots; ++s) {
+    const auto& phys = cache_[s];
+    if (!phys.occupied) {
+      continue;
+    }
+    const std::uint32_t gx = s % grid;
+    const std::uint32_t gy = s / grid;
+    const auto q = [](float c) -> std::uint8_t {
+      return static_cast<std::uint8_t>(std::clamp(c, 0.f, 1.f) * 255.f + 0.5f);
+    };
+    const std::uint8_t r = q(phys.color.r);
+    const std::uint8_t g = q(phys.color.g);
+    const std::uint8_t b = q(phys.color.b);
+    const std::uint8_t a = q(phys.color.a);
+    for (std::uint32_t py = 0; py < pt; ++py) {
+      for (std::uint32_t px = 0; px < pt; ++px) {
+        const int x = static_cast<int>(gx * pt + px);
+        const int y = static_cast<int>(gy * pt + py);
+        const std::size_t i =
+            (static_cast<std::size_t>(y) * static_cast<std::size_t>(out_w) +
+             static_cast<std::size_t>(x)) *
+            4u;
+        out_rgba[i + 0] = r;
+        out_rgba[i + 1] = g;
+        out_rgba[i + 2] = b;
+        out_rgba[i + 3] = a;
+      }
+    }
+  }
+  return true;
 }
 
 }  // namespace engine::vt

@@ -1,5 +1,6 @@
 #include "engine/render2d/world_text.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace engine::render2d {
@@ -128,6 +129,38 @@ WorldTextMesh BuildWorldTextBillboardsWithAtlasFrame(const BmFontAtlas& atlas,
 
 Path2DMesh BuildWorldTexturedPathStroke(const Path2D& path, float half_width) {
   return path.BuildTexturedStrokeTriangleStrip(half_width);
+}
+
+void BakeWorldTextAtlasRgba(const BmFontAtlas& atlas, int atlas_w, int atlas_h,
+                            std::vector<std::uint8_t>& out_rgba) {
+  const int w = atlas_w > 0 ? atlas_w : 256;
+  const int h = atlas_h > 0 ? atlas_h : 256;
+  out_rgba.assign(static_cast<std::size_t>(w * h * 4), 0);
+  auto fill_rect = [&](int x0, int y0, int gw, int gh) {
+    const int x1 = std::min(x0 + std::max(gw, 1), w);
+    const int y1 = std::min(y0 + std::max(gh, 1), h);
+    for (int y = std::max(y0, 0); y < y1; ++y) {
+      for (int x = std::max(x0, 0); x < x1; ++x) {
+        const std::size_t i =
+            (static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+             static_cast<std::size_t>(x)) *
+            4u;
+        out_rgba[i + 0] = 245;
+        out_rgba[i + 1] = 220;
+        out_rgba[i + 2] = 90;
+        out_rgba[i + 3] = 255;
+      }
+    }
+  };
+  if (atlas.glyphs.empty()) {
+    fill_rect(0, 0, 8, 14);
+    fill_rect(10, 0, 8, 14);
+    return;
+  }
+  for (const auto& [ch, g] : atlas.glyphs) {
+    (void)ch;
+    fill_rect(g.x, g.y, g.w, g.h);
+  }
 }
 
 }  // namespace engine::render2d

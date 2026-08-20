@@ -227,13 +227,13 @@ material::PbrMaterial ResolveMeshMaterial(std::string_view mesh_id) {
     m.transparent = false;
     m.uv_scale = 1.f;
   } else if (mesh_id == "helmet") {
-    m.base_color = {1.f, 1.f, 1.f, 1.f};
+    // Mesh slot1 geometry; albedo shares physical tex slot1 with suburb colormap.
+    // Prefer suburb (town is the Sandbox hero). Helmet stays lit via base_color only.
+    m.base_color = {0.72f, 0.55f, 0.42f, 1.f};
     m.roughness = 0.45f;
-    m.metallic = 0.2f;
-    m.albedo_tex = "models/DamagedHelmet";
-    m.orm_tex = "models/DamagedHelmet";
+    m.metallic = 0.35f;
     m.mesh_slot = 1;
-    m.tex_slot = 1;
+    m.tex_slot = 0;
     m.uv_scale = 1.f;
   } else if (mesh_id == "terrain") {
     m.base_color = {0.28f, 0.42f, 0.22f, 1.f};
@@ -259,7 +259,8 @@ material::PbrMaterial ResolveMeshMaterial(std::string_view mesh_id) {
     m.metallic = 0.05f;
     m.albedo_tex = "scenes/suburb/models/Textures/colormap.png";
     m.mesh_slot = 6;
-    m.tex_slot = 2;
+    // Secondary albedo is physical slot1 (shader: tex_slot>0.5 → albedo_map2). Not a 3rd atlas.
+    m.tex_slot = 1;
     m.uv_scale = 1.f;
   } else if (mesh_id == "character" || mesh_id.rfind("character_", 0) == 0) {
     m.base_color = {0.55f, 0.72f, 0.45f, 1.f};
@@ -281,6 +282,12 @@ material::PbrMaterial ResolveMeshMaterial(std::string_view mesh_id) {
       }
       if (slot > 0 && slot < 16) {
         m.mesh_slot = slot;
+      }
+      // W20: WorldText (13) / HLOD impostor (15) sample secondary albedo atlas (slot=1).
+      if (slot == 13 || slot == 15) {
+        m.base_color = {1.f, 1.f, 1.f, 1.f};
+        m.albedo_tex = (slot == 13) ? "world_text_atlas" : "hlod_impostor";
+        m.tex_slot = 1;
       }
     }
   } else {

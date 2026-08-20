@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 TEST_CASE("Cape cloth pins finite after Step", "[m35][w10][cloth]") {
   engine::clothing::GarmentCloth cloth;
@@ -125,10 +126,16 @@ TEST_CASE("TryHalfResSoftShadowCompose Feature gate", "[m35][w10][rt]") {
 
   engine::SetFeatureOverride("raytracing", true);
   factor = -1.f;
-  const auto on = engine::rt::TrySoftShadowCompose(factor);
+  std::vector<float> grid;
+  int gw = 0;
+  int gh = 0;
+  const auto on = engine::rt::TryHalfResSoftShadowCompose(factor, grid, gw, gh);
   if (on) {
     REQUIRE(factor > 0.f);
     REQUIRE(factor <= 1.f);
+    REQUIRE(gw > 0);
+    REQUIRE(gh > 0);
+    REQUIRE(grid.size() == static_cast<std::size_t>(gw * gh));
     REQUIRE(on.message().find("half-res") != std::string::npos ||
             on.message().find("soft-shadow") != std::string::npos);
   } else {

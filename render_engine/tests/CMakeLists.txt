@@ -20,6 +20,7 @@ add_executable(engine_unit_tests
   unit/test_m34.cpp
   unit/test_m35.cpp
   unit/test_m36.cpp
+  unit/test_w20.cpp
   unit/test_product_wave_stubs.cpp
   unit/test_headless_integration.cpp
   unit/test_usable.cpp
@@ -54,6 +55,9 @@ target_link_libraries(engine_unit_tests PRIVATE
   engine_app
 )
 target_compile_features(engine_unit_tests PRIVATE cxx_std_20)
+if(MSVC)
+  target_compile_options(engine_unit_tests PRIVATE /FS)
+endif()
 
 file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/content" _content_dir_def)
 string(REPLACE "\\" "/" _content_dir_def "${_content_dir_def}")

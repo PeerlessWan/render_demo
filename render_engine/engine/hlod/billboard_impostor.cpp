@@ -9,11 +9,23 @@
 
 namespace engine::hlod {
 
-LodMode BillboardImpostor::SwitchLod(float distance) const {
-  if (distance < distance_threshold) {
-    return LodMode::NearMesh;
+LodMode BillboardImpostor::SwitchLod(float distance) {
+  // W20: enter/exit hysteresis. Not multi-view — single billboard axis only.
+  const float enter = distance_threshold;
+  float exit = exit_distance;
+  if (exit <= 0.f || exit >= enter) {
+    exit = enter * 0.85f;
   }
-  return LodMode::Impostor;
+  if (current_mode_ == LodMode::NearMesh) {
+    if (distance >= enter) {
+      current_mode_ = LodMode::Impostor;
+    }
+  } else {
+    if (distance < exit) {
+      current_mode_ = LodMode::NearMesh;
+    }
+  }
+  return current_mode_;
 }
 
 std::string BakeImpostorPlaceholder(const ColorRgba& color) {

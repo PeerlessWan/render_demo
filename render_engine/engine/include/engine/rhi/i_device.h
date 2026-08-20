@@ -175,6 +175,17 @@ struct FrameLighting {
   bool enable_tiled_lights = false;
   std::array<int, 128> tile_light_count{};   // 32 tiles × 4 Z-slices
   std::array<int, 1024> tile_light_index{};  // 128 clusters × 8 slots (-1 = unused)
+  // W20 L0: DDGI-lite probe irradiance atlas (CPU→GPU; not RTXGI). Default OFF = golden parity.
+  bool enable_probe_gi = false;
+  float probe_gi_intensity = 0.35f;
+  float probe_rgb_scale = 2.f;  // RGBA8 unpack scale (atlas stores rgb/scale)
+  Vec3 probe_origin{0, 0, 0};
+  Vec3 probe_spacing{1, 1, 1};
+  int probe_nx = 0;
+  int probe_ny = 0;
+  int probe_nz = 0;
+  // W20 L0: half-res soft-shadow mask (modulates sun CSM). Default OFF.
+  bool enable_soft_shadow_mask = false;
 };
 
 struct LitDrawItem {
@@ -264,6 +275,9 @@ class IDevice {
 
   // Replace default procedural albedo / ORM (RGBA8, row-major). Call after SetupLitMesh.
   // slot: 0 = primary (t1/t3), 1 = secondary (t4/t5).
+  // W20 VT opt-in: physical page atlas reuses slot=1 when Feature vt_near_default /
+  // material.use_virtual_texture is on. Slot 0 stays classic albedo (zero-diff when VT off).
+  // Hosts that also need helmet/secondary content must sequence uploads or accept overwrite.
   virtual Status UploadLitAlbedoRgba(const std::uint8_t* rgba, int width, int height,
                                      int slot = 0) = 0;
   virtual Status UploadLitOrmRgba(const std::uint8_t* rgba, int width, int height,
@@ -309,6 +323,18 @@ class IDevice {
   // M13: upload 6 RGBA8 faces (face-major, each face = size*size*4) for Fresnel / local
   // reflection probe (dedicated cube; not shared with IBL specular prefilter).
   virtual Status UploadReflectionCubemap(const std::uint8_t* /*rgba_faces*/, int /*face_size*/) {
+    return Status::Ok();
+  }
+
+  // W20 L0: DDGI-lite probe irradiance atlas → GPU 2D texture (nx × ny*nz RGBA8).
+  // rgb = count*3 floats from ProbeVolume::BuildIrradianceAtlasCpu. Default Ok no-op.
+  virtual Status UploadProbeIrradianceAtlas(const float* /*rgb*/, int /*count*/, int /*nx*/,
+                                            int /*ny*/, int /*nz*/) {
+    return Status::Ok();
+  }
+
+  // W20 L0: half-res soft-shadow factor grid (R channel of RGBA8). Default Ok no-op.
+  virtual Status UploadSoftShadowMask(const float* /*factors*/, int /*width*/, int /*height*/) {
     return Status::Ok();
   }
 
@@ -399,6 +425,14 @@ class IDevice {
   }
   virtual Status ExecuteIndirectIndexed(std::uint32_t /*draw_count*/) {
     return Status::Fail("ExecuteIndirectIndexed not supported");
+  }
+
+  // W20 C08: Mesh Shader hot path on the *live* device (not a Sandbox-only probe).
+  // Feature meshlet/mesh_shader off, or no D3D12 MeshShaderTier / VK_EXT_mesh_shader →
+  // Unavailable SKIP (honest). Ok = MS PSO ready and/or DispatchMesh attempted.
+  virtual Status TryMeshShaderHotPath() {
+    return Status::Fail(ErrorCode::Unavailable,
+                        "TryMeshShaderHotPath SKIP: not implemented on this device");
   }
 
  protected:

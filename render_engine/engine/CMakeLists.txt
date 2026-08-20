@@ -178,6 +178,12 @@ target_link_libraries(engine_rhi PUBLIC engine_core engine_scene)
 if(ENGINE_WITH_VULKAN)
   add_library(engine_vulkan STATIC
     backends/vulkan/vulkan_device.cpp
+    backends/vulkan/vulkan_device_core.cpp
+    backends/vulkan/vulkan_device_compute.cpp
+    backends/vulkan/vulkan_device_lit.cpp
+    backends/vulkan/vulkan_device_post.cpp
+    backends/vulkan/vulkan_device_resources.cpp
+    backends/vulkan/gpu_compute_oneshot_vk.cpp
   )
   target_include_directories(engine_vulkan
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -189,6 +195,9 @@ if(ENGINE_WITH_VULKAN)
     PUBLIC engine_rhi engine_platform
     PRIVATE "${ENGINE_VULKAN_LIBRARY}"
   )
+  if(MSVC)
+    target_compile_options(engine_vulkan PRIVATE /FS)
+  endif()
   if(WIN32)
     target_link_libraries(engine_vulkan PRIVATE user32)
   endif()
@@ -488,6 +497,12 @@ endif()
 if(WIN32)
   add_library(engine_d3d12 STATIC
     backends/d3d12/d3d12_device.cpp
+    backends/d3d12/d3d12_device_core.cpp
+    backends/d3d12/d3d12_device_compute.cpp
+    backends/d3d12/d3d12_device_lit.cpp
+    backends/d3d12/d3d12_device_post.cpp
+    backends/d3d12/d3d12_device_resources.cpp
+    backends/d3d12/gpu_compute_oneshot_d3d12.cpp
   )
   target_include_directories(engine_d3d12
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -497,6 +512,11 @@ if(WIN32)
     PUBLIC engine_rhi engine_platform
     PRIVATE d3d12 dxgi dxguid d3dcompiler
   )
+  # W20 MS hot path: resolve meshlet_ms.*.cso next to Sandbox shader outputs.
+  file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/samples/Sandbox/shaders" _d3d12_shader_dir)
+  string(REPLACE "\\" "/" _d3d12_shader_dir "${_d3d12_shader_dir}")
+  target_compile_definitions(engine_d3d12 PRIVATE ENGINE_SHADER_DIR_A="${_d3d12_shader_dir}")
+  target_compile_options(engine_d3d12 PRIVATE /FS)
 endif()
 
 add_library(engine_app STATIC

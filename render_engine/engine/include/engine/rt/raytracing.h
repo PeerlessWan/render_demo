@@ -6,6 +6,7 @@
 #include "engine/rhi/i_device.h"
 
 #include <filesystem>
+#include <vector>
 
 namespace engine::rt {
 
@@ -70,8 +71,12 @@ Status TryBuildCubeBlasTlasAndDispatchRays(
 // Does not run a fullscreen production RT frame (no SBT/raygen product path).
 [[nodiscard]] Status TryVkTraceRaysDemoStub();
 
-  // W17 ADR 0041: half-res soft-shadow blur grid (compose factor); not fullscreen RT.
+  // W17/W20 ADR 0041/0043: half-res soft-shadow blur grid; not fullscreen RT.
+// Fills mean factor; optional out_grid (w*h floats in [0,1]) for UploadSoftShadowMask.
 [[nodiscard]] Status TryHalfResSoftShadowCompose(float& out_shadow_factor);
+[[nodiscard]] Status TryHalfResSoftShadowCompose(float& out_shadow_factor,
+                                                 std::vector<float>& out_grid, int& out_w,
+                                                 int& out_h);
 
 // Alias (W16 name).
 [[nodiscard]] inline Status TrySoftShadowCompose(float& out_shadow_factor) {

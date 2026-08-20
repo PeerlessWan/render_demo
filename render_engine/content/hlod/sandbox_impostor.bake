@@ -1,0 +1,5 @@
+hlod_impostor_bake v1
+near_mesh=cube
+distance_threshold=8
+impostor_tex=impostor/solid_40bf8cff
+bake_id=impostor/solid_40bf8cff

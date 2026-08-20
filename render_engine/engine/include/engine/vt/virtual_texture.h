@@ -91,6 +91,11 @@ class VirtualTexture {
   // into VtFeedbackRequest then ProcessGpuFeedback. Returns ingested count.
   std::uint32_t IngestFeedbackPackedU32(std::span<const std::uint32_t> packed);
 
+  // W20: pack resident physical pages into an RGBA8 atlas for UploadLitAlbedoRgba(slot=1).
+  // page_texels = texels per page edge; atlas is ceil(sqrt(slots))² pages. Empty → false.
+  bool BuildPhysicalAtlasRgba(std::uint32_t page_texels, std::vector<std::uint8_t>& out_rgba,
+                              int& out_w, int& out_h) const;
+
   void ClearRequests() { requests_.clear(); }
 
  private:

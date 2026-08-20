@@ -143,14 +143,26 @@ TEST_CASE("VT GPU feedback stub and UploadPendingPages", "[m32][w9][c06]") {
   // W18: packed u32 ingest (GPU readback word shape).
   const std::uint32_t packed = (2u) | (1u << 10) | (0u << 20) | (180u << 24);
   REQUIRE(vt.IngestFeedbackPackedU32({&packed, 1}) == 1);
+  REQUIRE(vt.ProcessRequests(4) >= 1);
+  std::vector<std::uint8_t> atlas;
+  int aw = 0;
+  int ah = 0;
+  REQUIRE(vt.BuildPhysicalAtlasRgba(4, atlas, aw, ah));
+  REQUIRE(aw > 0);
+  REQUIRE(ah > 0);
+  REQUIRE(atlas.size() == static_cast<std::size_t>(aw * ah * 4));
 }
 
 TEST_CASE("BillboardImpostor SwitchLod and Bake placeholder", "[m32][w9][c07]") {
   engine::hlod::BillboardImpostor lod;
   lod.distance_threshold = 20.f;
+  lod.exit_distance = 15.f;
   lod.near_mesh_id = "mesh/tree_hi";
   REQUIRE(lod.SwitchLod(5.f) == engine::hlod::LodMode::NearMesh);
   REQUIRE(lod.SwitchLod(20.f) == engine::hlod::LodMode::Impostor);
+  // Hysteresis: stay Impostor between exit and enter.
+  REQUIRE(lod.SwitchLod(17.f) == engine::hlod::LodMode::Impostor);
+  REQUIRE(lod.SwitchLod(14.f) == engine::hlod::LodMode::NearMesh);
   REQUIRE(lod.SwitchLod(100.f) == engine::hlod::LodMode::Impostor);
 
   const auto tex = engine::hlod::BakeImpostorPlaceholder({1.f, 0.f, 0.f, 1.f});

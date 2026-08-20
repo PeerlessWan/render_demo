@@ -8,8 +8,8 @@
 
 namespace engine::hlod {
 
-// C07 / Mega-W9: minimal billboard HLOD — distance switch between near mesh and impostor.
-// CPU-only; no GPU bake this wave.
+// C07 / Mega-W9 / W20: billboard HLOD — distance switch between near mesh and impostor.
+// Single-axis billboard only (not multi-view commercial impostor). CPU bake + host upload.
 
 enum class LodMode {
   NearMesh = 0,
@@ -17,12 +17,19 @@ enum class LodMode {
 };
 
 struct BillboardImpostor {
+  // Enter Impostor when distance >= distance_threshold (far).
   float distance_threshold = 50.f;
+  // Exit back to NearMesh when distance < exit_distance (hysteresis). 0 → 0.85×threshold.
+  float exit_distance = 0.f;
   std::string near_mesh_id = "mesh/near";
   std::string impostor_tex_id;
 
-  // distance < threshold → NearMesh; else Impostor.
-  [[nodiscard]] LodMode SwitchLod(float distance) const;
+  // Stateful switch with enter/exit hysteresis (W20). Not multi-view.
+  [[nodiscard]] LodMode SwitchLod(float distance);
+  [[nodiscard]] LodMode current_mode() const { return current_mode_; }
+
+ private:
+  LodMode current_mode_ = LodMode::NearMesh;
 };
 
 // Placeholder "bake": returns a solid-color texture id string for unit tests (no GPU).

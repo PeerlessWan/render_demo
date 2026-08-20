@@ -64,6 +64,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <utility>
@@ -366,7 +367,8 @@ int main(int argc, char** argv) {
     rdesc.sky_vs = shader_dir / "skybox_vk.vs.spv";
     rdesc.sky_ps = shader_dir / "skybox_vk.ps.spv";
     rdesc.enable_shadows = true;
-    rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
+    // Interactive default Medium: High's 4 cascades + SSAO + RT soft-shadow demo tanks FPS.
+    rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
   } else {
     rdesc.lit_vs = shader_dir / "lit_cube.vs.cso";
     rdesc.lit_ps = shader_dir / "lit_cube.ps.cso";
@@ -381,7 +383,7 @@ int main(int argc, char** argv) {
     rdesc.sky_vs = shader_dir / "skybox.vs.cso";
     rdesc.sky_ps = shader_dir / "skybox.ps.cso";
     rdesc.enable_shadows = true;
-    rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::High);
+    rdesc.quality = engine::render::QualitySettings::FromTier(engine::render::QualityTier::Medium);
   }
   if (auto st = render.Init(a.device(), rdesc); !st) {
     engine::LogError(st.message());
@@ -551,23 +553,8 @@ int main(int argc, char** argv) {
         engine::LogError(st.message());
         return 1;
       } else {
-        if (mesh->has_albedo) {
-          if (auto st = a.device().UploadLitAlbedoRgba(mesh->albedo.rgba.data(), mesh->albedo.width,
-                                                       mesh->albedo.height, 1);
-              !st) {
-            engine::LogError(st.message());
-            return 1;
-          }
-        }
-        if (mesh->has_orm) {
-          if (auto st = a.device().UploadLitOrmRgba(mesh->orm.rgba.data(), mesh->orm.width,
-                                                   mesh->orm.height, 1);
-              !st) {
-            engine::LogError(st.message());
-            return 1;
-          }
-        }
-        engine::LogInfo("DamagedHelmet.glb uploaded (mesh slot1 + tex slot1)");
+        // Albedo/ORM stay off slot1 — suburb colormap owns secondary albedo (see ResolveMeshMaterial).
+        engine::LogInfo("DamagedHelmet.glb uploaded (mesh slot1; lit via base_color, tex shared w/ suburb)");
       }
     } else {
       engine::LogError(std::string("Helmet load failed: ") + mesh.status().message());
@@ -675,7 +662,7 @@ int main(int argc, char** argv) {
   fx.sun_intensity = env.sun_intensity;
   fx.ambient_scale = 1.05f;
   fx.exposure = use_vulkan ? 1.f : 1.0f;
-  fx.enable_ssao = rdesc.quality.enable_ssao;
+  fx.enable_ssao = false;  // Medium tier opts SSAO on; Sandbox keeps it off for interactive FPS.
   // Default TAA off: Halton lit jitter reads as whole-screen shake when history is weak.
   // Opt-in via Effects panel (still available on both backends).
   fx.enable_taa = false;
@@ -701,7 +688,8 @@ int main(int argc, char** argv) {
   }
   fx.enable_ibl = false;  // enabled after IBL pack load
   fx.enable_reflection_probe = true;
-  fx.enable_vt_near_default = true;  // W16 ADR 0040: Sandbox near-default VT demo
+  // VT near demo stays Feature-capable; do not force lit slot1 stomping every frame.
+  fx.enable_vt_near_default = false;
   render.set_effect_tuning(fx);
 
   engine::ui::ImmediateUi imgui;
@@ -905,8 +893,13 @@ int main(int argc, char** argv) {
   // Densers grid + incremental update budget (W-gi-deepen). Overlay ambient only;
   // does not replace IBL/Lightmap — F1 "Probe GI" toggles this additive tint.
   probes.Configure({-6.f, 0.25f, -6.f}, {1.5f, 1.25f, 1.5f}, 9, 4, 9);
-  probes.set_budget_per_frame(48);
+  probes.set_budget_per_frame(rdesc.quality.probe_update_budget);
   bool enable_gi = false;
+  bool gi_cascade_refined = false;
+  bool soft_shadow_mask_ready = false;
+  bool enable_soft_shadow_product = false;  // opt-in: DXR demo AS rebuild is expensive
+  bool show_vt_debug = false;               // opt-in: VT atlas → lit slot1
+  constexpr int kProbeAtlasUploadInterval = 8;
 
   // M22: lightmap multiply path coexists with Probe GI (independent F1 flags; not DDGI).
   auto sync_lightmap_albedo = [&](bool want) {
@@ -1165,13 +1158,33 @@ int main(int argc, char** argv) {
   engine::scene::NodeId hlod_impostor_node = engine::scene::kInvalidNode;
   engine::hlod::BillboardImpostor sandbox_hlod;
   sandbox_hlod.distance_threshold = 8.f;
+  sandbox_hlod.exit_distance = 6.5f;  // W20 hysteresis (enter 8 / exit 6.5)
   sandbox_hlod.near_mesh_id = "cube";
-  // W18: mesh shader probe once at startup when Feature meshlet/mesh_shader on.
+  bool hlod_albedo_uploaded = false;
+  {
+    const auto hlod_dir = std::filesystem::path(ENGINE_CONTENT_DIR_A) / "hlod";
+    const auto bake_txt = hlod_dir / "sandbox_impostor.bake";
+    const auto bake_rgba = hlod_dir / "sandbox_impostor.rgba8";
+    if (!std::filesystem::exists(bake_txt)) {
+      (void)engine::hlod::SerializeBakeToFile(sandbox_hlod, {0.25f, 0.75f, 0.55f, 1.f}, bake_txt);
+    }
+    if (!std::filesystem::exists(bake_rgba)) {
+      (void)engine::hlod::WriteSolidRgba8Bake({0.25f, 0.75f, 0.55f, 1.f}, bake_rgba);
+    }
+    (void)engine::hlod::LoadBakeFromFile(sandbox_hlod, bake_txt);
+    // Do NOT upload bake to lit slot1 here — that stomps helmet/suburb albedo (looks black).
+    // Upload only when "HLOD debug" is toggled on (see show_hlod_debug path).
+    if (std::filesystem::exists(bake_rgba) && std::filesystem::exists(bake_txt)) {
+      hlod_albedo_uploaded = false;
+      engine::LogInfo("W20 HLOD: bake on disk ready (slot1 upload deferred to HLOD debug)");
+    }
+  }
+  // W20: mesh shader hot path on the live device (Feature-gated; no Tier/EXT → SKIP).
   if (engine::QueryFeature("meshlet") || engine::QueryFeature("mesh_shader")) {
-    const auto ms = engine::gpu_driven::TryMeshShaderPath();
+    const auto ms = a.device().TryMeshShaderHotPath();
     mesh_shader_last_status = ms ? (std::string("Ok: ") + ms.message())
                                  : (std::string("SKIP: ") + ms.message());
-    engine::LogInfo(std::string("W18 TryMeshShaderPath: ") + mesh_shader_last_status);
+    engine::LogInfo(std::string("W20 TryMeshShaderHotPath: ") + mesh_shader_last_status);
   } else {
     mesh_shader_last_status = "Feature meshlet/mesh_shader off";
   }
@@ -1214,7 +1227,8 @@ int main(int argc, char** argv) {
 
   auto RebuildLitPsoIfPossible = [&]() -> bool {
     if (auto st = render.Init(a.device(), rdesc); !st) {
-      engine::LogWarn(std::string("ShaderHotReload: RebuildLitPsoIfPossible failed: ") +
+      // W20: backends keep previous lit PSO on SetupLitMesh failure.
+      engine::LogWarn(std::string("ShaderHotReload: RebuildLitPsoIfPossible failed (kept old PSO): ") +
                       st.message());
       return false;
     }
@@ -1277,34 +1291,39 @@ int main(int argc, char** argv) {
   const auto status = a.Run([&](engine::Application& app_ref) {
     profiler.Begin("Frame");
     if (shader_hot.Poll() && shader_hot.ConsumePsoRebuildRequest()) {
-      // W17: optional dxc online compile when on PATH (else SKIP, still rebuild PSO from .cso).
+      // W20 product loop: hlsl → dxc -Fo cso → RebuildLitPso; fail keeps old PSO.
       const auto lit_hlsl = std::filesystem::path(ENGINE_CONTENT_DIR_A).parent_path() /
                             "shaders" / "hlsl" / "lit_cube.hlsl";
-      // Prefer repo shaders/hlsl via ENGINE_SHADER sources next to binary.
       const auto lit_from_shader_dir = shader_dir.parent_path().parent_path() / "shaders" / "hlsl" /
                                        "lit_cube.hlsl";
       const auto hlsl_try =
           std::filesystem::exists(lit_from_shader_dir) ? lit_from_shader_dir : lit_hlsl;
+      bool wrote_cso = false;
       if (std::filesystem::exists(hlsl_try)) {
-        // W18: write VS/PS CSOs matching Sandbox CMake (lit_cube.vs.cso / lit_cube.ps.cso).
-        const auto vs_out = shader_dir / "lit_cube.vs.cso";
-        const auto ps_out = shader_dir / "lit_cube.ps.cso";
-        const auto vs_st =
-            engine::assets::TryCompileHlslWithDxc(hlsl_try, vs_out, "VSMain", "vs_6_0");
-        if (!vs_st) {
-          engine::LogInfo(std::string("ShaderHotReload dxc VS: ") + vs_st.message());
+        if (!engine::assets::IsDxcOnPath()) {
+          engine::LogInfo("ShaderHotReload: dxc Unavailable SKIP (rebuild from existing .cso)");
         } else {
-          engine::LogInfo("ShaderHotReload dxc VS → " + vs_out.string());
-        }
-        // Align profile with CMake (ps_6_6 for lit PS).
-        const auto ps_st =
-            engine::assets::TryCompileHlslWithDxc(hlsl_try, ps_out, "PSMain", "ps_6_6");
-        if (!ps_st) {
-          engine::LogInfo(std::string("ShaderHotReload dxc PS: ") + ps_st.message());
-        } else {
-          engine::LogInfo("ShaderHotReload dxc PS → " + ps_out.string());
+          const auto vs_out = shader_dir / "lit_cube.vs.cso";
+          const auto ps_out = shader_dir / "lit_cube.ps.cso";
+          const auto vs_st =
+              engine::assets::TryCompileHlslWithDxc(hlsl_try, vs_out, "VSMain", "vs_6_0");
+          if (!vs_st) {
+            engine::LogInfo(std::string("ShaderHotReload dxc VS: ") + vs_st.message());
+          } else {
+            engine::LogInfo("ShaderHotReload dxc VS → " + vs_out.string());
+            wrote_cso = true;
+          }
+          const auto ps_st =
+              engine::assets::TryCompileHlslWithDxc(hlsl_try, ps_out, "PSMain", "ps_6_6");
+          if (!ps_st) {
+            engine::LogInfo(std::string("ShaderHotReload dxc PS: ") + ps_st.message());
+          } else {
+            engine::LogInfo("ShaderHotReload dxc PS → " + ps_out.string());
+            wrote_cso = true;
+          }
         }
       }
+      (void)wrote_cso;
       (void)RebuildLitPsoIfPossible();
     }
     if (asset_hot.Poll() && asset_hot.ConsumeInvalidateRequest()) {
@@ -1533,8 +1552,8 @@ int main(int argc, char** argv) {
     if (show_axes) {
       dbg.AddAxes(2.5f, 0.05f);
     }
-    // C14/W7: world BMFont billboard wireframe (atlas glyph boxes facing camera).
-    // W18: also UploadLitGeometry → slot 13 / character_13 when checked.
+    // C14/W7: world BMFont billboard — DebugDraw wireframe is debug-only.
+    // W20: bake glyph atlas → UploadLitAlbedoRgba(slot=1) + lit mesh slot 13.
     if (show_world_text_debug) {
       engine::render2d::BmFontAtlas atlas;
       atlas.line_height = 16;
@@ -1546,6 +1565,7 @@ int main(int argc, char** argv) {
       const engine::Vec3 up = q.Rotate(engine::Vec3{0.f, 1.f, 0.f});
       const auto wt = engine::render2d::BuildWorldTextBillboards(
           atlas, "W7", {0.f, 2.4f, -1.5f}, right, up, 0.04f);
+      // Debug-only wireframe overlay.
       const engine::ColorRgba tc{0.95f, 0.85f, 0.35f, 1.f};
       for (std::size_t qi = 0; qi + 5 < wt.indices.size(); qi += 6) {
         const auto& v0 = wt.vertices[wt.indices[qi + 0]].position;
@@ -1558,6 +1578,11 @@ int main(int argc, char** argv) {
         dbg.AddLine(v3, v0, tc);
       }
       if (!wt.vertices.empty() && !wt.indices.empty()) {
+        std::vector<std::uint8_t> atlas_rgba;
+        engine::render2d::BakeWorldTextAtlasRgba(atlas, wt.atlas_w, wt.atlas_h, atlas_rgba);
+        if (!atlas_rgba.empty()) {
+          (void)app_ref.device().UploadLitAlbedoRgba(atlas_rgba.data(), wt.atlas_w, wt.atlas_h, 1);
+        }
         std::vector<engine::rhi::LitVertex> lit;
         lit.reserve(wt.vertices.size());
         for (const auto& v : wt.vertices) {
@@ -1673,6 +1698,19 @@ int main(int argc, char** argv) {
       if (show_hlod_debug) {
         ensure_hlod_near();
         ensure_hlod_impostor();
+        if (hlod_albedo_uploaded) {
+          // Re-assert impostor albedo on secondary slot when HLOD demo owns it.
+          const auto bake_rgba =
+              std::filesystem::path(ENGINE_CONTENT_DIR_A) / "hlod" / "sandbox_impostor.rgba8";
+          if (std::filesystem::exists(bake_rgba)) {
+            std::ifstream in(bake_rgba, std::ios::binary);
+            std::vector<std::uint8_t> px((std::istreambuf_iterator<char>(in)),
+                                         std::istreambuf_iterator<char>());
+            if (px.size() >= 16) {
+              (void)app_ref.device().UploadLitAlbedoRgba(px.data(), 2, 2, 1);
+            }
+          }
+        }
         const auto cam_p = app_ref.camera().position;
         const float dist = (cam_p - kHlodPos).length();
         const auto mode = sandbox_hlod.SwitchLod(dist);
@@ -1817,6 +1855,8 @@ int main(int argc, char** argv) {
           imgui.Checkbox("World text debug (W7)", &show_world_text_debug);
           imgui.Checkbox("Path2D debug (W17)", &show_path2d_debug);
           imgui.Checkbox("HLOD debug (W18)", &show_hlod_debug);
+          imgui.Checkbox("VT debug → slot1 (W20)", &show_vt_debug);
+          imgui.Checkbox("Soft shadow mask (W20 RT)", &enable_soft_shadow_product);
           {
             char w18[128];
             std::snprintf(w18, sizeof(w18), "soft_shadow_factor  %.3f", soft_shadow_factor);
@@ -2037,9 +2077,11 @@ int main(int argc, char** argv) {
             fx.enable_ssr = q.enable_ssr;
             fx.enable_bloom = false;
             render.set_quality(q);
+            probes.set_budget_per_frame(q.probe_update_budget);
             render.set_effect_tuning(fx);
             veg_density_cap = veg_cap_for_tier(tier);
-            engine::LogInfo("QualityTier veg_density_cap=" + std::to_string(veg_density_cap));
+            engine::LogInfo("QualityTier veg_density_cap=" + std::to_string(veg_density_cap) +
+                           " probe_budget=" + std::to_string(q.probe_update_budget));
           };
           if (imgui.Button(Su.quality_low, 90.f, 0.f)) {
             apply_quality_tier(engine::render::QualityTier::Low);
@@ -2088,14 +2130,35 @@ int main(int argc, char** argv) {
             imgui.Text(line);
           }
           imgui.Separator();
-          imgui.Text("GPU (1s snapshot)");
+          imgui.Text("GPU Pass (1s)");
           if (displayed_gpu_passes.empty()) {
-            imgui.Text("  (n/a on this backend)");
+            imgui.Text("  (n/a — no GPU timestamps)");
           } else {
             for (const auto& t : displayed_gpu_passes) {
-              std::snprintf(line, sizeof(line), "  %s: %.3f ms", t.name.c_str(), t.ms);
+              // W20: mark over-budget GPU passes (>8 ms soft warn for Sandbox demos).
+              if (t.ms > 8.0) {
+                std::snprintf(line, sizeof(line), "  ! %s: %.3f ms (over 8ms)", t.name.c_str(),
+                              t.ms);
+              } else {
+                std::snprintf(line, sizeof(line), "  %s: %.3f ms", t.name.c_str(), t.ms);
+              }
               imgui.Text(line);
             }
+          }
+          imgui.Separator();
+          imgui.Text("StreamingBudget");
+          {
+            const double used_mb =
+                static_cast<double>(terrain_budget.used()) / (1024.0 * 1024.0);
+            const double limit_mb =
+                static_cast<double>(terrain_budget.budget()) / (1024.0 * 1024.0);
+            const bool over = terrain_budget.used() > terrain_budget.budget();
+            std::snprintf(line, sizeof(line), "  terrain  %.2f / %.2f MB%s", used_mb, limit_mb,
+                          over ? "  !OVER" : "");
+            imgui.Text(line);
+            std::snprintf(line, sizeof(line), "  VT resident_pages  %u",
+                          sandbox_vt.resident_count());
+            imgui.Text(line);
           }
         }
         imgui.EndWindow();
@@ -2139,21 +2202,50 @@ int main(int argc, char** argv) {
       (void)tiles;
     }
 
-    // M22 / W-gi-deepen: probe irradiance → ambient tint (additive over base;
-    // IBL still applied in lit shader when enable_ibl). Does not replace sky/IBL/Lightmap.
+    // M22 / W20: DDGI-lite ProbeVolume → GPU irradiance atlas + lit world-pos sample.
+    // Default OFF keeps golden parity (enable_probe_gi=0 → zero visual change).
+    probes.set_budget_per_frame(render.quality().probe_update_budget);
     probes.set_enabled(enable_gi);
+    fx.enable_probe_gi = false;
     if (enable_gi) {
-      engine::gi::ProbeLight pl;
-      pl.position = {1.8f, 2.8f, 1.0f};
-      pl.color = {1.f, 0.78f, 0.55f, 1.f};
-      pl.intensity = 1.35f;
-      pl.range = 5.5f;
-      probes.TickProduct({&pl, 1}, 0.18f);
-      // W17: sample via CPU irradiance atlas (same trilinear as Sample).
-      const auto atlas = probes.BuildIrradianceAtlasCpu();
-      const auto irr = probes.SampleAtlasCpu(atlas, app_ref.camera().position);
-      env.ambient = {0.12f + irr.r * 0.35f, 0.13f + irr.g * 0.35f, 0.15f + irr.b * 0.35f, 1.f};
+      std::vector<engine::gi::ProbeLight> pls;
+      pls.reserve(sandbox_local_lights.size());
+      for (const auto& L : sandbox_local_lights) {
+        engine::gi::ProbeLight pl;
+        pl.position = L.position;
+        pl.color = L.color;
+        pl.intensity = L.intensity * fx.local_intensity_scale;
+        pl.range = L.range;
+        pls.push_back(pl);
+      }
+      const engine::Vec3 focus =
+          possess.possess_character ? possess.position : app_ref.camera().position;
+      if (!gi_cascade_refined) {
+        probes.CascadeRefine(focus, 1);
+        gi_cascade_refined = true;
+      }
+      probes.TickProduct(pls, 0.18f);
+      if ((app_ref.frame_index() % static_cast<std::uint64_t>(kProbeAtlasUploadInterval)) == 0) {
+        const auto atlas = probes.BuildIrradianceAtlasCpu();
+        const int nprobe = probes.grid_nx() * probes.grid_ny() * probes.grid_nz();
+        if (auto st = app_ref.device().UploadProbeIrradianceAtlas(
+                atlas.data(), nprobe, probes.grid_nx(), probes.grid_ny(), probes.grid_nz());
+            !st) {
+          engine::LogWarn(std::string("UploadProbeIrradianceAtlas: ") + st.message());
+        }
+      }
+      fx.enable_probe_gi = true;
+      fx.probe_gi_intensity = 0.35f;
+      fx.probe_rgb_scale = 2.f;
+      fx.probe_origin = probes.origin();
+      fx.probe_spacing = probes.spacing();
+      fx.probe_nx = probes.grid_nx();
+      fx.probe_ny = probes.grid_ny();
+      fx.probe_nz = probes.grid_nz();
+      // Base ambient only; spatial GI is sampled in lit (not CPU ambient tint).
+      env.ambient = {0.20f, 0.21f, 0.24f, 1.f};
     } else {
+      gi_cascade_refined = false;
       env.ambient = {0.20f, 0.21f, 0.24f, 1.f};
     }
     // Keep lightmap multiply in sync if toggled via harness/console later.
@@ -2165,7 +2257,8 @@ int main(int argc, char** argv) {
       particles.Step(app_ref.delta_time());
       gpu_particles.set_origin({1.8f, 2.6f, 1.0f});
       (void)gpu_particles.Step(app_ref.delta_time());
-      // W16/W18: VT near-field — multi UV feedback + optional packed U32 ingest.
+      // W16/W18/W20: VT near-field. CPU tick always OK; GPU slot1 upload is debug-only —
+      // unconditional atlas upload was blackening helmet/suburb and stalling both backends.
       if (engine::QueryFeature("virtual_texture") || engine::QueryFeature("vt_near_default")) {
         engine::vt::VtFeedbackRequest fbs[5]{};
         const float uvs[5][2] = {{0.50f, 0.50f}, {0.42f, 0.50f}, {0.58f, 0.50f},
@@ -2181,6 +2274,14 @@ int main(int argc, char** argv) {
             ((packed_page.mip & 0xFu) << 20) | (200u << 24);
         (void)sandbox_vt.IngestFeedbackPackedU32({&packed, 1});
         (void)sandbox_vt.ProcessRequests(1);
+        if (show_vt_debug && !show_world_text_debug && !show_hlod_debug) {
+          std::vector<std::uint8_t> vt_atlas;
+          int vt_w = 0;
+          int vt_h = 0;
+          if (sandbox_vt.BuildPhysicalAtlasRgba(8, vt_atlas, vt_w, vt_h) && !vt_atlas.empty()) {
+            (void)app_ref.device().UploadLitAlbedoRgba(vt_atlas.data(), vt_w, vt_h, 1);
+          }
+        }
       }
       if (large_terrain_mode) {
         terrain_chunks.Update(app_ref.camera().position, terrain_budget);
@@ -2386,19 +2487,35 @@ int main(int argc, char** argv) {
       }
       reflection_probe.ClearDirty();
     }
-    // W18: half-res soft-shadow compose → multiply into sun (no-op when RT Unavailable).
-    if ((app_ref.frame_index() % 30) == 0) {
+    // W20 L0: half-res soft-shadow mask → lit sun modulate (not sun_intensity multiply).
+    // Opt-in only: TryHalfResSoftShadowCompose used to rebuild DXR AS every call (both backends
+    // hit it via a side D3D12 device) → <20 FPS. Quality High still exposes the Feature path.
+    fx.enable_soft_shadow_mask = false;
+    const bool want_soft_shadow = enable_soft_shadow_product &&
+                                  render.quality().enable_raytracing &&
+                                  engine::QueryFeature("raytracing");
+    if (want_soft_shadow && (app_ref.frame_index() % 30) == 0) {
       float factor = 1.f;
-      if (auto st = engine::rt::TryHalfResSoftShadowCompose(factor); st) {
+      std::vector<float> grid;
+      int gw = 0;
+      int gh = 0;
+      if (auto st = engine::rt::TryHalfResSoftShadowCompose(factor, grid, gw, gh); st) {
         soft_shadow_factor = factor;
+        if (!grid.empty() && gw > 0 && gh > 0) {
+          if (auto up = app_ref.device().UploadSoftShadowMask(grid.data(), gw, gh); up) {
+            soft_shadow_mask_ready = true;
+          } else {
+            engine::LogWarn(std::string("UploadSoftShadowMask: ") + up.message());
+          }
+        }
+      } else {
+        soft_shadow_mask_ready = false;
       }
+    } else if (!want_soft_shadow) {
+      soft_shadow_mask_ready = false;
     }
-    {
-      const float sun_ui = fx.sun_intensity;
-      fx.sun_intensity = sun_ui * soft_shadow_factor;
-      render.set_effect_tuning(fx);
-      fx.sun_intensity = sun_ui;
-    }
+    fx.enable_soft_shadow_mask = soft_shadow_mask_ready;
+    render.set_effect_tuning(fx);
     if (auto st = render.DrawFrame(app_ref.device(), scene, env, aspect, &sprites, nullptr, &dbg);
         !st) {
       engine::LogError(st.message());
@@ -2550,6 +2667,7 @@ int main(int argc, char** argv) {
             fx.enable_bloom = q.enable_bloom;
           }
           render.set_quality(q);
+          probes.set_budget_per_frame(q.probe_update_budget);
           render.set_effect_tuning(fx);
           veg_density_cap = veg_cap_for_tier(tier);
           std::cout << engine::debug::HarnessOk(std::string("\"tier\":\"") + hcmd.key +

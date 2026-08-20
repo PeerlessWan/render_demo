@@ -94,6 +94,17 @@ struct EffectTuning {
   // Mega-W10 C06: Sandbox "near default" VT preference (pairs with Feature vt_near_default).
   // Default OFF — classic materials / golden stay non-VT; not Nanite.
   bool enable_vt_near_default = false;
+  // W20 L0: DDGI-lite atlas sampling in lit (not RTXGI). Default OFF = golden parity.
+  bool enable_probe_gi = false;
+  float probe_gi_intensity = 0.35f;
+  float probe_rgb_scale = 2.f;
+  Vec3 probe_origin{0, 0, 0};
+  Vec3 probe_spacing{1, 1, 1};
+  int probe_nx = 0;
+  int probe_ny = 0;
+  int probe_nz = 0;
+  // W20 L0: half-res soft-shadow mask modulates sun. Default OFF.
+  bool enable_soft_shadow_mask = false;
 };
 
 class RenderSystem {

@@ -24,6 +24,8 @@
 | 自定义 mesh / albedo / ORM | 有 | 有 | 对齐 |
 | IBL irradiance + **独立** prefilter + BRDF LUT | 有 | 有 | 对齐 |
 | Fresnel **独立**反射探针（与 prefilter 分槽） | t10 probe / t6 prefilter | binding 12 / 8 | 对齐 |
+| W20 DDGI-lite probe GI atlas（默认 OFF） | t11 + FrameCB | binding 13 + FrameGpu | L0 同波 |
+| W20 half-res soft-shadow mask（RT Feature 门控） | t12 + FrameCB | binding 14 + FrameGpu | L0 同波；无 RT → SKIP |
 | 半透明 lit PSO | 有 | 有 | 对齐 |
 | Skybox / UI / Debug / Quad | 有 | 有 | 对齐 |
 | Post：SSAO / TAA / fog / bloom / tonemap / auto-exp | `post_ssao_taa.hlsl` | `post_ssao_taa_vk.hlsl` | 对齐 |
@@ -34,7 +36,7 @@
 | Bindless 热路径 | Feature `bindless_hot_path`（默认 OFF） | Feature `bindless`（indexing）+ `bindless_hot_path` 默认 OFF | 门控对齐黄金图 |
 | Light tile cull CS | `light_tile_cull_cs` + Simulate | SPIR-V 校验 + Simulate 同形填充；无 SPIR-V → SKIP | **W11 对齐** |
 | GPU 蒙皮主路径 | `SkinOnDevice` → D3D12 CS | `api_kind=Vulkan` → `gpu_skin_vk`；缺 SPIR-V → CPU/SKIP | **W11 对齐** |
-| Mesh Shader | MS PSO / DispatchMesh | Feature on + `VK_EXT_mesh_shader` → 最小 Ok；否则 SKIP | **W11 尽力** |
+| Mesh Shader | 主设备 `TryMeshShaderHotPath`（Tier→MS PSO/DispatchMesh） | Feature on + live `VK_EXT_mesh_shader` → Ok；否则 SKIP | **W20 L1** |
 | VK TraceRays 示范 | DXR DispatchRays | `rayTracingPipeline` → 解析 `vkCmdTraceRaysKHR`；否则 SKIP | **W11 尽力** |
 | 薄 SoftBody | `IPhysicsWorld` + Jolt | 同（与后端无关） | 对齐；builtin SKIP |
 | Sandbox 中/英 UI | ImmediateUi + CJK atlas | 同 | 对齐 |
@@ -77,13 +79,29 @@ Headless / golden dump 仍关 TAA/SSAO 保稳定；交互可两端同开。
 - Vulkan：**W16** 有 `VK_EXT_descriptor_indexing` 时 Feature `bindless`；`bindless_hot_path` opt-in 时 `BindlessAlbedoHeapPad` 写 `pad`（2/4），`lit_cube_vk.hlsl` 走热路径分支；无 indexing → 诚实 SKIP。  
 - 黄金图 / C4 默认路径不漂。
 
-### 3.5 Mega-W11 Win VK Status 路径（摘要）
+### 3.6 W20 产品级加深（ADR 0043）
+
+| 能力 | D3D12 | Vulkan | 层级 |
+|---|---|---|---|
+| Device 按域拆分 + `GpuComputeOneShot` | `d3d12_device_*.cpp` | `vulkan_device_*.cpp` | 工程 |
+| Light tile cull CS | OneShot helper | OneShot helper | L0 |
+| GI atlas → GPU + lit 采样 | 同波 | 同波 | L0 |
+| 软影 half-res → FrameCB | 无 RT → SKIP | 同 | L0 |
+| VT 物理页 + lit opt-in | 默认零差 | 同 | L0 |
+| HLOD bake → albedo | 同波 | 同波 | L0 |
+| Mesh Shader 主设备路径 | Tier → Ok | EXT → Ok | L1 |
+| Profiler GPU Pass + Budget HUD | 同波 | 同波 | L0 |
+
+**冻结**：DLSS / FSR2 / MsQuic 真 SDK（继续 `builtin_bilinear` / Probe Unavailable）。
+
+**禁止**：D3D12 Ok 而 VK 仅 Simulate 却宣称 GPU。
+
 
 | 路径 | Ok 条件 | SKIP |
 |---|---|---|
 | `Setup/DispatchLightTileCull` | SPIR-V 可建 module；Dispatch 同形填充 | 无/坏 SPIR-V |
 | `SkinOnDevice` | Feature `gpu_skinning` + 对应后端 CS | Feature off → CPU；CS 缺 → CPU message |
-| `TryMeshShaderPath` | Feature on +（D3D12 MS 或 `VK_EXT_mesh_shader`） | Feature off / 无扩展 |
+| `TryMeshShaderPath` / `IDevice::TryMeshShaderHotPath` | Feature on +（D3D12 MS 或 live `VK_EXT_mesh_shader`） | Feature off / 无 Tier·EXT |
 | `TryVkTraceRaysDemoStub` | `VK_KHR_ray_tracing_pipeline` + `vkCmdTraceRaysKHR` 可解析 | 无 pipeline 扩展 |
 | Bindless | D3D Tier≥2 / VK indexing → Feature `bindless`；热路径默认 OFF | 无 indexing / Tier<2 → SKIP |
 
@@ -133,8 +151,9 @@ sample_sandbox.exe --backend=vulkan
 
 | 路径 | 角色 |
 |---|---|
-| `engine/backends/d3d12/d3d12_device.cpp` | D3D12 参考 |
-| `engine/backends/vulkan/vulkan_device.cpp` | Vulkan 对齐（W11：tile cull / bindless SKIP / api_kind） |
+| `engine/backends/d3d12/d3d12_device_*.cpp` | D3D12 参考（W20 按域拆分） |
+| `engine/backends/vulkan/vulkan_device_*.cpp` | Vulkan 对齐（W20 按域拆分） |
+| `engine/backends/*/gpu_compute_oneshot_*` | W20 one-shot CS helper |
 | `engine/animation/gpu_skin_main.cpp` / `gpu_skin_vk.*` | GPU 蒙皮主路径按 `api_kind` 路由 |
 | `engine/gpu_driven/meshlet.cpp` | Feature `mesh_shader` + `VK_EXT_mesh_shader` |
 | `engine/rt/raytracing.cpp` | `TryVkTraceRaysDemoStub` → `vkCmdTraceRaysKHR` |

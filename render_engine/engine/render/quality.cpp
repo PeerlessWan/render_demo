@@ -44,6 +44,8 @@ QualitySettings QualitySettings::FromTier(QualityTier t) {
       q.enable_ssr = false;
       q.enable_dof = true;
       q.enable_motion_blur = false;
+      // Still Feature-gated at runtime; High opts into soft-shadow mask product path.
+      q.enable_raytracing = true;
       break;
   }
   return q;

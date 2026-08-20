@@ -46,6 +46,19 @@ cbuffer FrameCB : register(b0) {
   float g_pad_z;
   float4 g_tile_light_count[32];   // 128 cluster counts
   float4 g_tile_light_index[256];  // 128×8 indices
+  // W20 L0: DDGI-lite probe irradiance atlas (not RTXGI) + half-res soft-shadow mask.
+  float g_enable_probe_gi;
+  float g_probe_gi_intensity;
+  float g_probe_rgb_scale;
+  float g_probe_nx;
+  float3 g_probe_origin;
+  float g_probe_ny;
+  float3 g_probe_spacing;
+  float g_probe_nz;
+  float g_enable_soft_shadow_mask;
+  float g_pad_w20_0;
+  float g_pad_w20_1;
+  float g_pad_w20_2;
 };
 
 cbuffer ObjectCB : register(b1) {
@@ -76,6 +89,9 @@ TextureCube g_ibl_prefilter : register(t6);
 TextureCube g_ibl_irradiance : register(t7);
 Texture2D g_brdf_lut : register(t8);
 TextureCube g_reflection_probe : register(t10);
+// W20 L0: probe irradiance atlas (nx × ny*nz) + soft-shadow mask (half-res screen).
+Texture2D g_probe_irradiance_atlas : register(t11);
+Texture2D g_soft_shadow_mask : register(t12);
 SamplerComparisonState g_shadow_samp : register(s0);
 SamplerState g_linear_samp : register(s1);
 
@@ -361,6 +377,52 @@ float3 AccumulateLocalLight(int i, float3 world_pos, float3 n, float3 diffuse, f
   return diffuse * nd * lcol * atten * ao * lsh;
 }
 
+// W20 L0 DDGI-lite: trilinear sample of CPU→GPU irradiance atlas (not RTXGI).
+float3 FetchProbeAtlasTexel(int x, int y, int z, int ny, float2 texel, float scale) {
+  float u = ((float)x + 0.5) * texel.x;
+  float v = ((float)(y + z * ny) + 0.5) * texel.y;
+  return g_probe_irradiance_atlas.SampleLevel(g_linear_samp, float2(u, v), 0).rgb * scale;
+}
+
+float3 SampleProbeIrradiance(float3 world_pos) {
+  if (g_enable_probe_gi < 0.5f) {
+    return 0.xxx;
+  }
+  int nx = max((int)g_probe_nx, 1);
+  int ny = max((int)g_probe_ny, 1);
+  int nz = max((int)g_probe_nz, 1);
+  float3 spacing = max(g_probe_spacing, 1e-4.xxx);
+  float3 f = (world_pos - g_probe_origin) / spacing;
+  int x0 = clamp((int)floor(f.x), 0, nx - 1);
+  int y0 = clamp((int)floor(f.y), 0, ny - 1);
+  int z0 = clamp((int)floor(f.z), 0, nz - 1);
+  int x1 = min(x0 + 1, nx - 1);
+  int y1 = min(y0 + 1, ny - 1);
+  int z1 = min(z0 + 1, nz - 1);
+  float tx = saturate(f.x - (float)x0);
+  float ty = saturate(f.y - (float)y0);
+  float tz = saturate(f.z - (float)z0);
+  float2 texel = float2(1.0 / (float)nx, 1.0 / (float)(ny * nz));
+  float scale = max(g_probe_rgb_scale, 1e-3);
+  float3 c00 = lerp(FetchProbeAtlasTexel(x0, y0, z0, ny, texel, scale),
+                    FetchProbeAtlasTexel(x1, y0, z0, ny, texel, scale), tx);
+  float3 c10 = lerp(FetchProbeAtlasTexel(x0, y1, z0, ny, texel, scale),
+                    FetchProbeAtlasTexel(x1, y1, z0, ny, texel, scale), tx);
+  float3 c01 = lerp(FetchProbeAtlasTexel(x0, y0, z1, ny, texel, scale),
+                    FetchProbeAtlasTexel(x1, y0, z1, ny, texel, scale), tx);
+  float3 c11 = lerp(FetchProbeAtlasTexel(x0, y1, z1, ny, texel, scale),
+                    FetchProbeAtlasTexel(x1, y1, z1, ny, texel, scale), tx);
+  return lerp(lerp(c00, c10, ty), lerp(c01, c11, ty), tz);
+}
+
+float SoftShadowMaskFactor(float3 world_pos) {
+  if (g_enable_soft_shadow_mask < 0.5f) {
+    return 1.0f;
+  }
+  float2 uv = ScreenUvFromWorld(world_pos);
+  return saturate(g_soft_shadow_mask.SampleLevel(g_linear_samp, uv, 0).r);
+}
+
 float4 PSMain(VSOutput input) : SV_Target {
   float3 n = normalize(input.world_normal);
   // Large floor tris that straddle the near plane get clipped into a screen-filling
@@ -418,6 +480,7 @@ float4 PSMain(VSOutput input) : SV_Target {
   float ndotv = saturate(dot(n, v));
   spec *= ndotv * ndotv * ndotv;
   float sh = ShadowFactor(input.world_pos, n);
+  sh *= SoftShadowMaskFactor(input.world_pos);
 
   float ao = tex_ao;
   // Screen-space AO applied in ResolvePostEffects; keep flag unused here.
@@ -427,6 +490,7 @@ float4 PSMain(VSOutput input) : SV_Target {
   float3 sun_term = (diffuse * ndotl + g_sun_color * spec) * g_sun_intensity * sh * ao;
   sun_term = min(sun_term, 8.0.xxx);
   float3 lit = g_ambient * base * ao + sun_term;
+  lit += SampleProbeIrradiance(input.world_pos) * base * ao * g_probe_gi_intensity;
 
   if (g_enable_reflection > 0.5) {
     float3 R = reflect(-v, n);

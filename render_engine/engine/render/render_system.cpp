@@ -1,5 +1,6 @@
 #include "engine/render/render_system.h"
 
+#include "engine/core/feature.h"
 #include "engine/core/log.h"
 #include "engine/debug/console.h"
 #include "engine/render/local_lights.h"
@@ -190,6 +191,13 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
     item.mesh_slot = mat.mesh_slot;
     item.tex_slot = mat.tex_slot;
     item.uv_scale = mat.uv_scale > 0.f ? mat.uv_scale : 1.f;
+    // W20 VT opt-in: material flag + Feature → secondary albedo (physical atlas slot=1).
+    // Default materials keep use_virtual_texture=false → zero-diff when VT off.
+    if (mat.use_virtual_texture &&
+        (QueryFeature("vt_near_default") || QueryFeature("virtual_texture"))) {
+      item.tex_slot = 1;
+      item.use_albedo = true;
+    }
     if (mat.transparent) {
       transparent.push_back(item);
     } else {
@@ -371,6 +379,17 @@ Status RenderSystem::DrawFrame(rhi::IDevice& device, const RenderScene& scene,
   lighting.reflection_intensity = effect_.reflection_intensity;
   lighting.enable_ibl = effect_.enable_ibl && env.has_ibl();
   lighting.ibl_intensity = effect_.ibl_intensity;
+
+  // W20 L0: DDGI-lite atlas + soft-shadow mask flags (default OFF).
+  lighting.enable_probe_gi = effect_.enable_probe_gi;
+  lighting.probe_gi_intensity = effect_.probe_gi_intensity;
+  lighting.probe_rgb_scale = effect_.probe_rgb_scale;
+  lighting.probe_origin = effect_.probe_origin;
+  lighting.probe_spacing = effect_.probe_spacing;
+  lighting.probe_nx = effect_.probe_nx;
+  lighting.probe_ny = effect_.probe_ny;
+  lighting.probe_nz = effect_.probe_nz;
+  lighting.enable_soft_shadow_mask = effect_.enable_soft_shadow_mask;
 
   // Mega-W10 C02: prefer GPU Feature path (DispatchLightTileCull / Simulate) else CPU Assign.
   lighting.enable_tiled_lights = effect_.enable_tiled_lights;

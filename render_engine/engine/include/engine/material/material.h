@@ -16,6 +16,9 @@ struct PbrMaterial {
   // When true, albedo slot is expected to carry lightmap.rgba (baker format) or a
   // CPU-multiplied albedo×lightmap upload via gi::LoadLightmapRgba + UploadLitAlbedoRgba.
   bool use_lightmap = false;
+  // W20 VT opt-in: with Feature vt_near_default/virtual_texture, sample secondary albedo
+  // (UploadLitAlbedoRgba slot=1 physical atlas). Default false → classic path zero-diff.
+  bool use_virtual_texture = false;
   bool transparent = false;
   int mesh_slot = 0;
   int tex_slot = 0;

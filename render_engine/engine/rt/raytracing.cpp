@@ -666,27 +666,48 @@ Status TryComposeDxrShadowOverlay(float& out_shadow_factor) {
 }
 
 Status TryHalfResSoftShadowCompose(float& out_shadow_factor) {
+  std::vector<float> unused;
+  int w = 0;
+  int h = 0;
+  return TryHalfResSoftShadowCompose(out_shadow_factor, unused, w, h);
+}
+
+Status TryHalfResSoftShadowCompose(float& out_shadow_factor, std::vector<float>& out_grid, int& out_w,
+                                   int& out_h) {
   out_shadow_factor = 1.f;
+  out_grid.clear();
+  out_w = 0;
+  out_h = 0;
   const FeatureSet features = QueryFeatures();
   if (!features.raytracing) {
     return Status::Fail(ErrorCode::Unavailable,
                         "TrySoftShadowCompose Unavailable SKIP: Feature raytracing off");
   }
 
-  // W17 ADR 0041: half-resolution soft-shadow — build a small factor grid from DXR
-  // overlay, separable 3-tap blur, then reduce to a single compose factor (product mid).
-  float overlay = 1.f;
-  const Status composed = TryComposeDxrShadowOverlay(overlay);
-  float seed = overlay;
-  bool have_seed = static_cast<bool>(composed);
-  if (!have_seed) {
-    DxrDemoConfig demo;
-    demo.enable_shadows = true;
-    if (!CanRunDxrDemo(features, demo)) {
-      return Status::Fail(ErrorCode::Unavailable,
-                          "TrySoftShadowCompose Unavailable SKIP: no RT demo path");
+  // W17/W20 ADR 0041/0043: half-resolution soft-shadow factor grid from DXR overlay,
+  // separable blur, then mean compose factor + optional uploadable mask (not fullscreen RT).
+  // Cache the overlay seed: TryComposeDxrShadowOverlay rebuilds BLAS+TLAS+DispatchRays on a
+  // side D3D12 device every call — that alone tanks Sandbox FPS on both backends.
+  static float s_cached_overlay = -1.f;
+  float seed = 0.62f;
+  if (s_cached_overlay >= 0.f) {
+    seed = s_cached_overlay;
+  } else {
+    float overlay = 1.f;
+    const Status composed = TryComposeDxrShadowOverlay(overlay);
+    if (composed) {
+      s_cached_overlay = overlay;
+      seed = overlay;
+    } else {
+      DxrDemoConfig demo;
+      demo.enable_shadows = true;
+      if (!CanRunDxrDemo(features, demo)) {
+        return Status::Fail(ErrorCode::Unavailable,
+                            "TrySoftShadowCompose Unavailable SKIP: no RT demo path");
+      }
+      s_cached_overlay = 0.62f;
+      seed = 0.62f;
     }
-    seed = 0.62f;
   }
 
   constexpr int kHalfW = 8;
@@ -743,9 +764,13 @@ Status TryHalfResSoftShadowCompose(float& out_shadow_factor) {
     soft = soft * 0.7f + (edge / static_cast<float>(ec)) * 0.3f;
   }
   out_shadow_factor = (std::min)(1.f, (std::max)(0.f, soft));
-  LogInfo("TrySoftShadowCompose: Ok half-res-blur soft_factor=" +
-          std::to_string(out_shadow_factor));
-  return Status::Ok("half-res-soft-shadow-blur");
+  out_w = kHalfW;
+  out_h = kHalfH;
+  out_grid.assign(grid, grid + kHalfW * kHalfH);
+  LogInfo("TrySoftShadowCompose: Ok half-res-soft-shadow-mask soft_factor=" +
+          std::to_string(out_shadow_factor) + " grid=" + std::to_string(out_w) + "x" +
+          std::to_string(out_h));
+  return Status::Ok("half-res-soft-shadow-mask");
 }
 
 Status TryVkTraceRaysDemoStub() {

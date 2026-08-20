@@ -37,9 +37,9 @@
 
 | 弱项 | 收口状态 | 仍不宣称 |
 |---|---|---|
-| GI / RT | DDGI-lite；`TrySoftShadowCompose` half-res blur grid（非全屏 RT） | Lumen / RTXGI |
-| 超分 | 诚实链；无 FFX/NGX → `builtin_bilinear` | Frame Generation |
-| VT / GPU Driven | Cull+Indirect；VK bindless opt-in；VT 近场启发式；**meshoptimizer Prefer 真接线**（有 vendor） | Nanite / 全材质默认 VT |
+| GI / RT | **W20**：DDGI-lite atlas→GPU+lit；软影 half-res→FrameCB（非全屏 RT） | Lumen / RTXGI |
+| 超分 | 诚实链；无 FFX/NGX → `builtin_bilinear`；**DLSS/FSR2 冻结不开发** | Frame Generation |
+| VT / GPU Driven | **W20**：物理页 atlas + lit opt-in；Cull+Indirect；meshoptimizer Prefer | Nanite / 全材质默认 VT |
 | GPU 粒子 | D3D12 CS；**W17** VK `gpu-cs-vk` SSBO dispatch（缺 SPIR-V → cpu-fallback） | Niagara |
 | 角色 | mesh0 全 prim；蒙皮多 draw（Sandbox 多 slot） | 服装/完整 IK |
 | 地形水植被 | ChunkStream / FFT 海 / 植被 GPU instance（W14） | 开放世界全家桶 |
@@ -73,10 +73,10 @@
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C06 | Virtual Texture 产品化 | **W18**：`IngestFeedbackPackedU32` + 多请求近场；仍非 GPU UAV feedback / Nanite | 中 |
-| C07 | HLOD / Impostor | **W18**：Sandbox 距离切换 + `LoadBakeFromFile` / `WriteSolidRgba8Bake`；仍非多视角 GPU bake | 中 |
-| C08 | Meshlet / 更完整 GPU 几何管线 | **W17/W18**：meshoptimizer Prefer；Sandbox 启动 `TryMeshShaderPath`；无 Tier/EXT → SKIP | 中 |
-| G16 | 光追 API 对齐 | **W18**：half-res soft compose + Sandbox 乘 sun；无 RT → SKIP | M25 / W7–W18 |
+| C06 | Virtual Texture 产品化 | **W20**：物理页 atlas + feedback→lit opt-in；仍非 Nanite | 中 |
+| C07 | HLOD / Impostor | **W20**：bake→`UploadLitAlbedo` + 滞回；**非多视角**单轴 billboard | 中 |
+| C08 | Meshlet / 更完整 GPU 几何管线 | **W20**：MS 主设备热路径；无 Tier/EXT → SKIP | 中 |
+| G16 | 光追 API 对齐 | **W20**：软影 half-res→FrameCB；无 RT → SKIP | M25 / W7–W20 |
 | C09 | FFT / 高级水面 | **Mega-W8**：无限平铺 FFT 海 + 浮力 | 低 |
 
 ### 4.3 动画与角色
@@ -99,14 +99,14 @@
 |---|---|---|---|
 | **G13** | **矢量 / 路径绘制** | **W18**：Path2D → lit mesh slot（Sandbox）；SVG 布尔外置 | 按产品需要 |
 | C13 | 九宫格 / 更完整 2D UI 精灵约定 | 偏运行时 UI 与 2D 共用 | 低 |
-| C14 | 3D 世界文字 | **W18**：WorldText → lit mesh slot（Sandbox）；仍可用 DebugDraw | 中 |
+| C14 | 3D 世界文字 | **W20**：WorldText 纹理路径 + lit；DebugDraw 仅调试 | 中 |
 | C15 | 2D 富文本 / 复杂排版 | 超出 BMFont 基础 | 低 |
 
 ### 4.5 运行时工程
 
 | ID | 候选 | 说明 | 优先级建议 |
 |---|---|---|---|
-| C16 | 资源热更 / 着色器热重载 | **W18**：`TryCompileHlslWithDxc` 可写 `.cso`（VS/PS entry）；缺 dxc → SKIP | 中 |
+| C16 | 资源热更 / 着色器热重载 | **W20**：hlsl→dxc→cso→RebuildLitPso；缺 dxc → SKIP | 中 |
 | C17 | 多窗口 / 多 GPU | **钉死（W9）**：单窗口单适配器；**不实装**；见 [C17_MULTI_WINDOW.md](C17_MULTI_WINDOW.md) | 低（不做） |
 | C18 | 立体 / XR 渲染 | 输入层可预留适配器；渲染未排期 | 低（易扩范围） |
 

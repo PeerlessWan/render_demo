@@ -55,4 +55,9 @@ WorldTextMesh BuildWorldTextBillboardsWithAtlasFrame(const BmFontAtlas& atlas,
 // Textured 2D path stroke in world/XZ (Y up): Path2D points are XZ; V across stroke.
 Path2DMesh BuildWorldTexturedPathStroke(const Path2D& path, float half_width);
 
+// W20: bake a simple RGBA8 glyph atlas from BMFont metrics (filled quads) for
+// UploadLitAlbedoRgba + lit WorldText mesh. DebugDraw wireframes stay debug-only.
+void BakeWorldTextAtlasRgba(const BmFontAtlas& atlas, int atlas_w, int atlas_h,
+                            std::vector<std::uint8_t>& out_rgba);
+
 }  // namespace engine::render2d

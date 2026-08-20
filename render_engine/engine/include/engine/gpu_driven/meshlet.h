@@ -47,6 +47,8 @@ std::uint32_t CullMeshletsToIndirect(std::span<const Meshlet> meshlets, const Ma
 // Mega-W9 C08: Feature "meshlet"/"mesh_shader" off → Unavailable SKIP.
 // D3D12: probe MeshShaderTier + attempt real MS PSO (meshlet_ms.cso); optional DispatchMesh.
 // Mega-W11: if D3D12 path fails, VK_EXT_mesh_shader probe → minimal Ok; else SKIP.
+// W20: prefer IDevice::TryMeshShaderHotPath on the live device when available; this
+// standalone probe remains for unit tests / Feature gating without an IDevice.
 [[nodiscard]] Status TryMeshShaderPath();
 
 // Alias kept for W8 call sites / tests.
