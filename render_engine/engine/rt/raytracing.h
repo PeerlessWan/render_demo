@@ -11,21 +11,21 @@
 namespace engine::rt {
 
 struct RaytracingConfig {
-  bool enable = false;
-  bool allow_fallback = true;
+    bool enable = false;
+    bool allow_fallback = true;
 };
 
 struct DxrDemoConfig {
-  bool enable_reflections = false;
-  bool enable_shadows = false;
-  int max_bounces = 1;
+    bool enable_reflections = false;
+    bool enable_shadows = false;
+    int max_bounces = 1;
 };
 
 enum class RtStatus {
-  Disabled,
-  Supported,
-  UnsupportedFallback,
-  Unavailable,
+    Disabled,
+    Supported,
+    UnsupportedFallback,
+    Unavailable,
 };
 
 RtStatus Resolve(rhi::Backend backend, const FeatureSet& features, const RaytracingConfig& cfg);
@@ -42,11 +42,11 @@ bool CanRunDxrDemo(const FeatureSet& features, const DxrDemoConfig& demo);
 // W4/W7: when raytracing + shadows gated, records WOULD run and prefers real AS/DispatchRays
 // via TryBuildCubeBlasTlasAndDispatchRays when hardware is present (ADR 0030 W7 deepen).
 struct DxrShadowDemoResult {
-  bool would_run = false;
+    bool would_run = false;
 };
 
 [[nodiscard]] DxrShadowDemoResult DxrShadowDemo(const FeatureSet& features,
-                                                const DxrDemoConfig& demo);
+                                                                                                const DxrDemoConfig& demo);
 
 // Prefers TryBuildCubeBlasTlasAndDispatchRays; falls back to empty-TLAS prebuild + Ok stub.
 // Unavailable when raytracing feature is off. VK path remains Feature/SKIP.
@@ -60,7 +60,7 @@ Status TryEmptyTlasPrebuild();
 // dxr_shadow_lib.cso when present, DispatchRays (8x8). If StateObject/lib missing, returns Ok
 // after AS build with LogInfo that DispatchRays PSO is missing. VK: Unavailable.
 Status TryBuildCubeBlasTlasAndDispatchRays(
-    const std::filesystem::path& dxr_lib_dxil = {});
+        const std::filesystem::path& dxr_lib_dxil = {});
 
 // Mega-W9: compose a small DXR shadow demo result into a float overlay factor
 // (not fullscreen production RT). Ok when demo/AS path ran; factor in (0,1].
@@ -71,16 +71,16 @@ Status TryBuildCubeBlasTlasAndDispatchRays(
 // Does not run a fullscreen production RT frame (no SBT/raygen product path).
 [[nodiscard]] Status TryVkTraceRaysDemoStub();
 
-  // W17/W20 ADR 0041/0043: half-res soft-shadow blur grid; not fullscreen RT.
+    // W17/W20 ADR 0041/0043: half-res soft-shadow blur grid; not fullscreen RT.
 // Fills mean factor; optional out_grid (w*h floats in [0,1]) for UploadSoftShadowMask.
 [[nodiscard]] Status TryHalfResSoftShadowCompose(float& out_shadow_factor);
 [[nodiscard]] Status TryHalfResSoftShadowCompose(float& out_shadow_factor,
-                                                 std::vector<float>& out_grid, int& out_w,
-                                                 int& out_h);
+                                                                                                 std::vector<float>& out_grid, int& out_w,
+                                                                                                 int& out_h);
 
 // Alias (W16 name).
 [[nodiscard]] inline Status TrySoftShadowCompose(float& out_shadow_factor) {
-  return TryHalfResSoftShadowCompose(out_shadow_factor);
+    return TryHalfResSoftShadowCompose(out_shadow_factor);
 }
 
 }  // namespace engine::rt

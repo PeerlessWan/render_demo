@@ -8,7 +8,9 @@ add_library(engine_core STATIC
   core/math.cpp
   core/feature.cpp
 )
-target_include_directories(engine_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(engine_core PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(engine_core PUBLIC cxx_std_20)
 if(ENGINE_WITH_VULKAN)
   target_compile_definitions(engine_core PUBLIC ENGINE_WITH_VULKAN=1)
@@ -23,6 +25,9 @@ add_library(engine_assets STATIC
   assets/image_loader_stb.cpp
   assets/texture_loader_dds.cpp
   assets/gltf_loader.cpp
+  assets/gltf_loader_parse.cpp
+  assets/gltf_loader_mesh.cpp
+  assets/gltf_loader_skin.cpp
   assets/shader_hot_reload.cpp
   assets/asset_hot_reload.cpp
   assets/shader_compile_hook.cpp
@@ -365,6 +370,8 @@ target_link_libraries(engine_gameplay PUBLIC engine_core engine_assets)
 add_library(engine_vfx STATIC
   vfx/particles.cpp
   vfx/gpu_particles.cpp
+  vfx/gpu_particles_d3d12.cpp
+  vfx/gpu_particles_vk.cpp
   vfx/trail_ribbon.cpp
 )
 target_include_directories(engine_vfx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -431,6 +438,10 @@ target_link_libraries(engine_hlod PUBLIC engine_core)
 
 add_library(engine_rt STATIC
   rt/raytracing.cpp
+  rt/raytracing_gate.cpp
+  rt/raytracing_dxr_demo.cpp
+  rt/raytracing_soft_shadow.cpp
+  rt/raytracing_vk.cpp
 )
 target_include_directories(engine_rt PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(engine_rt PUBLIC engine_core engine_rhi)
