@@ -10,7 +10,7 @@
 | **范围** | [ADR 0043](learn/adr/0043-w20-product-deepen.md) |
 | **水位** | 产品 Pass + 真 GPU + 可维护/可度量；不宣称 Lumen/RTXGI/Nanite |
 | **冻结** | DLSS / FSR2 / MsQuic 真 SDK |
-| **单测** | 191 passed / 0 failed |
+| **单测** | 194 passed / 0 failed |
 
 ## Mega-W18（半落地加深）
 
@@ -63,6 +63,7 @@
 | 项 | 说明 |
 |---|---|
 | **W20** | GI atlas→GPU+lit；软影 mask→FrameCB；VT/HLOD/MS/WorldText/热更；device 按域拆分 + OneShot；Profiler/Budget HUD；VULKAN_PARITY |
+| **W20 尾巴** | VK upload/oneshot/`UploadLitGeometry` fence（`WaitGpuSubmitted`）+ 文档对齐（Sandbox Medium / PLAN W17–W20） |
 | **W18** | light tile GPU；WorldText/Path2D；VT packed；软影/MS/HLOD/dxc |
 | **W17** | meshoptimizer Prefer；VK 粒子；软影 blur；glTF 多 prim |
 | **W16** | 零尾巴收口 |

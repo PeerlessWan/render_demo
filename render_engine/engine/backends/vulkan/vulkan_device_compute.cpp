@@ -169,7 +169,7 @@ Status VulkanDevice::DispatchInstanceCull(const Mat4& view_proj, std::uint32_t i
             (std::max)(static_cast<VkDeviceSize>(instance_count) * sizeof(std::uint32_t),
                                  static_cast<VkDeviceSize>(256));
     if (cull_compact_buf_ == VK_NULL_HANDLE || cull_compact_bytes_ < compact_bytes) {
-        vkDeviceWaitIdle(device_);
+        WaitGpuSubmitted();
         if (cull_compact_buf_ != VK_NULL_HANDLE) {
             vkDestroyBuffer(device_, cull_compact_buf_, nullptr);
             cull_compact_buf_ = VK_NULL_HANDLE;
@@ -559,7 +559,7 @@ Status VulkanDevice::UploadIndirectIndexedArgs(std::span<const std::uint32_t> ra
             static_cast<VkDeviceSize>(raw_u32.size() * sizeof(std::uint32_t));
 
     if (indirect_args_buf_ == VK_NULL_HANDLE || indirect_args_bytes_ < bytes) {
-        vkDeviceWaitIdle(device_);
+        WaitGpuSubmitted();
         DestroyIndirectArgsBuffers(/*keep_uploads=*/true);
         const VkBufferUsageFlags usage = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
                                                                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
@@ -801,13 +801,39 @@ Status VulkanDevice::DispatchCompute(const ComputeDispatchDesc& desc) {
 
 void VulkanDevice::EndOneShot(VkCommandBuffer cmd) {
     vkEndCommandBuffer(cmd);
+    VkFenceCreateInfo fi{};
+    fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    VkFence fence = VK_NULL_HANDLE;
+    if (vkCreateFence(device_, &fi, nullptr, &fence) != VK_SUCCESS) {
+        vkFreeCommandBuffers(device_, command_pool_, 1, &cmd);
+        return;
+    }
     VkSubmitInfo si{};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &cmd;
-    vkQueueSubmit(graphics_queue_, 1, &si, VK_NULL_HANDLE);
-    vkQueueWaitIdle(graphics_queue_);
+    if (vkQueueSubmit(graphics_queue_, 1, &si, fence) == VK_SUCCESS) {
+        vkWaitForFences(device_, 1, &fence, VK_TRUE, UINT64_MAX);
+    }
+    vkDestroyFence(device_, fence, nullptr);
     vkFreeCommandBuffers(device_, command_pool_, 1, &cmd);
+}
+
+void VulkanDevice::WaitGpuSubmitted() {
+    if (device_ == VK_NULL_HANDLE || graphics_queue_ == VK_NULL_HANDLE) {
+        return;
+    }
+    VkFenceCreateInfo fi{};
+    fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    VkFence fence = VK_NULL_HANDLE;
+    if (vkCreateFence(device_, &fi, nullptr, &fence) != VK_SUCCESS) {
+        return;
+    }
+    // Empty submit: fence signals after all earlier queue work completes.
+    if (vkQueueSubmit(graphics_queue_, 0, nullptr, fence) == VK_SUCCESS) {
+        vkWaitForFences(device_, 1, &fence, VK_TRUE, UINT64_MAX);
+    }
+    vkDestroyFence(device_, fence, nullptr);
 }
 
 void VulkanDevice::UpdateCullDescriptors() {

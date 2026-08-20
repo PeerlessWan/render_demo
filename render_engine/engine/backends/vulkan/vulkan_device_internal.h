@@ -484,6 +484,10 @@ class VulkanDevice final : public IDevice {
 
     void EndOneShot(VkCommandBuffer cmd);
 
+    // Wait for work already submitted on graphics_queue_ (fence, not Device/QueueWaitIdle).
+    // Use before destroying GPU resources that may still be sampled/drawn by prior frames.
+    void WaitGpuSubmitted();
+
 
     Status CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props,
                                             VkBuffer& buffer, VkDeviceMemory& memory);

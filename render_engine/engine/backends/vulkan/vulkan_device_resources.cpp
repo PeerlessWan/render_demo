@@ -78,7 +78,8 @@ Status VulkanDevice::UploadRgba2D(Tex2DGpu& out, const std::uint8_t* rgba, int w
     if (device_ == VK_NULL_HANDLE) {
         return Status::Fail("Device not ready");
     }
-    vkDeviceWaitIdle(device_);
+    // Fence-wait prior queue work before retiring the old image (not DeviceWaitIdle).
+    WaitGpuSubmitted();
     DestroyTex2D(out);
     if (auto st = CreateAndUploadRgba2D(out, rgba, width, height); !st) {
         return st;

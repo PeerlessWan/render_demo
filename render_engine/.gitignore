@@ -29,6 +29,7 @@ Desktop.ini
 
 # CTest leftover / local clutter
 Testing/
+*.w20bak
 third_party/imgui.zip
 third_party/imgui-v1.91.8/.github/
 third_party/imgui-v1.91.8/backends/

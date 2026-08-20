@@ -782,7 +782,7 @@ Status VulkanDevice::UploadLitGeometry(int mesh_slot, std::span<const LitVertex>
 
     MeshSlotGpu& slot = mesh_slots_[static_cast<std::size_t>(mesh_slot)];
     if (slot.vb != VK_NULL_HANDLE || slot.ib != VK_NULL_HANDLE) {
-        vkDeviceWaitIdle(device_);
+        WaitGpuSubmitted();
         DestroyMeshSlot(slot);
     }
 
@@ -1381,29 +1381,12 @@ void VulkanDevice::BarrierLocalShadowImage(VkCommandBuffer cmd, VkImageLayout ol
 }
 
 Status VulkanDevice::ImmediateTransitionShadow(VkImageLayout new_layout) {
-    VkCommandBufferAllocateInfo alloc{};
-    alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    alloc.commandPool = command_pool_;
-    alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    alloc.commandBufferCount = 1;
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    if (vkAllocateCommandBuffers(device_, &alloc, &cmd) != VK_SUCCESS) {
+    VkCommandBuffer cmd = BeginOneShot();
+    if (cmd == VK_NULL_HANDLE) {
         return Status::Fail("Allocate transition cmd failed");
     }
-    VkCommandBufferBeginInfo begin{};
-    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin);
     BarrierShadowImage(cmd, shadow_layout_, new_layout);
-    vkEndCommandBuffer(cmd);
-
-    VkSubmitInfo submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd;
-    vkQueueSubmit(graphics_queue_, 1, &submit, VK_NULL_HANDLE);
-    vkQueueWaitIdle(graphics_queue_);
-    vkFreeCommandBuffers(device_, command_pool_, 1, &cmd);
+    EndOneShot(cmd);
     return Status::Ok();
 }
 

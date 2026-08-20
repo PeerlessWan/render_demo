@@ -109,7 +109,7 @@ Headless / golden dump 仍关 TAA/SSAO 保稳定；交互可两端同开。
 
 | 项 | 行为 |
 |---|---|
-| 默认质量 | High 阴影；交互可开 SSAO/TAA/SSR 等（两端真有效） |
+| 默认质量 | **Medium**；SSAO / 软影 / VT→slot1 **默认关**（Effects 面板 opt-in，两端真有效）；TAA/Bloom 交互默认关 |
 | Headless | 单 cascade；关 TAA/SSAO（稳定 dump） |
 | GPU probe | IBL 开时仍可跑（分槽后不再互盖） |
 | 语言 | Effects 面板 `Language / 语言` 即时切换；CJK 系统字体进 atlas |

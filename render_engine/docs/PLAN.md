@@ -570,8 +570,12 @@ Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
 | **W14** | GPU 粒子 CS；ChunkStream/FFT/植被；WS/QUIC 传输诚实 | Sandbox 可演示；QUIC 无 API → SKIP |
 | **W15** | Linux；Wayland xdg + wayland surface；X11 CI | Linux Vulkan clear；Wayland present 或诚实回退 |
 | **W16** | 零尾巴收口（ADR 0040） | 看板无「后续」；无假壳 Ok |
+| **W17** | 引擎加深（ADR 0041） | meshoptimizer Prefer；VK 粒子；软影 blur；glTF 多 prim |
+| **W18** | 半落地加深（ADR 0042） | light tile GPU；WorldText/Path2D；VT packed；软影/MS/HLOD/dxc |
+| **W19** | （并入 W18/W20 收口） | 见 ADR 0042 / 0043 |
+| **W20** | 中台产品级加深（ADR 0043） | GI/软影/VT/HLOD/MS；device 按域拆；次级拆 glTF/particles/rt；Profiler/Budget |
 
-
+> Q4 WARP / 默认严 C4 仍后置（测试轨，**非本波工程缺口**）。
 
 ## 7. 建议实施顺序（M1 内）
 

@@ -15,7 +15,7 @@ W18/W19 半落地收口后，仍有四类工程弱项：深度不均、双后端
    - **A** GI atlas→GPU+lit 空间采样；软影 half-res 进 FrameCB；VT opt-in；HLOD bake 上纹理；MS 主设备热路径
    - **B** WorldText 纹理路径；热更 hlsl→cso→PSO；HLOD/软影产品 Pass
    - **C** W20 新路径标 L0 则双端同波；更新 `VULKAN_PARITY.md`
-   - **D** `d3d12`/`vulkan_device` 按域拆分 + `GpuComputeOneShot`；次级拆 glTF/particles/rt
+   - **D** `d3d12`/`vulkan_device` 按域拆分 + `GpuComputeOneShot`；次级拆 glTF/particles/rt（**Done**）
    - **E** Profiler Pass GPU 时间 + StreamingBudget HUD + 规模冒烟契约
 3. **冻结（本波及后续暂不开发）**：DLSS / FSR2 / MsQuic 真 SDK；超分继续 `builtin_bilinear`；QUIC 继续 Probe/Unavailable。
 4. **不做**：真 NVIDIA DDGI、Nanite、多视角商业 Impostor、引擎内复制、backend 拆独立进程、mac/C17。
@@ -54,10 +54,11 @@ W18/W19 半落地收口后，仍有四类工程弱项：深度不均、双后端
 
 ## 收口备注（2026-08-20）
 
-- Device：`d3d12`/`vulkan_device` 按域拆分 + `GpuComputeOneShot`；tile cull 走 helper。
+- Device：`d3d12`/`vulkan_device` 按域拆分 + `GpuComputeOneShot`；tile cull 走 helper；次级拆 glTF/particles/rt **Done**。
 - GI：质量档 `probe_update_budget`；Sandbox local lights + CascadeRefine(focus)；atlas→GPU t11 + lit 采样。
 - 软影：half-res grid→`UploadSoftShadowMask` t12；不再以乘 `sun_intensity` 为主产品路径。
 - VT/HLOD/MS/WorldText/热更：产品 Pass 加深；MS `TryMeshShaderHotPath`；缺能力 SKIP。
 - Profiler GPU Pass + StreamingBudget HUD；`test_w20` 规模/预算契约。
-- 单测：191 passed / 0 failed。
+- 尾巴：Vulkan `UploadRgba2D` / `EndOneShot` / `UploadLitGeometry`（换槽）与 cull/indirect 扩容改为 **fence 等待**（`WaitGpuSubmitted`），去掉热路径 `Device/QueueWaitIdle`。
+- 单测：以看板跑测水位为准。
 - **冻结**：DLSS/FSR2/MsQuic。
