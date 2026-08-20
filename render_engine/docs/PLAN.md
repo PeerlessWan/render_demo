@@ -5,8 +5,8 @@
 > 定位：**Windows（D3D12 + Vulkan）/ Linux（Vulkan）通用 2D·3D 渲染引擎**  
 > 范围分段：M1–M16（既有能力）+ M17–M19（后端/Linux/网络）+ **M20–M25 引擎缺口补齐（P2）**。  
 > **当前迭代看板**（Doing / Undo / Todo）：[DOING_UNDO_TODO.md](DOING_UNDO_TODO.md)  
-> **引擎状态：W12–W20 已收口** — [ADR 0040](learn/adr/0040-w16-zero-tail-closeout.md)、[ADR 0041](learn/adr/0041-w17-engine-deepen.md)、[ADR 0042](learn/adr/0042-w18-partial-deepen.md)、[ADR 0043](learn/adr/0043-w20-product-deepen.md)。  
-> **游戏可用 ≠ 渲染可用**：工作区可玩产品水位见 **§1.9**（主缺口 `game_kit` GK0–GK3）。
+> **引擎状态：W12–W20 已收口并封板** — [ADR 0040](learn/adr/0040-w16-zero-tail-closeout.md)–[0043](learn/adr/0043-w20-product-deepen.md)；HEAD 见看板。  
+> **游戏可用 ≠ 渲染可用**：玩法层见 **§1.9**（`game_kit` / `editor`；引擎封板不替代可玩产品水位）。
 
 ## 1. 总验收目标
 
@@ -208,13 +208,13 @@
 > 对标 **Godot / Unity 中小 PC 项目**，不是 UE5 开放世界。  
 > **渲染内核 ≠ 可玩游戏。** Sandbox 能演示画面；可玩产品 = `game_kit` + `render_engine`（± `editor` / `genre_kits` / `games`）。分层：[LAYERS](../../docs/LAYERS.md)、[HOSTING.md](HOSTING.md)。
 
-**现状：** D3D12 主路径（场景/PBR/阴影/后处理/天空盒/2D Sprite·Tilemap/物理刚体/输入/HUD）已达「桌面渲染内核」可用加深。`game_kit` / `editor` / `genre_kits` **仅文档、无代码**。
+**现状：** Win D3D12+Vulkan 渲染中台已 **W20 封板**（场景/PBR/阴影/后处理/天空/2D/物理/输入/HUD；见 [VULKAN_PARITY.md](VULKAN_PARITY.md)）。`game_kit` **GK0–GK5 已接线**（samples/tests）；`editor` ED0–ED5 已收口。工作区仍弱项主要是 **新品类 / `genre_kits` / 独立服**（外置），不是再堆引擎 Pass。
 
 #### 口径
 
 | 口径 | 含义 | 不宣称 |
 |---|---|---|
-| **渲染可用** | Win D3D12 能出 2D/3D 游戏画面 | 双后端发版、手机、开放世界 |
+| **渲染可用** | Win 双后端能出 2D/3D 游戏画面（本引擎封板水位） | 手机、开放世界、Nanite/真 DDGI |
 | **游戏可用** | 一条 2D **或** 3D 小关能走完：切关、暂停、存档槽、脚本不毁 Device | Godot/Unity 开箱模板 |
 | **对标主流** | 编辑器摆关、Prefab、动画树、寻路、空间音频、热重载 | Lumen/Nanite/复制同步（明确不做或外挂） |
 
@@ -222,33 +222,30 @@
 
 | 优先级 | 缺什么 | 层 | 里程碑 |
 |---|---|---|---|
-| **P0** | 关卡流 / Entity / 事件 / 暂停 / 存档槽 | `game_kit` | **GK0–GK1**（无代码） |
-| **P0** | 脚本白名单绑定；异常不毁 GPU | `game_kit` | **GK2** |
-| **P0** | 垂直切片：移动、触发、HUD | `game_kit` | **GK3** |
-| **P1** | Prefab + Manifest 同一套 | `game_kit` + 引擎 schema | **GK4** |
-| **P1** | 视口摆关（独立工程） | 工作区 `editor/` | **文档不在本目录** |
-| **P1** | 动画混合 / 简单状态机 | 引擎候选 **C10** 或上层自建 | 不进 M1–M25 除非另开 |
-| **P1** | 真 RmlUi / 字体 DPI | 引擎 M15 加深 | 阻塞：vendor |
-| **P1** | Win Vulkan 观感对齐 | 引擎 | **W-vk-parity**（看板） |
+| **已接线** | 关卡流 / Entity / 事件 / 暂停 / 存档 / 脚本 / 垂直切片 | `game_kit` | **GK0–GK3** |
+| **已接线** | Prefab + Manifest；协程 / AI 骨架 | `game_kit` | **GK4–GK5** |
+| **已接线** | 视口摆关 / Play / Prefab | 工作区 `editor/` | **ED0–ED5** |
+| **P1** | 动画混合 / 简单状态机加深 | 引擎 **C10** 或上层 | 不重开引擎主线 |
+| **P1** | 真 RmlUi / 字体 DPI | 引擎 M15 加深 | vendor |
+| **已收口** | Win Vulkan 观感对齐 | 引擎 | **VULKAN_PARITY 100%（Win）** |
 | **P2** | 寻路 | **中间件**，不进 `engine/` | — |
 | **P2** | 2D 骨骼产品化 | 引擎 M21 加深 + 许可 | — |
 | **P2** | 3D 衰减/混音 | **不做引擎 DSP**；上层或中间件 | ADR 0013 |
-| **P2** | 资源/着色器热重载 | **C16** | M25 后候选 |
+| **已加深** | 资源/着色器热重载 | **C16**（缺 dxc → SKIP） | W20 |
 
-**明确不追齐（对标主流会一直弱）：** mac/移动/Metal；引擎内脚本/完整编辑器；VT/Nanite；Lumen 级 GI；复制/匹配；材质节点图；FBX/USD 一站式；Linux 外置至 M18。
+**明确不追齐（对标主流会一直弱）：** mac/移动/Metal；引擎内脚本 VM/完整编辑器进 `engine/`；VT/Nanite；Lumen 级 GI；复制/匹配；材质节点图；FBX/USD 一站式。
 
 #### 落地顺序（工作区）
 
 ```text
-1. game_kit GK0–GK3     ← 游戏可用的主缺口（优先于大气/云/Bindless 全量）
-2. Prefab + 场景能存     ← 手改 JSON 可先发；GK4
-3. 动画状态机 C10 或上层自建
-4. W-vk-parity          ← 仅当要 Win 双后端发版
-5. C20 CLI（引擎 tools 候选）→ 视口编辑器见工作区 editor/（规格不在本目录）
-6. 品类 → genre_kits；内容 → games/<title>
+1. game_kit GK0–GK5     ← 已接线；新品类 / genre_kits 仍暂停
+2. editor ED*           ← 已收口；规格只在 editor/docs
+3. 动画状态机 C10 或上层自建（可选）
+4. C20 CLI（引擎 tools 候选）
+5. 品类 → genre_kits；内容 → games/<title>
 ```
 
-引擎近端债（VK 对标、GI 加深、薄 SoftBody）见看板，**不替代** GK0。`game_kit` 细则：[game_kit/docs/PLAN.md](../../game_kit/docs/PLAN.md)。编辑器排期与规格**只写在**工作区 `editor/docs`，不进 `render_engine/docs`。
+引擎已封板；**不替代**可玩内容与品类层。`game_kit` 细则：[game_kit/docs/PLAN.md](../../game_kit/docs/PLAN.md)。编辑器规格**只写在**工作区 `editor/docs`。
 
 ## 2. 范围清单
 
@@ -549,8 +546,8 @@ Q1 确定性截帧 → Q2 VK 真读回 → C1 Validation CI
 | **M21** 2D 深度           | **100%（加深）**：Tilemap→Sprite；SkeletonClip2D；雾/BMFont/震屏                                     |
 | **M22** 动态 GI           | **100%（本口径）**：ProbeVolume + Lightmap 共存（非 DDGI）                                            |
 | **M23** 场景专题            | **100%（加深）**：地形/水面/植被；QualityTier 密度                                                     |
-| **M24** GPU Driven      | **100%**：HiZ + Cull；MeshShader Feature SKIP（C08）                                           |
-| **M25** 光追对齐            | **100%（本口径）**：DXR 硬件探测 + ADR 0030；VK RT SKIP；W4 stub dispatch contract |
+| **M24** GPU Driven      | **100%（W20）**：HiZ + Cull；MS 热路径 L1（无 Tier/EXT → SKIP） |
+| **M25** 光追对齐            | **100%（W20）**：DXR 真 AS/DispatchRays + 软影 half-res；VK RT 有扩展则示范否则 SKIP |
 | **M26** Forward+ / P3    | **已开簇（ADR 0032）**：C01/C02/C10/C04/C16/C20 落地；其余 §4 后置                                    |
 | **M27+** W4–W6 加深       | **已收口（ADR 0033）**：画质债 / Linux·HTTPS·VA 文档 / GI·水面·混合·GPU 蒙皮 stub·Meshlet 门控·PSO 热更请求 |
 | **M27+** W7 对标加深       | **已收口（ADR 0034）**：C05 云雾 · C03 IES · C14 世界字 · C04 色差 · C12 D3D12 CS 蒙皮 · DXR 真 DispatchRays |
