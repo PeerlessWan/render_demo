@@ -186,6 +186,8 @@ if(ENGINE_WITH_VULKAN)
     backends/vulkan/vulkan_device_core.cpp
     backends/vulkan/vulkan_device_compute.cpp
     backends/vulkan/vulkan_device_lit.cpp
+    backends/vulkan/vulkan_device_shadow.cpp
+    backends/vulkan/vulkan_device_env.cpp
     backends/vulkan/vulkan_device_post.cpp
     backends/vulkan/vulkan_device_resources.cpp
     backends/vulkan/gpu_compute_oneshot_vk.cpp
@@ -511,6 +513,8 @@ if(WIN32)
     backends/d3d12/d3d12_device_core.cpp
     backends/d3d12/d3d12_device_compute.cpp
     backends/d3d12/d3d12_device_lit.cpp
+    backends/d3d12/d3d12_device_shadow.cpp
+    backends/d3d12/d3d12_device_env.cpp
     backends/d3d12/d3d12_device_post.cpp
     backends/d3d12/d3d12_device_resources.cpp
     backends/d3d12/gpu_compute_oneshot_d3d12.cpp

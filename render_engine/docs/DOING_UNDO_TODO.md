@@ -64,6 +64,7 @@
 |---|---|
 | **W20** | GI atlas→GPU+lit；软影 mask→FrameCB；VT/HLOD/MS/WorldText/热更；device 按域拆分 + OneShot；Profiler/Budget HUD；VULKAN_PARITY |
 | **W20 尾巴** | VK upload/oneshot/`UploadLitGeometry` fence（`WaitGpuSubmitted`）+ 文档对齐（Sandbox Medium / PLAN W17–W20） |
+| **W20 lit 再拆** | `*_device_{lit,shadow,env}.cpp` 对称拆分（压行数） |
 | **W18** | light tile GPU；WorldText/Path2D；VT packed；软影/MS/HLOD/dxc |
 | **W17** | meshoptimizer Prefer；VK 粒子；软影 blur；glTF 多 prim |
 | **W16** | 零尾巴收口 |

@@ -39,7 +39,9 @@ W18/W19 半落地收口后，仍有四类工程弱项：深度不均、双后端
 对称落盘（目标主文件 ≤~2000 行）：
 
 - `*_device_core.cpp` — Init/Present/swapchain/fence/timestamps
-- `*_device_lit.cpp` — lit/upload/draw/shadow/sky
+- `*_device_lit.cpp` — lit setup/draw/geometry/material upload
+- `*_device_shadow.cpp` — CSM / local shadow pass + resources
+- `*_device_env.cpp` — sky / IBL / probe / soft-shadow mask
 - `*_device_post.cpp` — post / UI / debug / quads
 - `*_device_compute.cpp` — instance cull、light tile、VT CS
 - `*_device_resources.cpp` — buffer/texture/descriptor helpers
