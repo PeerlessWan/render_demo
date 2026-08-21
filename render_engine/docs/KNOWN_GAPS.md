@@ -37,9 +37,9 @@
 
 | 弱项 | 收口状态 | 仍不宣称 |
 |---|---|---|
-| GI / RT | **W23**：CascadeGi 默认；可选 RTXGI Bind；产品软影/半分辨率反射缓冲 | Lumen / 全屏 RT 产品路径 |
-| 超分 | 诚实链；可选 NGX/FFX（ADR 0044/0046 一并安装脚本）；无 SDK → `builtin_bilinear` | Frame Generation |
-| VT / GPU Driven | **W23**：VirtualGeometry（Nanite-like）层次 LOD+驻留+Indirect | UE Nanite 商标 / 全材质默认 VT |
+| GI / RT | **W23–W25**：CascadeGi 默认；可选 RTXGI 链接纪律；产品软影/半分辨率反射 **合同**（VK 可为 stand-in） | Lumen / 全屏 RT 产品路径 / 真路径追踪 |
+| 超分 | 诚实链；可选 NGX/FFX 探测；无 SDK → `builtin_bilinear`；linked ≠ 必真 EvaluateFeature | Frame Generation |
+| VT / GPU Driven | **W23–W25**：VirtualGeometry（Nanite-like）LOD+驻留+Indirect；cull 现为 CPU 合同 | UE Nanite 商标 / 全材质默认 VT |
 | GPU 粒子 | D3D12 CS；**W17** VK `gpu-cs-vk` SSBO dispatch（缺 SPIR-V → cpu-fallback） | Niagara |
 | 角色 | mesh0 全 prim；蒙皮多 draw（Sandbox 多 slot） | 服装/完整 IK |
 | 地形水植被 | ChunkStream / FFT 海 / 植被 GPU instance（W14） | 开放世界全家桶 |

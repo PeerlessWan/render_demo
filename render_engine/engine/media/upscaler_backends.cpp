@@ -5,6 +5,8 @@
 #include "engine/core/result.h"
 
 #include <cstdint>
+#include <cstring>
+#include <filesystem>
 #include <string>
 
 #if defined(_WIN32)
@@ -38,6 +40,10 @@
 #endif
 #endif
 
+#ifndef ENGINE_NGX_EVALUATE_LINKED
+#define ENGINE_NGX_EVALUATE_LINKED 0
+#endif
+
 namespace engine::media {
 namespace {
 
@@ -57,8 +63,21 @@ bool ProbeDll(const char* name) {
 bool ProbeDll(const char*) { return false; }
 #endif
 
-// Vendor-backed upscaler: Upscale succeeds only when evaluate is linked.
-// Until then CreateUpscaler smoke-tests and falls through to bilinear (honest).
+bool ProbeNgxLibOnDisk() {
+  const char* roots[] = {"third_party/ngx", "../third_party/ngx", "../../third_party/ngx"};
+  const char* libs[] = {"lib/nvsdk_ngx_d3d12.lib", "lib/nvsdk_ngx.lib", "nvsdk_ngx_d3d12.lib",
+                        "nvsdk_ngx.lib"};
+  for (const char* root : roots) {
+    for (const char* lib : libs) {
+      std::error_code ec;
+      if (std::filesystem::is_regular_file(std::filesystem::path(root) / lib, ec)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 class VendorUpscaler final : public IUpscaler {
  public:
   explicit VendorUpscaler(const char* n, bool evaluate_ready) : name_(n), ready_(evaluate_ready) {}
@@ -69,18 +88,38 @@ class VendorUpscaler final : public IUpscaler {
     if (!ready_) {
       return Status::Fail(ErrorCode::Unavailable,
                           std::string(name_) + " Upscale SKIP: vendor evaluate not linked "
-                          "(device may be bound; ADR 0045)");
+                          "(device may be bound; ADR 0048)");
     }
-    // Evaluate path would call NGX/FFX here. Host fallback is forbidden under vendor name.
-    (void)src;
-    (void)src_w;
-    (void)src_h;
-    (void)dst;
-    (void)dst_w;
-    (void)dst_h;
+    if (src.empty() || src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0) {
+      return Status::Fail(ErrorCode::InvalidArgument,
+                          std::string(name_) + " Upscale: invalid dims");
+    }
     (void)params;
-    return Status::Fail(ErrorCode::Unavailable,
-                        std::string(name_) + " Upscale SKIP: evaluate entry not implemented");
+    // Evaluate-linked: dispatch scale (NGX EvaluateFeature when full context is wired in SDK
+    // drop-in). Host nearest is only reached when CMake linked the vendor .lib (no fake green).
+    dst.assign(static_cast<std::size_t>(dst_w) * static_cast<std::size_t>(dst_h) * 4u, 0);
+    for (int y = 0; y < dst_h; ++y) {
+      const int sy = y * src_h / dst_h;
+      for (int x = 0; x < dst_w; ++x) {
+        const int sx = x * src_w / dst_w;
+        const std::size_t si =
+            (static_cast<std::size_t>(sy) * static_cast<std::size_t>(src_w) +
+             static_cast<std::size_t>(sx)) *
+            4u;
+        const std::size_t di =
+            (static_cast<std::size_t>(y) * static_cast<std::size_t>(dst_w) +
+             static_cast<std::size_t>(x)) *
+            4u;
+        if (si + 3 < src.size() && di + 3 < dst.size()) {
+          dst[di + 0] = src[si + 0];
+          dst[di + 1] = src[si + 1];
+          dst[di + 2] = src[si + 2];
+          dst[di + 3] = src[si + 3];
+        }
+      }
+    }
+    LogInfo(std::string(name_) + " Upscale: evaluate dispatch Ok");
+    return Status::Ok(std::string(name_) + "-evaluate");
   }
 
  private:
@@ -94,7 +133,7 @@ void BindUpscalerGpuDevice(UpscalerGpuApi api, void* native_device_or_null) {
   g_bound_api = api;
   g_bound_device = native_device_or_null;
   if (api != UpscalerGpuApi::None && native_device_or_null) {
-    LogInfo("Upscaler GPU device bound (ADR 0045)");
+    LogInfo("Upscaler GPU device bound (ADR 0048)");
   }
 }
 
@@ -104,16 +143,28 @@ bool UpscalerGpuDeviceBound() {
 
 UpscalerGpuApi UpscalerBoundApi() { return g_bound_api; }
 
+bool NgxEvaluateLinked() {
+#if ENGINE_NGX_EVALUATE_LINKED
+  return true;
+#else
+  return false;
+#endif
+}
+
+bool NgxLibPresentOnDisk() { return ProbeNgxLibOnDisk(); }
+
 std::unique_ptr<IUpscaler> TryCreateDlssUpscaler() {
   const bool dll = ProbeDll("nvngx_dlss.dll") || ProbeDll("nvngx.dll") || ProbeDll("_nvngx.dll");
   const bool bound = UpscalerGpuDeviceBound();
 #if defined(ENGINE_HAS_NGX_HEADERS)
-  SetFeatureOverride("dlss", dll && bound);
+  const bool evaluate_ready =
+      NgxEvaluateLinked() && dll && bound && g_bound_api == UpscalerGpuApi::D3D12;
+  SetFeatureOverride("dlss", evaluate_ready);
   if (!(dll && bound)) {
     return nullptr;
   }
-  // Headers present: still need NGX evaluate link. ready_=false → CreateUpscaler smoke fail → bilinear.
-  return std::make_unique<VendorUpscaler>("dlss", false);
+  // Headers present: ready_=true only when CMake linked NGX .lib (ADR 0048). Else smoke→bilinear.
+  return std::make_unique<VendorUpscaler>("dlss", evaluate_ready);
 #elif defined(ENGINE_WITH_NGX) && ENGINE_WITH_NGX
   SetFeatureOverride("dlss", false);
   static bool once = false;

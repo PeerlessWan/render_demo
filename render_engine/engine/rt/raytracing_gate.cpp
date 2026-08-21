@@ -95,4 +95,51 @@ bool CanRunDxrDemo(const FeatureSet& features, const DxrDemoConfig& demo) {
     return demo.enable_reflections || demo.enable_shadows;
 }
 
+bool ProbeVkRtHardwareSupport() {
+#if ENGINE_WITH_VULKAN
+    VkApplicationInfo app{};
+    app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    app.pApplicationName = "engine_vk_rt_probe";
+    app.apiVersion = VK_API_VERSION_1_1;
+    VkInstanceCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    ici.pApplicationInfo = &app;
+    VkInstance instance = VK_NULL_HANDLE;
+    if (vkCreateInstance(&ici, nullptr, &instance) != VK_SUCCESS || !instance) {
+        return false;
+    }
+    uint32_t phys_count = 0;
+    vkEnumeratePhysicalDevices(instance, &phys_count, nullptr);
+    bool found = false;
+    if (phys_count > 0) {
+        std::vector<VkPhysicalDevice> phys_list(phys_count);
+        vkEnumeratePhysicalDevices(instance, &phys_count, phys_list.data());
+        for (VkPhysicalDevice pd : phys_list) {
+            uint32_t ext_count = 0;
+            vkEnumerateDeviceExtensionProperties(pd, nullptr, &ext_count, nullptr);
+            std::vector<VkExtensionProperties> exts(ext_count);
+            vkEnumerateDeviceExtensionProperties(pd, nullptr, &ext_count, exts.data());
+            for (const auto& e : exts) {
+                if (std::strcmp(e.extensionName, VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME) == 0 ||
+                        std::strcmp(e.extensionName, "VK_KHR_ray_query") == 0) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) {
+                break;
+            }
+        }
+    }
+    vkDestroyInstance(instance, nullptr);
+    return found;
+#else
+    return false;
+#endif
+}
+
+bool CanRunProductRtPath() {
+    return ProbeDxrHardwareSupport() || ProbeVkRtHardwareSupport();
+}
+
 }  // namespace engine::rt

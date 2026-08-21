@@ -25,8 +25,61 @@ void CaptureNode(const engine::scene::World& world, engine::scene::NodeId id,
     out->has_mesh = true;
     out->mesh = *mesh;
   }
+  if (const auto* L = world.light(id)) {
+    out->has_light = true;
+    out->light = *L;
+    out->meta.has_light = true;
+    out->meta.light_range = L->range;
+    out->meta.light_intensity = L->intensity;
+    out->meta.light_kind = L->kind;
+    out->meta.light_r = L->color.x;
+    out->meta.light_g = L->color.y;
+    out->meta.light_b = L->color.z;
+  }
+  if (const auto* cam = world.camera(id)) {
+    out->has_camera = true;
+    out->camera = *cam;
+    out->meta.has_camera = true;
+    out->meta.active_camera = cam->active;
+    out->meta.camera_fovy = cam->fovy_rad;
+  }
+  if (const auto* col = world.collider(id)) {
+    out->has_collider = true;
+    out->collider = *col;
+    out->meta.has_collider = true;
+    out->meta.collider_hx = col->hx;
+    out->meta.collider_hy = col->hy;
+    out->meta.collider_hz = col->hz;
+  }
+  if (const auto* spr = world.sprite(id)) {
+    out->has_sprite = true;
+    out->sprite = *spr;
+  }
   auto it = meta.find(id);
   if (it != meta.end()) {
+    // Prefer live component flags already filled above; keep script/prefab/material from meta.
+    NodeMeta merged = it->second;
+    if (out->has_light) {
+      merged.has_light = true;
+      merged.light_range = out->meta.light_range;
+      merged.light_intensity = out->meta.light_intensity;
+      merged.light_kind = out->meta.light_kind;
+      merged.light_r = out->meta.light_r;
+      merged.light_g = out->meta.light_g;
+      merged.light_b = out->meta.light_b;
+    }
+    if (out->has_camera) {
+      merged.has_camera = true;
+      merged.active_camera = out->meta.active_camera;
+      merged.camera_fovy = out->meta.camera_fovy;
+    }
+    if (out->has_collider) {
+      merged.has_collider = true;
+      merged.collider_hx = out->meta.collider_hx;
+      merged.collider_hy = out->meta.collider_hy;
+      merged.collider_hz = out->meta.collider_hz;
+    }
+    out->meta = std::move(merged);
     out->prefab_id = it->second.prefab_id;
     out->script_path = it->second.script_path;
   }
@@ -87,9 +140,45 @@ void RestoreSnaps(engine::scene::World& world, std::vector<NodeSnap>* snaps,
     if (s.has_mesh) {
       world.set_mesh(id, s.mesh);
     }
-    if (meta) {
-      (*meta)[id] = NodeMeta{s.prefab_id, s.script_path};
+    if (s.has_light) {
+      world.set_light(id, s.light);
+      s.meta.has_light = true;
+      s.meta.light_range = s.light.range;
+      s.meta.light_intensity = s.light.intensity;
+      s.meta.light_kind = s.light.kind;
+      s.meta.light_r = s.light.color.x;
+      s.meta.light_g = s.light.color.y;
+      s.meta.light_b = s.light.color.z;
     }
+    if (s.has_camera) {
+      world.set_camera(id, s.camera);
+      s.meta.has_camera = true;
+      s.meta.active_camera = s.camera.active;
+      s.meta.camera_fovy = s.camera.fovy_rad;
+    }
+    if (s.has_collider) {
+      world.set_collider(id, s.collider);
+      s.meta.has_collider = true;
+      s.meta.collider_hx = s.collider.hx;
+      s.meta.collider_hy = s.collider.hy;
+      s.meta.collider_hz = s.collider.hz;
+    }
+    if (s.has_sprite) {
+      world.set_sprite(id, s.sprite);
+    }
+    if (meta) {
+      NodeMeta m = s.meta;
+      if (!s.prefab_id.empty()) {
+        m.prefab_id = s.prefab_id;
+      }
+      if (!s.script_path.empty()) {
+        m.script_path = s.script_path;
+      }
+      (*meta)[id] = std::move(m);
+    }
+  }
+  if (meta) {
+    SyncMetaToWorld(world, *meta);
   }
 }
 

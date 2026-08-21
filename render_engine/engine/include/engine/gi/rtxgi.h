@@ -35,7 +35,11 @@ class IRtxgiVolume {
   virtual Status Update(std::vector<std::uint8_t>& out_rgba8_atlas, int& out_w, int& out_h) = 0;
 };
 
-// Returns nullptr when ENGINE_WITH_RTXGI off, headers missing, or evaluate not linked.
+// Returns nullptr when ENGINE_WITH_RTXGI off, headers missing, or device unbound.
 [[nodiscard]] std::unique_ptr<IRtxgiVolume> TryCreateRtxgiVolume(const RtxgiVolumeDesc& desc);
+
+// W25 / ADR 0048: true when CMake linked RTXGI .lib.
+[[nodiscard]] bool RtxgiEvaluateLinked();
+[[nodiscard]] bool RtxgiLibPresentOnDisk();
 
 }  // namespace engine::gi

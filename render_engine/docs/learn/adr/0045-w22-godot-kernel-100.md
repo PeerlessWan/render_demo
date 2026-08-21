@@ -1,6 +1,6 @@
 # ADR 0045: Mega-W22 Godot 渲染内核 ≈100%
 
-- 状态: Accepted（**W22 已收口**；见 [DOING_UNDO_TODO.md](../../DOING_UNDO_TODO.md)）
+- 状态: Accepted（**历史水位**；现行对标见 2026-08-21 [ENGINE_VS_MAINSTREAM.md](../../ENGINE_VS_MAINSTREAM.md)，**已撤回 Godot 内核 ≈100%**）
 - 日期: 2026-08-20
 - 关联: ADR 0044、ENGINE_VS_MAINSTREAM、KNOWN_GAPS、gi/README
 
@@ -10,11 +10,10 @@ W21 将「渲染内核 vs Godot 4」抬至约 80–85%。剩余缺口：SDFGI �
 
 ## 决策
 
-1. **目标水位**：渲染内核 vs Godot **约 100%**（桌面 Forward+ 产品观感）；整引擎仍 ~35–45%。
+1. **目标水位（当时）**：渲染内核 vs Godot **约 100%**（桌面 Forward+ 产品观感）；整引擎仍 ~35–45%。
 2. **超分**：DLSS（NGX）+ FSR2（FidelityFX）设备绑定；链 **DLSS → FSR2 → builtin_bilinear**。**Intel XeSS 不做**。无 SDK/evaluate → 诚实 SKIP。
 3. **本波做**：CascadeGi/SDF 加深；LightOccluder2D + 2D 阴影；PbrMaterial/粒子/天空·雾；Low 档弱端；导入默认小改。
 4. **仍不做**：Nanite、真 NVIDIA DDGI、Lumen、Frame Generation、mac/Metal、引擎内脚本/复制、独立 Compatibility 渲染器、XeSS。
-
 ## 波次能力表
 
 | 能力 | 层级 | 备注 |
@@ -31,7 +30,7 @@ W21 将「渲染内核 vs Godot 4」抬至约 80–85%。剩余缺口：SDFGI �
 
 ## 后果
 
-- 优点：可宣称桌面渲染内核对标 Godot ≈100%（自评口径）。
+- 优点（当时）：可宣称桌面渲染内核对标 Godot ≈100%（自评口径）。
 - 代价：厂商超分仍依赖本机 SDK + evaluate 接线；不宣称商标级 SDFGI 复刻。
 
 ## 收口备注（2026-08-20）
@@ -40,3 +39,7 @@ W21 将「渲染内核 vs Godot 4」抬至约 80–85%。剩余缺口：SDFGI �
 - 2D：`LightOccluder2D` + `SampleOccluderShadow2D` + `CanvasModulate`。
 - 超分：`BindUpscalerGpuDevice`；CreateUpscaler smoke；XeSS 外置。
 - 单测：208 passed / 0 failed。
+
+## 修订（2026-08-21）
+
+源码审计撤回「内核 vs Godot ≈100%」。现行以 [ENGINE_VS_MAINSTREAM.md](../../ENGINE_VS_MAINSTREAM.md) 为准（≈55–70%）。本 ADR 保留为 W22 决策史。

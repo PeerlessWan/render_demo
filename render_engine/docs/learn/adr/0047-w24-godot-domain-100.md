@@ -1,6 +1,6 @@
 # ADR 0047: Mega-W24 分域 vs Godot ≈100%
 
-- 状态: Accepted（**W24 已收口**；见 [DOING_UNDO_TODO.md](../../DOING_UNDO_TODO.md)）
+- 状态: Accepted（**历史水位**；现行对标见 2026-08-21 [ENGINE_VS_MAINSTREAM.md](../../ENGINE_VS_MAINSTREAM.md)，**已撤回 Godot 内核 ≈100%**）
 - 日期: 2026-08-20
 - 关联: ADR 0046、ENGINE_VS_MAINSTREAM、VULKAN_PARITY
 
@@ -10,7 +10,7 @@ W22/W23 综合「渲染内核 vs Godot ≈100%」，但分域表多行仍为区�
 
 ## 决策
 
-1. **目标：** ENGINE_VS §3 渲染向各行 vs Godot **约 100%**（桌面 Forward+）。
+1. **目标（当时）：** ENGINE_VS §3 渲染向各行 vs Godot **约 100%**（桌面 Forward+）。
 2. **光追：** **D3D12/DXR** 产品路径；**Vulkan RT 有意差/SKIP**。
 3. **超分：** 无 SDK → bilinear 仍算达标；禁止假名。
 4. **本波做：** DXR 软影/反射进帧；VirtualGeometry Sandbox 热路径；Character/Areas/Vehicle；Quality↔Effect 同步。
@@ -20,5 +20,8 @@ W22/W23 综合「渲染内核 vs Godot ≈100%」，但分域表多行仍为区�
 
 - Quality Medium/High：SSR、GTAO、soft shadow、VG；High：raytracing + RT reflection。
 - Sandbox：CascadeGi 默认；产品软影；RT→SSR；VG Select/Cull；CharacterMoveEx/Triggers/Vehicle。
-- ENGINE_VS 分域 vs Godot 一律约 100%。
 - 单测：**220 passed / 0 failed**。
+
+## 修订（2026-08-21）
+
+源码审计认定「分域一律 ≈100%」虚高。现行数字以 [ENGINE_VS_MAINSTREAM.md](../../ENGINE_VS_MAINSTREAM.md) 为准（Godot 内核 ≈55–70%）。本 ADR 保留为 W24 决策史，**不再作为现行宣称**。

@@ -56,6 +56,11 @@ ADR 记录 **为什么这样设计**，是学习封装的核心（比 API 列表
 | 0041 | W17 引擎内加深 | [0041-…](adr/0041-w17-engine-deepen.md) | — | Accepted |
 | 0042 | W18 半落地加深 | [0042-…](adr/0042-w18-partial-deepen.md) | — | Accepted |
 | 0043 | W20 中台产品级加深 | [0043-…](adr/0043-w20-product-deepen.md) | Sandbox | Accepted |
+| 0044 | W21 Godot 对标加深 | [0044-…](adr/0044-w21-godot-parity-unfreeze.md) | — | Accepted |
+| 0045 | W22 Godot 内核（历史≈100%；现行见 ENGINE_VS） | [0045-…](adr/0045-w22-godot-kernel-100.md) | — | Accepted |
+| 0046 | W23 Nanite-like + 真 DDGI | [0046-…](adr/0046-w23-nanite-ddgi-gaps.md) | — | Accepted |
+| 0047 | W24 分域 Godot（历史≈100%；已审计修订） | [0047-…](adr/0047-w24-godot-domain-100.md) | — | Accepted |
+| 0048 | W25 VK+NGX/RTXGI+VG+编辑器（合同收口） | [0048-…](adr/0048-w25-vk-ngx-vg-editor.md) | — | Accepted |
 
 ## 模板
 

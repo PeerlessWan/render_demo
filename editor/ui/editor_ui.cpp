@@ -355,24 +355,52 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
         }
         inspector_drag = false;
       }
-      int mesh_i = 0;
-      if (const auto* mesh = world.mesh(sel.node)) {
-        if (mesh->mesh_id == "cube") {
-          mesh_i = 1;
-        } else if (mesh->mesh_id == "ground") {
-          mesh_i = 2;
+      // Mesh combo from content Manifest + built-ins.
+      std::vector<std::string> mesh_names{"(无)", "cube", "ground"};
+      if (content) {
+        for (const auto& it : content->items) {
+          if (it.kind != ContentItem::Kind::Mesh && it.type != "mesh") {
+            continue;
+          }
+          const std::string id = it.asset_id.empty() ? it.path.stem().string() : it.asset_id;
+          if (id.empty() || id == "cube" || id == "ground") {
+            continue;
+          }
+          bool dup = false;
+          for (const auto& n : mesh_names) {
+            if (n == id) {
+              dup = true;
+              break;
+            }
+          }
+          if (!dup) {
+            mesh_names.push_back(id);
+          }
         }
       }
-      const char* meshes[] = {"(无)", "cube", "ground"};
-      if (ui.Combo("网格", &mesh_i, meshes, 3)) {
-        if (mesh_i == 1 || mesh_i == 2) {
+      int mesh_i = 0;
+      if (const auto* mesh = world.mesh(sel.node)) {
+        for (int i = 1; i < static_cast<int>(mesh_names.size()); ++i) {
+          if (mesh->mesh_id == mesh_names[static_cast<std::size_t>(i)]) {
+            mesh_i = i;
+            break;
+          }
+        }
+      }
+      std::vector<const char*> mesh_items;
+      mesh_items.reserve(mesh_names.size());
+      for (const auto& n : mesh_names) {
+        mesh_items.push_back(n.c_str());
+      }
+      if (ui.Combo("网格", &mesh_i, mesh_items.data(), static_cast<int>(mesh_items.size()))) {
+        if (mesh_i >= 1) {
           const auto empty_meta = std::unordered_map<engine::scene::NodeId, NodeMeta>{};
           const auto& mm = meta ? *meta : empty_meta;
           std::vector<PropSnap> pb;
           std::vector<PropSnap> pa;
           engine::scene::MeshRenderer mesh;
-          mesh.mesh_id = mesh_i == 1 ? "cube" : "ground";
-          if (mesh_i == 2) {
+          mesh.mesh_id = mesh_names[static_cast<std::size_t>(mesh_i)];
+          if (mesh.mesh_id == "ground") {
             mesh.never_cull = true;
             mesh.local_bounds = {{-4.f, -0.05f, -4.f}, {4.f, 0.05f, 4.f}};
           }
@@ -755,7 +783,12 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
     ui.Checkbox("显示包围盒", &settings.show_bounds);
     ui.Checkbox("显示碰撞", &settings.show_collision);
     ui.Checkbox("显示性能", &settings.show_profiler);
+    ui.Checkbox("显示输出", &settings.show_output);
     ui.Checkbox("热重载", &settings.hot_reload);
+    ui.Checkbox("保存后Cook", &settings.cook_on_save);
+    const char* tools[] = {"选择", "雕刻", "画砖"};
+    (void)ui.Combo("笔刷工具", &settings.brush_tool, tools, 3);
+    (void)ui.SliderFloat("笔刷半径", &settings.brush_radius, 0.5f, 6.f);
     const char* views[] = {"透视", "俯视", "前视", "侧视", "节点相机", "2D"};
     (void)ui.Combo("视口", &settings.viewport, views, 6);
     ui.Checkbox("四分屏", &settings.split_view);
@@ -790,6 +823,7 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
       cmd->step = true;
     }
     ui.Text("右键观察；右键+WASD飞；中键平移；滚轮缩放；左键点选；拖轴移动；F框选");
+    ui.Text("Ctrl+S/O/Z/Y/D/P · Del · 1/2/3 见「输出」面板");
   }
   ui.EndWindow();
 
@@ -837,6 +871,7 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
     (void)ui.SliderFloat("k1", &settings.anim.keys[1], 0.f, 1.f);
     (void)ui.SliderFloat("k2", &settings.anim.keys[2], 0.f, 1.f);
     (void)ui.SliderFloat("k3", &settings.anim.keys[3], 0.f, 1.f);
+    ui.Checkbox("曲线驱动选中Y", &settings.anim_drive);
     if (ui.Button("校验图", 220.f, 22.f)) {
       cmd->lint = true;
     }
@@ -854,8 +889,29 @@ void DrawEditorUi(engine::ui::ImmediateUi& ui, engine::scene::World& world, Sele
     ui.Text(playing ? (paused ? "播放 暂停" : "播放 运行") : "编辑");
     const std::string fps_s = "帧率 " + std::to_string(static_cast<int>(fps + 0.5f));
     ui.Text(fps_s.c_str());
+    ui.Text(settings.status_line.empty() ? "就绪" : settings.status_line.c_str());
   }
   ui.EndWindow();
+
+  // W25: Output / 控制台 dock（Godot 小项目默认底部输出观感）
+  if (settings.show_output) {
+    if (ui.BeginWindow("输出", 570.f, 450.f, 400.f, 180.f)) {
+      ui.Text(settings.dirty ? "场景已修改 — Ctrl+S 保存" : "场景已保存");
+      ui.Text("快捷键: Ctrl+S 保存  Ctrl+O 打开  Ctrl+Z/Y 撤销重做");
+      ui.Text("Ctrl+D 复制  Del 删除  F 框选  1/2/3 移动/旋转/缩放  Ctrl+P 播放");
+      if (settings.output_lines.empty()) {
+        ui.Text("(暂无消息)");
+      } else {
+        const int start = static_cast<int>(settings.output_lines.size()) > 8
+                              ? static_cast<int>(settings.output_lines.size()) - 8
+                              : 0;
+        for (int i = start; i < static_cast<int>(settings.output_lines.size()); ++i) {
+          ui.Text(settings.output_lines[static_cast<std::size_t>(i)].c_str());
+        }
+      }
+    }
+    ui.EndWindow();
+  }
 }
 
 }  // namespace editor

@@ -2,6 +2,8 @@
 
 #include "game_kit/runtime.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <unordered_map>
 
@@ -67,6 +69,49 @@ bool JsonVec3(std::string_view json, std::string_view key, engine::Vec3* out) {
     out->z = std::strtof(end + 1, nullptr);
   }
   return true;
+}
+
+// Extract {"fields":{...}} or {"fields":"blob"} value into out (object includes braces).
+bool ExtractFieldsValue(std::string_view json, std::string* out) {
+  if (!out) {
+    return false;
+  }
+  const auto i = json.find("\"fields\":");
+  if (i == std::string_view::npos) {
+    return false;
+  }
+  auto rest = json.substr(i + 9);
+  while (!rest.empty() && (rest[0] == ' ' || rest[0] == '\t')) {
+    rest.remove_prefix(1);
+  }
+  if (rest.empty()) {
+    return false;
+  }
+  if (rest[0] == '{') {
+    int depth = 0;
+    for (std::size_t e = 0; e < rest.size(); ++e) {
+      if (rest[e] == '{') {
+        ++depth;
+      } else if (rest[e] == '}') {
+        --depth;
+        if (depth == 0) {
+          *out = std::string(rest.substr(0, e + 1));
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  if (rest[0] == '"') {
+    auto s = rest.substr(1);
+    const auto e = s.find('"');
+    if (e == std::string_view::npos) {
+      return false;
+    }
+    *out = std::string(s.substr(0, e));
+    return true;
+  }
+  return false;
 }
 
 }  // namespace
@@ -166,7 +211,7 @@ engine::scene::NodeId Instantiate(engine::scene::World& world, const PrefabDocum
 }
 
 void MergeOverrideJson(engine::scene::World& world, engine::scene::NodeId id,
-                       std::string_view override_json) {
+                       std::string_view override_json, std::string* out_fields) {
   if (!world.valid(id) || override_json.empty()) {
     return;
   }
@@ -192,6 +237,28 @@ void MergeOverrideJson(engine::scene::World& world, engine::scene::NodeId id,
   t.scale.x = JsonNum(override_json, "sx", t.scale.x);
   t.scale.y = JsonNum(override_json, "sy", t.scale.y);
   t.scale.z = JsonNum(override_json, "sz", t.scale.z);
+  const bool has_yaw = override_json.find("\"yaw\":") != std::string_view::npos;
+  const bool has_pitch = override_json.find("\"pitch\":") != std::string_view::npos;
+  const bool has_roll = override_json.find("\"roll\":") != std::string_view::npos;
+  if (has_yaw || has_pitch || has_roll) {
+    float yaw = 0.f, pitch = 0.f, roll = 0.f;
+    {
+      const auto& q = t.rotation;
+      yaw = std::atan2(2.f * (q.w * q.y + q.x * q.z), 1.f - 2.f * (q.y * q.y + q.x * q.x));
+      pitch = std::asin(std::clamp(2.f * (q.w * q.x - q.z * q.y), -1.f, 1.f));
+      roll = std::atan2(2.f * (q.w * q.z + q.x * q.y), 1.f - 2.f * (q.x * q.x + q.z * q.z));
+    }
+    if (has_yaw) {
+      yaw = JsonNum(override_json, "yaw", yaw);
+    }
+    if (has_pitch) {
+      pitch = JsonNum(override_json, "pitch", pitch);
+    }
+    if (has_roll) {
+      roll = JsonNum(override_json, "roll", roll);
+    }
+    t.rotation = engine::Quat::FromEulerYxz(yaw, pitch, roll);
+  }
   world.set_local_transform(id, t);
   if (JsonHas(override_json, "visible", "false")) {
     world.set_visible(id, false);
@@ -224,10 +291,13 @@ void MergeOverrideJson(engine::scene::World& world, engine::scene::NodeId id,
     }
     world.set_light(id, L);
   }
+  if (out_fields) {
+    (void)ExtractFieldsValue(override_json, out_fields);
+  }
 }
 
 void ApplyInstanceToSource(const engine::scene::World& world, engine::scene::NodeId instance,
-                           PrefabDocument* source) {
+                           PrefabDocument* source, const std::string* fields_json) {
   if (!source || !world.valid(instance) || source->scene.nodes.empty()) {
     return;
   }
@@ -235,6 +305,23 @@ void ApplyInstanceToSource(const engine::scene::World& world, engine::scene::Nod
   root.transform = world.local_transform(instance);
   root.visible = world.visible(instance);
   game_kit::CaptureNodeComponents(world, instance, &root);
+  if (fields_json && !fields_json->empty()) {
+    bool has_script = false;
+    for (auto& c : root.components) {
+      if (c.type == "Script") {
+        c.fields_json = *fields_json;
+        has_script = true;
+        break;
+      }
+    }
+    if (!has_script) {
+      SceneComponent sc;
+      sc.type = "Script";
+      sc.script = root.script_path.empty() ? "scripts/default.lua" : root.script_path;
+      sc.fields_json = *fields_json;
+      root.components.push_back(std::move(sc));
+    }
+  }
 }
 
 engine::scene::NodeId InstantiateNested(engine::scene::World& world, const PrefabDocument& prefab,

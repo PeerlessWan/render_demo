@@ -266,6 +266,17 @@ int main(int argc, char** argv) {
   editor::EditorSettings settings;
   settings.heights.assign(17 * 17, 0.f);
   settings.tiles.assign(16 * 16, 0);
+  settings.status_line = "就绪 — 中小关卡编辑器";
+  settings.output_lines.push_back("编辑器启动");
+  auto push_output = [&](const std::string& msg) {
+    settings.status_line = msg;
+    settings.output_lines.push_back(msg);
+    if (settings.output_lines.size() > 48) {
+      settings.output_lines.erase(settings.output_lines.begin(),
+                                  settings.output_lines.begin() +
+                                      static_cast<std::ptrdiff_t>(settings.output_lines.size() - 48));
+    }
+  };
   editor::LiveServer live;
   (void)live.Start();
   game_kit::ScriptHotReload hot;
@@ -362,15 +373,21 @@ int main(int argc, char** argv) {
       rescan_content();
     }
     if (cmd.cook) {
-      (void)editor::TryRunAssetCook();
+      if (editor::TryRunAssetCook()) {
+        push_output("Cook 完成");
+      } else {
+        push_output("Cook 跳过或失败（无 asset_cook.exe）");
+      }
     }
     if (cmd.save_prefab && app_ref.world().valid(sel.node) && !playing) {
       const auto name = app_ref.world().name(sel.node).empty() ? "selection" : app_ref.world().name(sel.node);
       const auto path = std::filesystem::path("editor/content") / (name + ".json");
       if (auto st = editor::SaveSelectionPrefab(app_ref.world(), sel.node, path); !st) {
         engine::LogError(st.message());
+        push_output(std::string("预制体保存失败: ") + st.message());
       } else {
         engine::LogInfo("prefab saved " + path.string());
+        push_output("已保存预制体 " + path.string());
         rescan_content();
       }
     }
@@ -383,11 +400,13 @@ int main(int argc, char** argv) {
       auto doc = game_kit::LoadSceneDocument(path);
       if (!doc) {
         engine::LogError(doc.status().message());
+        push_output(std::string("打开失败: ") + doc.status().message());
         return false;
       }
       game_kit::ClearWorld(app_ref.world());
       if (auto st = game_kit::ApplyWorld(app_ref.world(), doc.value()); !st) {
         engine::LogError(st.message());
+        push_output(std::string("应用场景失败: ") + st.message());
         return false;
       }
       sel.Clear();
@@ -400,6 +419,7 @@ int main(int argc, char** argv) {
       editor::UnpackEditorExtensions(doc.value(), &settings);
       editor::SyncStreamer(settings.tiles, &tiles);
       engine::LogInfo("loaded " + path.string());
+      push_output("已打开 " + path.string());
       return true;
     };
     if (cmd.open_scene >= 0 && !playing &&
@@ -414,9 +434,18 @@ int main(int argc, char** argv) {
       editor::PackEditorExtensions(settings, &doc);
       if (auto st = game_kit::SaveSceneDocument(doc, scene_path); !st) {
         engine::LogError(st.message());
+        push_output(std::string("保存失败: ") + st.message());
       } else {
         settings.dirty = false;
         engine::LogInfo("saved " + scene_path.string());
+        push_output("已保存 " + scene_path.string());
+        if (settings.cook_on_save) {
+          if (editor::TryRunAssetCook()) {
+            push_output("Cook 完成");
+          } else {
+            push_output("Cook 跳过或失败（无 asset_cook）");
+          }
+        }
       }
     };
     if (cmd.save) {
@@ -465,6 +494,7 @@ int main(int argc, char** argv) {
       s.content = &content;
       s.lint_json = &lint_json;
       s.device = &app_ref.device();
+      s.tiles = &tiles;
       return s;
     };
 
@@ -499,7 +529,60 @@ int main(int argc, char** argv) {
     if (!app_ref.ui_want_capture()) {
       std::string payload;
       if (imgui.PeekDragDrop("content", &payload) && imgui.IsMouseReleased(0)) {
-        pending_content = std::atoi(payload.c_str());
+        const int idx = std::atoi(payload.c_str());
+        if (idx >= 0 && idx < static_cast<int>(content.items.size())) {
+          const auto& item = content.items[static_cast<std::size_t>(idx)];
+          const auto inv_vp = app_ref.camera().view_proj_matrix(aspect).Inverse();
+          const auto ray = editor::ScreenRay(snap.mouse_x, snap.mouse_y, w, h, inv_vp);
+          engine::Vec3 hit_pos = app_ref.camera().position + mc::LookDir(app_ref.camera()) * 4.f;
+          if (std::fabs(ray.dir.y) > 1e-4f) {
+            const float t = -ray.origin.y / ray.dir.y;
+            if (t > 0.f) {
+              hit_pos = ray.origin + ray.dir * t;
+            }
+          }
+          if (item.kind == editor::ContentItem::Kind::Prefab) {
+            auto prefab = game_kit::LoadPrefabDocument(item.path);
+            if (prefab) {
+              engine::scene::Transform tr;
+              tr.position = hit_pos;
+              tr.position.y = std::max(0.f, tr.position.y);
+              if (settings.snap) {
+                editor::SnapTransform(&tr, settings.grid);
+              }
+              std::vector<game_kit::PrefabDocument> catalog;
+              for (const auto& it : content.items) {
+                if (it.kind != editor::ContentItem::Kind::Prefab) {
+                  continue;
+                }
+                auto loaded = game_kit::LoadPrefabDocument(it.path);
+                if (loaded) {
+                  catalog.push_back(std::move(loaded.value()));
+                }
+              }
+              const auto id =
+                  game_kit::InstantiateNested(app_ref.world(), prefab.value(), tr, catalog);
+              if (app_ref.world().valid(id)) {
+                sel.Set(id);
+                meta[id].prefab_id = prefab.value().prefab_id;
+                meta[id].source_prefab = item.path.string();
+                settings.dirty = true;
+                push_output("拖放放置 " + item.label);
+              }
+            } else {
+              push_output(std::string("拖放失败: ") + prefab.status().message());
+            }
+          } else if (item.kind == editor::ContentItem::Kind::Scene) {
+            (void)apply_scene_file(item.path);
+          } else if (item.kind == editor::ContentItem::Kind::Mesh) {
+            push_output("网格拖放：请用内容浏览器放置预制体（mesh 需经 cook/prefab）");
+          } else if (item.kind == editor::ContentItem::Kind::Script) {
+            push_output("脚本拖放：请在检视器选择脚本路径");
+          } else {
+            push_output("该资源类型不支持直接拖入视口");
+          }
+        }
+        pending_content = -1;
         pending_prefab = -1;
       }
     }
@@ -508,6 +591,7 @@ int main(int argc, char** argv) {
       op.kind = editor::EditorOp::Kind::Lint;
       const auto r = editor::ApplyOp(bind_session(), op);
       lint_json = r.json;
+      push_output(r.ok ? ("Lint: " + r.message) : ("Lint 失败: " + r.message));
     }
     if (cmd.bake) {
       editor::EditorOp op;
@@ -515,6 +599,9 @@ int main(int argc, char** argv) {
       const auto r = editor::ApplyOp(bind_session(), op);
       if (!r.ok) {
         engine::LogError(r.message);
+        push_output(std::string("Bake 失败: ") + r.message);
+      } else {
+        push_output(r.message.empty() ? "Bake 完成" : r.message);
       }
     }
     if (cmd.bake_nav) {
@@ -523,6 +610,9 @@ int main(int argc, char** argv) {
       const auto r = editor::ApplyOp(bind_session(), op);
       if (!r.ok) {
         engine::LogError(r.message);
+        push_output(std::string("BakeNav 失败: ") + r.message);
+      } else {
+        push_output(r.message.empty() ? "BakeNav 完成" : r.message);
       }
     }
 
@@ -596,11 +686,22 @@ int main(int argc, char** argv) {
         }
       }
     };
+    // W25: Ctrl+P Play (before play handler); edge-detect shared with later hotkey block.
+    {
+      static bool p_edge_prev = false;
+      const bool p_now = snap.keys[0x50] != 0;
+      const bool ctrl_now = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+      if (p_now && !p_edge_prev && ctrl_now && !voxel.enabled) {
+        cmd.play = true;
+      }
+      p_edge_prev = p_now;
+    }
     if (cmd.play && !voxel.enabled) {
       editor::EditorOp op;
       op.kind = playing ? editor::EditorOp::Kind::Stop : editor::EditorOp::Kind::Play;
       if (editor::ApplyOp(bind_session(), op).ok) {
         app_ref.set_move_speed(playing ? 0.f : 5.5f);
+        push_output(playing ? "进入播放" : "退出播放");
       }
     }
     if (vcmd.play) {
@@ -611,9 +712,45 @@ int main(int argc, char** argv) {
         editor::EditorOp op;
         op.kind = editor::EditorOp::Kind::Pause;
         (void)editor::ApplyOp(bind_session(), op);
+        push_output(paused_play ? "暂停" : "继续");
       } else {
         paused_play = !paused_play;
       }
+    }
+    // Space = Pause while playing (Godot-like).
+    {
+      static bool space_prev = false;
+      const bool space = snap.keys[VK_SPACE] != 0;
+      if (playing && space && !space_prev && !app_ref.ui_want_capture()) {
+        if (!voxel.enabled) {
+          editor::EditorOp op;
+          op.kind = editor::EditorOp::Kind::Pause;
+          (void)editor::ApplyOp(bind_session(), op);
+          push_output(paused_play ? "暂停" : "继续");
+        } else {
+          paused_play = !paused_play;
+        }
+      }
+      space_prev = space;
+    }
+    // Pause hotkey while playing (Pause/Break or Ctrl+Space).
+    {
+      static bool pause_edge = false;
+      const bool pause_key = (GetAsyncKeyState(VK_PAUSE) & 0x8000) != 0;
+      const bool ctrl_space = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0 &&
+                             (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
+      const bool now = pause_key || ctrl_space;
+      if (playing && now && !pause_edge && !app_ref.ui_want_capture()) {
+        if (!voxel.enabled) {
+          editor::EditorOp op;
+          op.kind = editor::EditorOp::Kind::Pause;
+          (void)editor::ApplyOp(bind_session(), op);
+        } else {
+          paused_play = !paused_play;
+        }
+        push_output(paused_play ? "已暂停" : "继续播放");
+      }
+      pause_edge = now;
     }
     if (cmd.step && playing && !voxel.enabled) {
       editor::EditorOp op;
@@ -636,12 +773,16 @@ int main(int argc, char** argv) {
     const bool y_down = snap.keys[0x59] != 0;
     const bool d_down = snap.keys[0x44] != 0;
     const bool s_down = snap.keys[0x53] != 0;
+    const bool o_down = snap.keys[0x4F] != 0;
+    const bool p_down = snap.keys[0x50] != 0;
     const bool f_down = snap.keys[0x46] != 0;
     const bool del_down = snap.keys[VK_DELETE] != 0;
     static bool z_prev = false;
     static bool y_prev = false;
     static bool d_prev = false;
     static bool s_prev = false;
+    static bool o_prev = false;
+    static bool p_prev = false;
     static bool f_prev = false;
     static bool del_prev = false;
     if (!playing) {
@@ -650,27 +791,38 @@ int main(int argc, char** argv) {
           (void)voxel_undo.Undo(vox.world);
         } else {
           (void)undo.Undo(app_ref.world(), &meta, &settings);
+          (void)editor::UploadTerrainMesh(app_ref.device(), app_ref.world(), settings.heights, 2);
+          editor::SyncStreamer(settings.tiles, &tiles);
         }
+        push_output("撤销");
       }
       if (cmd.redo || (y_down && !y_prev && ctrl)) {
         if (voxel.enabled) {
           (void)voxel_undo.Redo(vox.world);
         } else {
           (void)undo.Redo(app_ref.world(), &meta, &settings);
+          (void)editor::UploadTerrainMesh(app_ref.device(), app_ref.world(), settings.heights, 2);
+          editor::SyncStreamer(settings.tiles, &tiles);
         }
+        push_output("重做");
       }
       if (s_down && !s_prev && ctrl) {
         persist_scene();
+      }
+      if (o_down && !o_prev && ctrl) {
+        (void)apply_scene_file(scene_path);
       }
       if ((cmd.duplicate || (d_down && !d_prev && ctrl)) && !voxel.enabled) {
         editor::EditorOp op;
         op.kind = editor::EditorOp::Kind::Duplicate;
         (void)editor::ApplyOp(bind_session(), op);
+        push_output("已复制选中");
       }
       if ((cmd.destroy || (del_down && !del_prev)) && !voxel.enabled) {
         editor::EditorOp op;
         op.kind = editor::EditorOp::Kind::Destroy;
         (void)editor::ApplyOp(bind_session(), op);
+        push_output("已删除选中");
       }
       if ((cmd.frame || (f_down && !f_prev)) && !voxel.enabled) {
         editor::FrameCamera(&app_ref.camera(), app_ref.world(), sel.node);
@@ -680,6 +832,8 @@ int main(int argc, char** argv) {
     y_prev = y_down;
     d_prev = d_down;
     s_prev = s_down;
+    o_prev = o_down;
+    p_prev = p_down;
     f_prev = f_down;
     del_prev = del_down;
 
@@ -710,6 +864,15 @@ int main(int argc, char** argv) {
     app_ref.set_fly_locomotion_enabled(!playing && !view_2d && !gizmo_busy && !voxel.enabled);
     app_ref.set_look_with_rmb(!view_2d);
 
+    // Middle-mouse pan (matches 设置文案).
+    if (!playing && !voxel.enabled && !app_ref.ui_want_capture() && snap.mouse_middle) {
+      const float pan = 0.02f * (settings.grid > 0.f ? settings.grid : 1.f);
+      const float cy = std::cos(app_ref.camera().yaw);
+      const float sy = std::sin(app_ref.camera().yaw);
+      app_ref.camera().position.x += (-snap.mouse_dx * cy - snap.mouse_dy * sy) * pan;
+      app_ref.camera().position.z += (snap.mouse_dx * sy - snap.mouse_dy * cy) * pan;
+    }
+
     {
       static int last_vp = 0;
       if (settings.split_view) {
@@ -720,7 +883,6 @@ int main(int argc, char** argv) {
           settings.active_pane = editor::PaneAt(panes, n, snap.mouse_x, snap.mouse_y);
         }
         editor::ApplyPaneCamera(settings.active_pane, &app_ref.camera(), edit_cam);
-        app_ref.camera().ortho = false;
         settings.viewport = settings.active_pane;
       } else if (settings.viewport == 0) {
         if (last_vp != 0) {
@@ -734,21 +896,8 @@ int main(int argc, char** argv) {
           edit_cam = app_ref.camera();
           edit_cam.ortho = false;
         }
-      } else if (settings.viewport == 1) {
-        app_ref.camera().position = {0.f, 18.f, 0.01f};
-        app_ref.camera().yaw = 0.f;
-        app_ref.camera().pitch = -1.55f;
-        app_ref.camera().ortho = false;
-      } else if (settings.viewport == 2) {
-        app_ref.camera().position = {0.f, 2.f, 16.f};
-        app_ref.camera().yaw = 0.f;
-        app_ref.camera().pitch = 0.f;
-        app_ref.camera().ortho = false;
-      } else if (settings.viewport == 3) {
-        app_ref.camera().position = {16.f, 2.f, 0.f};
-        app_ref.camera().yaw = -1.57f;
-        app_ref.camera().pitch = 0.f;
-        app_ref.camera().ortho = false;
+      } else if (settings.viewport >= 1 && settings.viewport <= 3) {
+        editor::ApplyPaneCamera(settings.viewport, &app_ref.camera(), edit_cam);
       } else if (settings.viewport == 4) {
         app_ref.camera().ortho = false;
         for (const auto& kv : meta) {
@@ -915,7 +1064,53 @@ int main(int argc, char** argv) {
         PaintSphere(vox.world, voxel_undo, hit.x, hit.y, hit.z, voxel.brush_radius, mc::Id::Air);
         voxel.dirty = true;
       }
-    } else if (!playing && pressed) {
+    } else if (!playing && (pressed || (held && settings.brush_tool > 0))) {
+      // Viewport sculpt / tile brush (brush_tool) or click placement / pick.
+      if (settings.brush_tool > 0 && !app_ref.ui_want_capture()) {
+        const auto inv_vp = app_ref.camera().view_proj_matrix(aspect).Inverse();
+        const auto ray = editor::ScreenRay(snap.mouse_x, snap.mouse_y, w, h, inv_vp);
+        engine::Vec3 hit{0, 0, 0};
+        bool ok_hit = false;
+        if (std::fabs(ray.dir.y) > 1e-4f) {
+          const float t = -ray.origin.y / ray.dir.y;
+          if (t > 0.f) {
+            hit = ray.origin + ray.dir * t;
+            ok_hit = true;
+          }
+        }
+        if (ok_hit) {
+          if (settings.brush_tool == 1) {
+            const int cx = std::clamp(static_cast<int>(std::floor(hit.x - (-8.f))), 0, 16);
+            const int cz = std::clamp(static_cast<int>(std::floor(hit.z - (-8.f))), 0, 16);
+            static int last_cx = -999, last_cz = -999;
+            if (pressed || cx != last_cx || cz != last_cz) {
+              editor::EditorOp op;
+              op.kind = editor::EditorOp::Kind::Sculpt;
+              op.x = static_cast<float>(cx);
+              op.z = static_cast<float>(cz);
+              op.has_x = op.has_z = true;
+              op.y = settings.sculpt;
+              op.has_y = true;
+              op.sx = settings.brush_radius;
+              op.has_sx = true;
+              (void)editor::ApplyOp(bind_session(), op);
+              last_cx = cx;
+              last_cz = cz;
+            }
+          } else if (settings.brush_tool == 2 && pressed) {
+            const int tx = std::clamp(static_cast<int>(std::floor(hit.x + 8.f)), 0, 15);
+            const int ty = std::clamp(static_cast<int>(std::floor(hit.z + 8.f)), 0, 15);
+            editor::EditorOp op;
+            op.kind = editor::EditorOp::Kind::PaintTile;
+            op.x = static_cast<float>(tx);
+            op.z = static_cast<float>(ty);
+            op.has_x = op.has_z = true;
+            op.sx = static_cast<float>(settings.tile_gid);
+            op.has_sx = true;
+            (void)editor::ApplyOp(bind_session(), op);
+          }
+        }
+      } else if (!playing && pressed) {
       bool handled = false;
       if (pending_prefab >= 0) {
         place_at_cursor(PrefabByIndex(pending_prefab));
@@ -933,10 +1128,14 @@ int main(int argc, char** argv) {
         } else {
           auto doc = game_kit::LoadSceneDocument(item.path);
           if (doc) {
+            game_kit::ClearWorld(app_ref.world());
             if (auto st = game_kit::ApplyWorld(app_ref.world(), doc.value()); !st) {
               engine::LogError(st.message());
+              push_output(std::string("打开失败: ") + st.message());
             } else {
-              settings.dirty = true;
+              settings.dirty = false;
+              scene_path = item.path;
+              push_output("已打开 " + item.path.string());
             }
           } else {
             engine::LogError(doc.status().message());
@@ -1025,6 +1224,7 @@ int main(int argc, char** argv) {
           }
         }
       }
+      }
     } else if (!playing && held && app_ref.world().valid(sel.node)) {
       const auto ids = sel.All();
       const auto mode = static_cast<editor::GizmoMode>(settings.gizmo_mode);
@@ -1087,6 +1287,25 @@ int main(int argc, char** argv) {
     lmb_prev = lmb;
     rmb_prev = rmb;
 
+    // Middle-mouse pan (matches UI: 中键平移).
+    {
+      static bool mmb_prev = false;
+      const bool mmb = snap.mouse_middle && !app_ref.ui_want_capture();
+      if (mmb && !playing) {
+        const float sp = 0.02f * (settings.viewport == 5 || app_ref.camera().ortho
+                                      ? app_ref.camera().ortho_height
+                                      : 8.f);
+        app_ref.camera().position.x -= snap.mouse_dx * sp;
+        if (app_ref.camera().ortho && settings.viewport != 5) {
+          app_ref.camera().position.y += snap.mouse_dy * sp;
+        } else {
+          app_ref.camera().position.z += snap.mouse_dy * sp;
+        }
+      }
+      mmb_prev = mmb;
+      (void)mmb_prev;
+    }
+
     if (settings.show_grid) {
       app_ref.debug_draw().AddGrid(8.f, settings.snap ? settings.grid : 1.f, 0.f);
     }
@@ -1136,21 +1355,42 @@ int main(int argc, char** argv) {
     }
 
     if (playing && !voxel.enabled) {
-      phys = engine::physics::CreateDefaultPhysicsWorld();
-      if (phys) {
-        rt.set_physics(phys.get());
+      if (!phys) {
+        phys = engine::physics::CreateDefaultPhysicsWorld();
+        if (phys) {
+          rt.set_physics(phys.get());
+          std::vector<engine::scene::NodeId> nodes;
+          editor::CollectAllNodes(live_world, &nodes);
+          for (auto id : nodes) {
+            const auto* col = live_world.collider(id);
+            if (!col) {
+              continue;
+            }
+            engine::physics::RigidBodyDesc d;
+            d.position = live_world.local_transform(id).position;
+            d.half_extents = {col->hx, col->hy, col->hz};
+            d.mass = 0.f;
+            (void)phys->CreateBox(d);
+          }
+        }
+      } else if (phys) {
+        // Sync kinematic collider bodies to node transforms (no per-frame world recreate).
         std::vector<engine::scene::NodeId> nodes;
         editor::CollectAllNodes(live_world, &nodes);
+        int bi = 0;
+        const int nbody = phys->body_count();
         for (auto id : nodes) {
           const auto* col = live_world.collider(id);
           if (!col) {
             continue;
           }
-          engine::physics::RigidBodyDesc d;
-          d.position = live_world.local_transform(id).position;
-          d.half_extents = {col->hx, col->hy, col->hz};
-          d.mass = 0.f;
-          (void)phys->CreateBox(d);
+          if (bi >= nbody) {
+            break;
+          }
+          const auto want = live_world.local_transform(id).position;
+          const auto cur = phys->body_position(bi);
+          (void)phys->MoveCharacter(bi, want - cur);
+          ++bi;
         }
       }
       if (phys && !paused_play) {
@@ -1165,7 +1405,12 @@ int main(int argc, char** argv) {
       if (assets_hot.Poll() && assets_hot.ConsumeInvalidateRequest()) {
         editor::EditorOp op;
         op.kind = editor::EditorOp::Kind::HotReload;
-        (void)editor::ApplyOp(bind_session(), op);
+        const auto r = editor::ApplyOp(bind_session(), op);
+        if (!r.ok) {
+          push_output(std::string("热重载失败: ") + r.message);
+        } else {
+          push_output(r.message.empty() ? "热重载完成" : r.message);
+        }
         rescan_content();
       }
       if (playing) {
@@ -1213,11 +1458,25 @@ int main(int argc, char** argv) {
         }
       }
     }
-    if (live_world.valid(sel.node)) {
+    if (live_world.valid(sel.node) && !playing && settings.anim_drive) {
       static float anim_t = 0.f;
+      static engine::scene::NodeId driven{};
+      static float base_y = 0.f;
+      if (driven != sel.node) {
+        driven = sel.node;
+        base_y = live_world.local_transform(sel.node).position.y;
+        anim_t = 0.f;
+      }
       anim_t += app_ref.delta_time();
       const float y = editor::SampleCurve(settings.anim, std::fmod(anim_t, 1.f));
+      auto t = live_world.local_transform(sel.node);
+      t.position.y = base_y + y;
+      live_world.set_local_transform(sel.node, t);
+      const auto p = t.position;
+      app_ref.debug_draw().AddLine(p, p + engine::Vec3{0.f, 0.25f + y, 0.f}, {1.f, 0.4f, 0.9f, 1.f});
+    } else if (live_world.valid(sel.node)) {
       const auto p = live_world.local_transform(sel.node).position;
+      const float y = editor::SampleCurve(settings.anim, 0.f);
       app_ref.debug_draw().AddLine(p, p + engine::Vec3{0.f, 0.25f + y, 0.f}, {1.f, 0.4f, 0.9f, 1.f});
     }
     if (!settings.tiles.empty()) {

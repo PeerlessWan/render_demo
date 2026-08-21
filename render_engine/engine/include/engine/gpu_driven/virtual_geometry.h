@@ -11,8 +11,8 @@
 
 namespace engine::gpu_driven {
 
-// W23 / ADR 0046: Nanite-like VirtualGeometry (NOT UE Nanite).
-// Hierarchical cluster DAG + screen-error LOD + residency + GPU-cull stand-in.
+// W23/W25 / ADR 0046/0048: Nanite-like VirtualGeometry (NOT UE Nanite).
+// Hierarchical cluster DAG + screen-error LOD + residency + GPU-cull / continuous LOD / SW raster.
 
 struct ClusterNode {
   std::int32_t parent = -1;
@@ -39,6 +39,8 @@ struct VirtualGeometryResidency {
 struct VirtualGeometrySelectResult {
   std::vector<std::uint32_t> visible_meshlet_ids;
   std::vector<IndirectDrawArgs> indirect_args;
+  // W25 continuous LOD: blend weight in [0,1] per visible id (0=parent coarse, 1=child fine).
+  std::vector<float> lod_blend;
 };
 
 // Build a simple 2-level hierarchy: leaves = meshlets; root = whole AABB coarse node.
@@ -52,10 +54,35 @@ struct VirtualGeometrySelectResult {
                                                          float pixel_error_threshold,
                                                          VirtualGeometryResidency* residency);
 
+// W25: continuous error interpolation between parent/child (fills lod_blend).
+[[nodiscard]] VirtualGeometrySelectResult SelectClustersContinuous(
+    const VirtualGeometryAsset& asset, const Mat4& world, const Mat4& view_proj,
+    float pixel_error_threshold, VirtualGeometryResidency* residency);
+
 // CPU stand-in for GPU meshlet cull CS (writes Indirect args for visible residents).
 [[nodiscard]] std::uint32_t CullVirtualGeometryToIndirect(const VirtualGeometryAsset& asset,
                                                           const VirtualGeometrySelectResult& sel,
                                                           const Mat4& world, const Mat4& view_proj,
                                                           std::vector<IndirectDrawArgs>& out_args);
+
+// W25: GPU cull CS contract (DX+VK L0). CPU reference when no CS; Feature virtual_geometry_gpu_cull.
+[[nodiscard]] Status TryDispatchVirtualGeometryCullCs(const VirtualGeometryAsset& asset,
+                                                      const VirtualGeometrySelectResult& sel,
+                                                      const Mat4& world, const Mat4& view_proj,
+                                                      std::vector<IndirectDrawArgs>& out_args);
+
+struct SoftRasterResult {
+  int width = 0;
+  int height = 0;
+  std::vector<std::uint8_t> rgba;  // visibility/coverage tint
+  std::uint32_t covered_texels = 0;
+};
+
+// W25: micro-triangle SW raster (CPU teaching / CS stand-in). Feature virtual_geometry_sw_raster.
+[[nodiscard]] Status SoftRasterizeVirtualGeometry(const VirtualGeometryAsset& asset,
+                                                  const VirtualGeometrySelectResult& sel,
+                                                  const Mat4& world, const Mat4& view_proj,
+                                                  int target_w, int target_h,
+                                                  SoftRasterResult& out);
 
 }  // namespace engine::gpu_driven

@@ -15,6 +15,9 @@
 namespace engine::rhi {
 class IDevice;
 }
+namespace engine::render2d {
+class TilemapStreamer;
+}
 
 #include <filesystem>
 #include <string>
@@ -111,6 +114,7 @@ struct EditorSession {
   std::string* lint_json = nullptr;
   std::string* screenshot_path = nullptr;
   engine::rhi::IDevice* device = nullptr;
+  engine::render2d::TilemapStreamer* tiles = nullptr;
 };
 
 struct EditorHost {

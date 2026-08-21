@@ -1,10 +1,12 @@
 #include "editing/anim_edit.h"
+#include "editing/settings.h"
 #include "editing/sprite_view.h"
 #include "editing/terrain_edit.h"
 #include "editing/tile_edit.h"
 #include "editing/viewport_layout.h"
 #include "io/content_browser.h"
 #include "io/dep_graph.h"
+#include "io/scene_ext.h"
 
 #include "game_kit/scene_document.h"
 #include "game_kit/script_fields.h"
@@ -17,6 +19,16 @@
 #include <cmath>
 #include <fstream>
 #include <filesystem>
+
+TEST_CASE("W25 editor settings output dock defaults", "[unit][w25]") {
+  editor::EditorSettings s;
+  REQUIRE(s.show_output);
+  REQUIRE(!s.status_line.empty());
+  s.output_lines.push_back("saved demo");
+  REQUIRE(s.output_lines.size() == 1);
+  s.show_output = false;
+  REQUIRE(!s.show_output);
+}
 
 TEST_CASE("world light camera collider sprite components", "[unit]") {
   engine::scene::World world;
@@ -115,10 +127,13 @@ TEST_CASE("viewport split cameras differ yaw and fovy", "[unit]") {
   editor::ApplyPaneCamera(1, &top, persp);
   editor::ApplyPaneCamera(2, &front, persp);
   editor::ApplyPaneCamera(3, &side, persp);
-  REQUIRE(std::fabs(top.pitch + 1.55f) < 0.02f);
+  REQUIRE(top.ortho);
+  REQUIRE(front.ortho);
+  REQUIRE(side.ortho);
+  REQUIRE(std::fabs(top.pitch + 1.5707963f) < 0.02f);
   REQUIRE(std::fabs(front.yaw - 0.f) < 0.01f);
   REQUIRE(std::fabs(side.yaw + 1.57f) < 0.02f);
-  REQUIRE(top.fovy_rad < persp.fovy_rad);
+  REQUIRE(top.ortho_height > 1.f);
   REQUIRE(std::fabs(front.fovy_rad - side.fovy_rad) < 0.01f);
 }
 
@@ -189,4 +204,25 @@ TEST_CASE("content json thumbs are stable not random", "[unit]") {
   REQUIRE(!b1.items.empty());
   REQUIRE(std::fabs(b1.items.front().thumb_r - b2.items.front().thumb_r) < 1e-6f);
   REQUIRE(b1.items.front().thumb_g > 0.2f);
+}
+
+TEST_CASE("scene_ext pack unpack restores anim transitions", "[unit]") {
+  editor::EditorSettings src;
+  src.anim.states = {"idle", "walk"};
+  src.anim.transitions = {{"idle", "walk"}, {"walk", "idle"}};
+  src.anim.keys[0] = 0.1f;
+  src.anim.keys[3] = 0.9f;
+  src.anim.current = 1;
+  game_kit::SceneDocument doc;
+  editor::PackEditorExtensions(src, &doc);
+  editor::EditorSettings dst;
+  editor::UnpackEditorExtensions(doc, &dst);
+  REQUIRE(dst.anim.current == 1);
+  REQUIRE(dst.anim.states.size() == 2);
+  REQUIRE(dst.anim.transitions.size() == 2);
+  REQUIRE(dst.anim.transitions[0].first == "idle");
+  REQUIRE(dst.anim.transitions[0].second == "walk");
+  REQUIRE(dst.anim.transitions[1].first == "walk");
+  REQUIRE(dst.anim.transitions[1].second == "idle");
+  REQUIRE(std::fabs(dst.anim.keys[0] - 0.1f) < 1e-4f);
 }

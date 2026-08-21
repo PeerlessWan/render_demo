@@ -563,10 +563,18 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
     }
     case EditorOp::Kind::Duplicate: {
       const float off = s.settings->snap ? s.settings->grid : 1.f;
+      const auto selected = s.sel->All();
       const auto created = DuplicateSelection(world, *s.sel, off);
       if (created.empty()) {
         return Fail("nothing to duplicate");
       }
+      for (std::size_t i = 0; i < created.size() && i < selected.size(); ++i) {
+        auto it = s.meta->find(selected[i]);
+        if (it != s.meta->end()) {
+          (*s.meta)[created[i]] = it->second;
+        }
+      }
+      SyncMetaToWorld(world, *s.meta);
       std::vector<NodeSnap> snaps;
       for (auto id : created) {
         CaptureSubtree(world, id, *s.meta, &snaps);
@@ -606,11 +614,23 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
       if (!s.undo->Undo(world, s.meta, s.settings)) {
         return Fail("nothing to undo");
       }
+      if (s.device && s.settings && !s.settings->heights.empty()) {
+        (void)UploadTerrainMesh(*s.device, world, s.settings->heights, 2);
+      }
+      if (s.tiles && s.settings) {
+        SyncStreamer(s.settings->tiles, s.tiles);
+      }
       s.settings->dirty = true;
       return Ok("undo");
     case EditorOp::Kind::Redo:
       if (!s.undo->Redo(world, s.meta, s.settings)) {
         return Fail("nothing to redo");
+      }
+      if (s.device && s.settings && !s.settings->heights.empty()) {
+        (void)UploadTerrainMesh(*s.device, world, s.settings->heights, 2);
+      }
+      if (s.tiles && s.settings) {
+        SyncStreamer(s.settings->tiles, s.tiles);
       }
       s.settings->dirty = true;
       return Ok("redo");
@@ -727,12 +747,13 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
           if (!UploadTerrainMesh(*s.device, world, s.settings->heights, 2)) {
             return Fail("mesh hot reload failed");
           }
+          ++n;
         }
         auto loader = engine::assets::CreateDefaultImageLoader();
         std::error_code ec;
         const auto root = std::filesystem::path("editor/content");
         if (loader && std::filesystem::exists(root, ec)) {
-          for (const auto& ent : std::filesystem::directory_iterator(root, ec)) {
+          for (const auto& ent : std::filesystem::recursive_directory_iterator(root, ec)) {
             if (!ent.is_regular_file(ec)) {
               continue;
             }
@@ -744,8 +765,16 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
             if (!img) {
               return Fail(img.status().message());
             }
+            // Device albedo slots are 0/1 only — hash stem into {0,1} (not all → 0).
+            const auto stem = ent.path().stem().string();
+            std::uint32_t h = 2166136261u;
+            for (char c : stem) {
+              h ^= static_cast<std::uint32_t>(static_cast<unsigned char>(c));
+              h *= 16777619u;
+            }
+            const int slot = static_cast<int>(h & 1u);
             if (auto st = s.device->UploadLitAlbedoRgba(img.value().rgba.data(), img.value().width,
-                                                        img.value().height, 0);
+                                                        img.value().height, slot);
                 !st) {
               return Fail(st.message());
             }
@@ -760,7 +789,7 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
       if (auto st = BakeSceneLights(world, s.settings->heights, out, s.device); !st) {
         return Fail(st.message());
       }
-      return Ok("bake");
+      return Ok("bake ok -> " + out.string());
     }
     case EditorOp::Kind::BakeNav: {
       if (!s.rt || !s.world) {
@@ -769,10 +798,12 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
       s.rt->set_world(s.world);
       const bool baked = s.rt->nav().BakeFromWorld(*s.world);
       const bool mesh = s.rt->nav().has_navmesh();
+      if (!baked || !mesh) {
+        return Fail("bake_nav empty mesh");
+      }
       auto pts = s.rt->nav().FindPath({-4.f, 0.5f, -4.f}, {4.f, 0.5f, 4.f});
-      auto r = Ok(baked ? "bake_nav" : "bake_nav empty");
-      r.json = std::string("{\"has_navmesh\":") + (mesh ? "true" : "false") + ",\"path_pts\":" +
-               std::to_string(pts.size()) + "}";
+      auto r = Ok("bake_nav ok");
+      r.json = std::string("{\"has_navmesh\":true,\"path_pts\":") + std::to_string(pts.size()) + "}";
       r.message = r.json;
       return r;
     }
@@ -838,10 +869,14 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
         return Fail(loaded.status().message());
       }
       auto doc = loaded.value();
-      game_kit::ApplyInstanceToSource(world, id, &doc);
+      const std::string* fields =
+          it->second.script_fields.empty() ? nullptr : &it->second.script_fields;
+      game_kit::ApplyInstanceToSource(world, id, &doc, fields);
       if (auto st = game_kit::SavePrefabDocument(doc, it->second.source_prefab); !st) {
         return Fail(st.message());
       }
+      it->second.override_json.clear();
+      s.settings->dirty = true;
       return Ok("apply prefab");
     }
     case EditorOp::Kind::RevertPrefab: {
@@ -857,11 +892,26 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
       if (!loaded || loaded.value().scene.nodes.empty()) {
         return Fail("prefab missing");
       }
-      const auto& src = loaded.value().scene.nodes[0];
-      world.set_local_transform(id, src.transform);
-      world.set_visible(id, src.visible);
-      game_kit::ApplyNodeComponents(world, id, src);
-      it->second.override_json.clear();
+      const auto parent = world.parent(id);
+      const auto place = world.local_transform(id);
+      const std::string source = it->second.source_prefab;
+      const std::string pid = it->second.prefab_id.empty() ? loaded.value().prefab_id : it->second.prefab_id;
+      (void)world.DestroyNode(id);
+      s.meta->erase(id);
+      auto catalog = LoadCatalog(s.content);
+      const auto new_id =
+          game_kit::InstantiateNested(world, loaded.value(), place, catalog, s.rt);
+      if (new_id == engine::scene::kInvalidNode) {
+        return Fail("revert instantiate failed");
+      }
+      if (world.valid(parent)) {
+        (void)world.set_parent(new_id, parent);
+        world.set_local_transform(new_id, place);
+      }
+      (*s.meta)[new_id].prefab_id = pid;
+      (*s.meta)[new_id].source_prefab = source;
+      (*s.meta)[new_id].override_json.clear();
+      s.sel->Set(new_id);
       s.settings->dirty = true;
       return Ok("revert prefab");
     }
@@ -893,12 +943,13 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
       auto t0 = s.settings->tiles;
       auto a0 = s.settings->anim;
       const float amt = op.has_y ? op.y : s.settings->sculpt;
+      const float radius = op.has_sx ? op.sx : s.settings->brush_radius;
       if (s.settings->sculpt_mode == 1) {
-        LowerHeight(&s.settings->heights, static_cast<int>(op.x), static_cast<int>(op.z), amt, 2.f);
+        LowerHeight(&s.settings->heights, static_cast<int>(op.x), static_cast<int>(op.z), amt, radius);
       } else if (s.settings->sculpt_mode == 2) {
-        SmoothHeight(&s.settings->heights, static_cast<int>(op.x), static_cast<int>(op.z), 2.f);
+        SmoothHeight(&s.settings->heights, static_cast<int>(op.x), static_cast<int>(op.z), radius);
       } else {
-        RaiseHeight(&s.settings->heights, static_cast<int>(op.x), static_cast<int>(op.z), amt, 2.f);
+        RaiseHeight(&s.settings->heights, static_cast<int>(op.x), static_cast<int>(op.z), amt, radius);
       }
       s.undo->PushGrid(std::move(h0), std::move(t0), std::move(a0), s.settings->heights,
                        s.settings->tiles, s.settings->anim);
@@ -914,8 +965,11 @@ OpResult ApplyOp(EditorSession s, const EditorOp& op) {
       auto h0 = s.settings->heights;
       auto t0 = s.settings->tiles;
       auto a0 = s.settings->anim;
-      PaintTile(&s.settings->tiles, nullptr, static_cast<int>(op.x), static_cast<int>(op.z),
+      PaintTile(&s.settings->tiles, s.tiles, static_cast<int>(op.x), static_cast<int>(op.z),
                 static_cast<int>(op.sx));
+      if (s.tiles) {
+        SyncStreamer(s.settings->tiles, s.tiles);
+      }
       s.undo->PushGrid(std::move(h0), std::move(t0), std::move(a0), s.settings->heights,
                        s.settings->tiles, s.settings->anim);
       s.settings->dirty = true;

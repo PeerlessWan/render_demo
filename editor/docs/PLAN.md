@@ -13,6 +13,7 @@
 | **摆放器可用** | ED0–ED3 | **已收口** |
 | **编辑器可用** | ED4–ED5 | **已收口**（Play / Prefab / 脚本 Entity） |
 | **对标主流** | 不宣称 | 材质图 / UMG / 蓝图 / DCC — GAPS §4，刻意不对齐 |
+| **W25 Godot≈100%** | 中小关卡编辑器产品观感（ADR 0002） | 无 GDScript/材质节点图/导出全家桶 |
 
 一期是关卡摆放器，不替代 Blender；**不替代**已接线的 `game_kit` GK0–GK5。
 
@@ -48,10 +49,12 @@
 | ED4 Play | 场景 Entity+脚本+地面钳制；体素生存出生+HUD；退出恢复 |
 | ED5 Prefab | Content 打开场景 / 放置实例 + 选中存 Prefab + 脚本 Combo |
 | ED6 | **已闭环**（GAPS §4 刻意不做除外）：四分屏、override、地形/Tile 存盘、Anim、Bake/Lint/热重载、真截图 |
+| **W25** | Godot 中小关卡编辑器观感 ≈100% 封板（ADR 0002）；见 [ENGINE_VS_GODOT_EDITOR.md](ENGINE_VS_GODOT_EDITOR.md) |
 
 ## 4. 相关
 
 - [GAPS.md](GAPS.md) — **对标主流 / 一期 / 刻意不做**  
+- [ENGINE_VS_GODOT_EDITOR.md](ENGINE_VS_GODOT_EDITOR.md) — W25 尺子与自评  
 - [ADR_INDEX.md](ADR_INDEX.md)  
 - [FEATURES.md](FEATURES.md)  
 - [../../render_engine/docs/PLAN.md](../../render_engine/docs/PLAN.md) **§1.9**  

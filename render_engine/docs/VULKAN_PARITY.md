@@ -1,9 +1,9 @@
 # D3D12 ↔ Vulkan 差异与对齐
 
 > **原则：D3D12 是功能与观感参考路径；Vulkan 负责追上。**  
-> **引擎水位：W12–W24 封板**（[ADR 0047](learn/adr/0047-w24-godot-domain-100.md)）。  
-> **口径（Win 双后端 100%）：** Windows 上 D3D12 + Vulkan 渲染与近端物理对齐到「可同场景发版」——lit/阴影/IBL/探针、完整基础后处理（含 SSR/DoF/MB）、GPU 实例 + Cull/Indirect、Bindless 热路径（Feature 门控）、薄 SoftBody Demo；Sandbox 中英文 UI 可实时切换。默认质量 **Medium**；SSAO/软影/VT→slot1 默认关。  
-> **不算进本口径：** Linux 全量发版树 / 大气 / 编辑器 / game_kit / 完整多语言框架；超分/MsQuic **可选 SDK**（无则 SKIP/bilinear）。  
+> **引擎水位：W12–W25**（[ADR 0048](learn/adr/0048-w25-vk-ngx-vg-editor.md)）。  
+> **口径（Win 双后端 100%）：** Windows 上 D3D12 + Vulkan 渲染与近端物理对齐到「可同场景发版」——lit/阴影/IBL/探针、完整基础后处理（含 SSR/DoF/MB）、GPU 实例 + Cull/Indirect、Bindless 热路径（Feature 门控）、薄 SoftBody Demo；**W25 产品软影 mask + 半分辨率 RT 反射缓冲合同已对齐**。Sandbox 中英文 UI 可实时切换。默认质量 **Medium**；SSAO/软影/VT→slot1 默认关。  
+> **不算进本口径：** Linux 全量发版树 / 大气 / 编辑器 / game_kit / 完整多语言框架；超分/MsQuic **可选 SDK**（无则 SKIP/bilinear）；**视频硬解**仍有意差。  
 > 自动化：`python tests/scripts/run_backend_parity.py --config Debug`（见 [TESTING.md](TESTING.md) C4）。
 
 ## 1. 结论（怎么读差异）
@@ -41,7 +41,7 @@
 | VK TraceRays 示范 | DXR DispatchRays | `rayTracingPipeline` → 解析 `vkCmdTraceRaysKHR`；否则 SKIP | **W11 尽力** |
 | 薄 SoftBody | `IPhysicsWorld` + Jolt | 同（与后端无关） | 对齐；builtin SKIP |
 | Sandbox 中/英 UI | ImmediateUi + CJK atlas | 同 | 对齐 |
-| 视频硬解 / 光追示范 | D3D12VA / DXR | VK Video / 全屏 RT 产品路径仍外置 | 有意差 |
+| 视频硬解 / 光追示范 | D3D12VA / DXR | VK Video 有意差；**产品软影 mask + 反射缓冲→SSR 与 D3D12 同合同**（W25） | 视频硬解有意差；全屏路径追踪外置 |
 | `gpu_headless` Readback | RGBA | BGRA→RGBA | 对齐 |
 
 ## 3. 结构性差异（代码路径）
@@ -123,18 +123,27 @@ Headless / golden dump 仍关 TAA/SSAO 保稳定；交互可两端同开。
 | lit detail / triplanar | 同波 | 同波 | L0 |
 | VirtualGeometry（Nanite-like） | 同波 CPU/Indirect | 同波 | L0；非 UE Nanite |
 | RTXGI Bind/Create | L1 | L1 | 无 SDK → SKIP；CascadeGi 默认 |
-| 产品软影 mask / 半分辨率 RT 反射缓冲 | L1 | stub/SKIP | 全屏 RT 有意差 |
+| 产品软影 mask / 半分辨率 RT 反射缓冲 | L1 | **W25 同合同**（ProbeVkRt + Upload） | 全屏路径追踪外置 |
 | Joints / Vehicle / Shatter | Jolt | Jolt | builtin SKIP |
 
 ### 3.10 W24 分域 vs Godot ≈100%（ADR 0047）
 
 | 能力 | D3D12 | Vulkan | 层级 |
 |---|---|---|---|
-| 产品软影 mask 进帧 | L0（Feature/Quality） | CPU compose 同波；DXR overlay 有意差 | 光追分域按 Win D3D12 |
-| RT 反射 → SSR 增强 | L0 High | SKIP / 无 DXR | 有意差 |
+| 产品软影 mask 进帧 | L0（Feature/Quality） | **W25** CPU/VK-RT 产品同 Upload 合同 | 对齐 |
+| RT 反射 → SSR 增强 | L0 High | **W25** VK RT 有扩展则同缓冲合同 | 对齐 |
 | VirtualGeometry Sandbox 热路径 | 同波 | 同波 | L0 Feature |
 | CharacterMoveEx / Triggers | Jolt | Jolt | L0 |
 | Quality↔Effect 默认同步 | 同波 | 同波 | L0 |
+
+### 3.11 W25 VK + NGX/RTXGI + VG（ADR 0048）
+
+| 能力 | D3D12 | Vulkan | 层级 |
+|---|---|---|---|
+| 产品软影 / 半分辨率反射缓冲 | DXR overlay | ProbeVkRt → 同 Upload | L0 产品一步 |
+| NGX Evaluate | 有 .lib 真链 | Streamline/NGX-VK 有则同；否则 FSR/bilinear | L1 |
+| RTXGI Update atlas | 有 .lib 真链 | 同 | L1；无 → CascadeGi |
+| VG GPU cull / 连续 LOD / SW raster | 同波合同 | 同波 | L0 Feature |
 
 
 | 路径 | Ok 条件 | SKIP |

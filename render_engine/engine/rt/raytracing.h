@@ -34,10 +34,17 @@ Status EnsureSafe(rhi::Backend backend, const FeatureSet& features, const Raytra
 // Ephemeral D3D12 device probe (OPTIONS5 RaytracingTier). Does not enable a full DXR frame.
 [[nodiscard]] bool ProbeDxrHardwareSupport();
 
+// W25 / ADR 0048: ephemeral Vulkan probe for VK_KHR_ray_tracing_pipeline or ray_query.
+// Does not enable a fullscreen production RT frame.
+[[nodiscard]] bool ProbeVkRtHardwareSupport();
+
 // True when DXR demo can run: D3D12 + raytracing feature + non-empty demo config.
 // Call ProbeDxrHardwareSupport + SetFeatureOverride("raytracing", ...) before QueryFeatures
 // when no live device has published the flag yet (see learn/19_dxr_intro).
 bool CanRunDxrDemo(const FeatureSet& features, const DxrDemoConfig& demo);
+
+// W25: product soft-shadow / reflection buffers allowed when DXR or VK RT is present.
+[[nodiscard]] bool CanRunProductRtPath();
 
 // W4/W7: when raytracing + shadows gated, records WOULD run and prefers real AS/DispatchRays
 // via TryBuildCubeBlasTlasAndDispatchRays when hardware is present (ADR 0030 W7 deepen).
@@ -78,12 +85,12 @@ Status TryBuildCubeBlasTlasAndDispatchRays(
                                                  std::vector<float>& out_grid, int& out_w,
                                                  int& out_h);
 
-// W23 / ADR 0046: productize one step — prefer DXR overlay into soft-shadow mask grid.
-// Falls back to TryHalfResSoftShadowCompose when DXR unavailable (honest).
+// W23/W25: productize — prefer DXR overlay; else VK RT product grid (same Upload contract);
+// else CPU soft-shadow compose. Honest SKIP only when compose itself fails.
 [[nodiscard]] Status TryProductSoftShadowMask(std::vector<float>& out_grid, int& out_w, int& out_h);
 
-// W23: half-res RT reflection stand-in — fills RGBA8 buffer (w*h*4) from DXR demo when
-// enable_reflections; otherwise Unavailable SKIP (SSR remains the raster product path).
+// W23/W25: half-res RT reflection buffer (RGBA8) when DXR or VK RT available;
+// otherwise Unavailable SKIP (SSR remains the raster product path).
 [[nodiscard]] Status TryHalfResRtReflectionCompose(std::vector<std::uint8_t>& out_rgba, int& out_w,
                                                    int& out_h);
 

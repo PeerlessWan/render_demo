@@ -26,7 +26,8 @@ namespace editor {
 namespace {
 
 void WalkPrefab(const engine::scene::World& world, engine::scene::NodeId id,
-                const std::string& parent, game_kit::SceneDocument& doc) {
+                const std::string& parent, game_kit::SceneDocument& doc,
+                const std::unordered_map<engine::scene::NodeId, NodeMeta>* meta) {
   if (!world.valid(id)) {
     return;
   }
@@ -36,32 +37,42 @@ void WalkPrefab(const engine::scene::World& world, engine::scene::NodeId id,
   n.parent = parent;
   n.transform = world.local_transform(id);
   n.visible = world.visible(id);
-  if (const auto* mesh = world.mesh(id)) {
-    game_kit::SceneComponent c;
-    c.type = "MeshRenderer";
-    c.mesh = mesh->mesh_id;
-    c.material = mesh->material_id;
-    n.components.push_back(std::move(c));
-  }
-  if (const auto* L = world.light(id)) {
-    game_kit::SceneComponent c;
-    c.type = "Light";
-    c.kind = L->kind;
-    c.range = L->range;
-    c.intensity = L->intensity;
-    n.components.push_back(std::move(c));
-  }
-  if (const auto* cam = world.camera(id)) {
-    game_kit::SceneComponent c;
-    c.type = "Camera";
-    c.active = cam->active;
-    c.fovy = cam->fovy_rad;
-    n.components.push_back(std::move(c));
+  game_kit::CaptureNodeComponents(world, id, &n);
+  if (meta) {
+    auto it = meta->find(id);
+    if (it != meta->end()) {
+      if (!it->second.script_path.empty()) {
+        n.script_path = it->second.script_path;
+        bool has_script = false;
+        for (auto& c : n.components) {
+          if (c.type == "Script") {
+            c.script = it->second.script_path;
+            if (!it->second.script_fields.empty()) {
+              c.fields_json = it->second.script_fields;
+            }
+            has_script = true;
+          }
+        }
+        if (!has_script) {
+          game_kit::SceneComponent sc;
+          sc.type = "Script";
+          sc.script = it->second.script_path;
+          sc.fields_json = it->second.script_fields;
+          n.components.push_back(std::move(sc));
+        }
+      }
+      if (!it->second.prefab_id.empty()) {
+        n.prefab_id = it->second.prefab_id;
+      }
+      if (!it->second.override_json.empty()) {
+        n.override_json = it->second.override_json;
+      }
+    }
   }
   doc.nodes.push_back(std::move(n));
   const std::string self = doc.nodes.back().id;
   for (auto c : world.children(id)) {
-    WalkPrefab(world, c, self, doc);
+    WalkPrefab(world, c, self, doc, meta);
   }
 }
 
@@ -117,13 +128,19 @@ void ContentBrowser::Scan(const std::vector<std::filesystem::path>& roots) {
     if (!std::filesystem::exists(root, ec) || !std::filesystem::is_directory(root, ec)) {
       continue;
     }
-    for (const auto& ent : std::filesystem::directory_iterator(root, ec)) {
+    for (const auto& ent : std::filesystem::recursive_directory_iterator(root, ec)) {
       if (!ent.is_regular_file(ec)) {
         continue;
       }
       ContentItem it;
       it.path = ent.path();
       it.label = ent.path().stem().string();
+      // Relative folder hint for Godot-like project browser.
+      std::error_code rel_ec;
+      const auto rel = std::filesystem::relative(ent.path().parent_path(), root, rel_ec);
+      if (!rel_ec && !rel.empty() && rel != ".") {
+        it.label = rel.generic_string() + "/" + it.label;
+      }
       const auto ext = ent.path().extension().string();
       if (ext == ".json") {
         it.kind = LooksLikePrefab(ent.path()) ? ContentItem::Kind::Prefab : ContentItem::Kind::Scene;
@@ -150,7 +167,7 @@ void ContentBrowser::Scan(const std::vector<std::filesystem::path>& roots) {
       } else {
         continue;
       }
-      it.asset_id = "asset:" + it.label;
+      it.asset_id = "asset:" + ent.path().stem().string();
       items.push_back(std::move(it));
     }
     const auto manifest_path = root / "manifest.json";
@@ -223,7 +240,7 @@ game_kit::PrefabDocument CaptureSelectionPrefab(
   }
   p.format_version = game_kit::kSceneFormatCurrent;
   p.prefab_id = world.name(node).empty() ? "selection" : world.name(node);
-  WalkPrefab(world, node, {}, p.scene);
+  WalkPrefab(world, node, {}, p.scene, meta);
   p.scene.format_version = game_kit::kSceneFormatCurrent;
   if (!p.scene.nodes.empty()) {
     p.scene.nodes[0].prefab_id = p.prefab_id;

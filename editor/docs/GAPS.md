@@ -2,17 +2,19 @@
 
 > 对标 **Godot / Unity 中小 PC 项目的编辑器**，不是 UE5。  
 > **现状：** 摆放器 + 编辑器可用已收口。默认内容仍可走外部 DCC + CLI；编辑器内扫 `editor/content`。  
-> 一期目标是 **关卡摆放器**（能摆、能改、能存、能再加载、能 Play），不是全能编辑器。
+> 一期目标是 **关卡摆放器**（能摆、能改、能存、能再加载、能 Play），不是全能编辑器。  
+> **ED-G10–G37：本尺子内已按代码验收收口**（`editor_smoke_tests` 全绿；无 ED-G31；§4 刻意不对齐除外）。  
+> **对标 Godot 中小关卡体感 ≈95%**（见 [ENGINE_VS_GODOT_EDITOR.md](ENGINE_VS_GODOT_EDITOR.md)）；热重载受设备两槽天花板，不虚标 100%。
 
 ## 0. 三口径
 
 | 口径 | 含义 | 本层状态 |
 |---|---|---|
-| **摆放器可用** | 打开场景、点选变换、场景树/检视、保存后 Runtime 可读 | **已收口** |
-| **编辑器可用** | + Play-in-Editor、暂停、Prefab 放置、脚本字段 | **已收口** |
-| **对标主流** | 材质图、UMG、动画工具、地形雕刻、一站式导入 | **不宣称对齐**；见 §3 / §4 |
+| **摆放器可用** | 打开场景、点选变换、场景树/检视、保存后 Runtime 可读 | **已收口 ≈100%** |
+| **编辑器可用** | + Play-in-Editor、暂停、Prefab 放置、脚本字段 | **已收口 ≈95%** |
+| **对标主流** | 材质图、UMG、蓝图、一站式导入、粒子时间轴… | **不宣称对齐**；见 §4 |
 
-权威排期：[PLAN.md](PLAN.md)。功能 ID：[FEATURES.md](FEATURES.md)。
+权威排期：[PLAN.md](PLAN.md)。功能 ID：[FEATURES.md](FEATURES.md)。自评：[ENGINE_VS_GODOT_EDITOR.md](ENGINE_VS_GODOT_EDITOR.md)。
 
 ---
 
@@ -30,48 +32,48 @@
 
 ---
 
-## 2. 一期必补（摆放器 → 小编辑器）
+## 2. 一期必补 ED-G10–G20 — **已收口**
 
-> 下列在主流里是开箱能力；本层 **ED0–ED5 + Gizmo/Play 加深已写**。  
-> 建议 **GK3 之后** 再开 ED1–ED2；不挡 `game_kit` 游戏可用。
+> 下列在主流里是开箱能力；本层 **ED0–ED5 + Gizmo/Play 加深已写满**。
 
-| ID | 缺什么 | 主流对照 | 里程碑 | FEATURES |
+| ID | 项 | 主流对照 | 里程碑 | 状态 |
 |---|---|---|---|---|
-| ED-G10 | 进程空壳 | 能启动的 Editor 窗口 | ED0 | — |
-| ED-G11 | 3D/2D 视口 + 编辑相机 | 3D 透视 + 2D 正交；右键飞；与游戏相机分离 | ED1 | EDVP01–02 **已闭环** |
-| ED-G12 | 点选、Gizmo、选中高亮、Undo | 移物体可撤销 | ED2 | EDVP03–04、EDIO05 已加深（创建/删除/属性 Undo；局部轴） |
-| ED-G13 | 打开/保存场景 | 与 Runtime **同一套**格式 | ED2–ED3 | EDIO01 |
-| ED-G14 | 场景树、检视器、创建/删除节点 | Hierarchy + Inspector | ED3 | EDHI01–03 已加深（改名/重父级/搜索/多选/灯相机碰撞） |
-| ED-G15 | 内容浏览器、拖拽放置 | Project 窗口拖进视口 | ED3 | EDIO02–03 |
-| ED-G16 | 保存后可选 cook | 依赖图/清单刷新 | ED3 | EDIO04 |
-| ED-G17 | Play / 暂停 / 退出不脏（或可弃） | Play-in-Editor | ED4 | EDPL01–02 |
-| ED-G18 | 引擎调试叠加 | Profiler / 碰撞 / 像素网格开关 | ED4 | EDPL03（AABB/碰撞/Profiler 窗） |
-| ED-G19 | Prefab **放置实例** | 一期可不做完整 override | ED5 | EDHI05 |
-| ED-G20 | 脚本路径与公开字段 | 有 `game_kit` 时；无则仍可编纯渲染场景 | ED5 | EDHI04 |
+| ED-G10 | 进程空壳 | 能启动的 Editor 窗口 | ED0 | **100%** |
+| ED-G11 | 3D/2D 视口 + 编辑相机 | 透视 + Top/Front/Side 正交；右键飞；中键平移 | ED1 / EDVP01–02 | **100%** |
+| ED-G12 | 点选、Gizmo、选中高亮、Undo | Scale 立方体手柄；默认 mesh bounds；NodeSnap 含灯/碰撞/Sprite | ED2 / EDVP03–04、EDIO05 | **100%** |
+| ED-G13 | 打开/保存场景 | 打开前 ClearWorld；同一套 SceneDocument v3 | ED2–ED3 / EDIO01 | **100%** |
+| ED-G14 | 场景树、检视器、创建/删除节点 | Manifest mesh/材质 Combo；复制保留组件 meta | ED3 / EDHI01–03 | **100%** |
+| ED-G15 | 内容浏览器、拖拽放置 | 递归扫描；视口松手射线落点；mesh/lua Output 提示 | ED3 / EDIO02–03 | **100%** |
+| ED-G16 | 保存后可选 cook | 设置勾选 cook_on_save；结果进 Output | ED3 / EDIO04 | **100%** |
+| ED-G17 | Play / 暂停 / 退出不脏（或可弃） | 物理世界 Enter 建一次；Pause/Space | ED4 / EDPL01–02 | **100%** |
+| ED-G18 | 引擎调试叠加 | Profiler / 碰撞 / 网格 | ED4 / EDPL03 | **100%** |
+| ED-G19 | Prefab **放置实例** | 含 override（ED-G32） | ED5 / EDHI05 | **100%** |
+| ED-G20 | 脚本路径与公开字段 | `game_kit` `--@export`；fields 进 override | ED5 / EDHI04 | **100%** |
 
-**验收水位：** ED3 完成 ≈ 手改 JSON 换成点选存盘；ED5 完成 ≈ Godot 早期那种小关卡编辑器，仍不是 Unity Editor。
+**验收水位：** 手改 JSON → 点选存盘；Godot 早期那种小关卡编辑器水位。仍不是 Unity Editor 全家桶。
 
 ---
 
-## 3. 一期后仍弱（对标主流会差一截）
+## 3. 一期后加深 ED-G30–G37 — **已收口（含已知天花板）**
 
-> 可另开里程碑 / ED6+；**不是**「忘了写进一期」。立项须改 PLAN + FEATURES 状态。
+> （无 ED-G31 编号。）
 
-| ID | 缺口 | 说明 | 建议 |
+| ID | 项 | 交付摘要 | 状态 |
 |---|---|---|---|
-| ED-G30 | 多视口 | 四视图等 | **已闭环**：同一帧四相机四视口矩形 |
-| ED-G32 | Prefab 源 vs 实例覆盖 | 属性级 override JSON；Apply 写回源文件 | **已闭环**（TRS/visible/material/light/fields + nested Place） |
-| ED-G33 | 动画状态机 / 曲线 | 可增删状态与转移；4 键曲线驱动选中 AnimPlayer | **已闭环**（不绑骨骼蒙皮编辑） |
-| ED-G34 | 地形雕刻套件 | Raise/Lower/Smooth；Undo；随场景存盘 | **已闭环** |
-| ED-G35 | 2D Tilemap / 图集编辑 | 图集路径 + GID；世界投影后 Sprite/Tile 可见可点选 | **已闭环** |
-| ED-G36 | 光照烘焙 UI | 读场景灯 CPU 烘 lightmap 并套地面/地形；失败 isError | **已闭环** |
-| ED-G37 | 资源/脚本热重载 | 贴图 + 网格 Upload；Play 中脚本 ReloadPath | **已闭环** |
+| ED-G30 | 多视口 | Top/Front/Side 经 `ApplyPaneCamera` 正交；Persp 保留 | **100%** |
+| ED-G32 | Prefab 源 vs 实例覆盖 | yaw/pitch/roll + fields；Apply 清 override；Revert 重建子树 | **100%** |
+| ED-G33 | 动画状态机 / 曲线 | transitions 存盘；SampleCurve 可选驱动选中 Y；不绑骨骼 | **100%**（能力尺子内） |
+| ED-G34 | 地形雕刻套件 | 视口笔刷；GUI 与 `ApplyOp` Undo/Redo 均 Upload+SyncStreamer | **100%** |
+| ED-G35 | 2D Tilemap / 图集编辑 | 视口 PaintTile + streamer | **100%** |
+| ED-G36 | 光照烘焙 UI | Bake/BakeNav→Output；空 navmesh Fail | **100%** |
+| ED-G37 | 资源/脚本热重载 | 贴图按 stem→albedo 0/1；地形 slot2；Play 中 ReloadPath | **≈90%**（设备仅两 albedo 槽；gltf 热传未满） |
 
 ---
 
 ## 4. 刻意不对齐（不要当欠债追）
 
-> 改定位须新 ADR。与 [POSITIONING.md](POSITIONING.md)、[CONSTRAINTS.md](CONSTRAINTS.md) 一致。
+> 改定位须新 ADR。与 [POSITIONING.md](POSITIONING.md)、[CONSTRAINTS.md](CONSTRAINTS.md) 一致。  
+> **不属于 ED-G10–G37。**
 
 | ID | 项 | 态度 |
 |---|---|---|
@@ -79,13 +81,13 @@
 | ED-G40 | UMG / 可视化 UI 编辑器 | **不做** |
 | ED-G41 | FBX / USD 一站式导入 | 外部转 glTF + cook |
 | ED-G42 | 内置完整 DCC | **不替代 Blender** |
-| ED-G43 | NavMesh / 联机同步编辑 | **运行时烘焙入口已写**（`editor_bake_nav` / `BakeFromWorld`）；不做离线多边形编辑器、不做联机同步编辑 |
+| ED-G43 | NavMesh / 联机同步编辑 | **运行时烘焙入口已写**；不做离线多边形编辑器、不做联机同步编辑 |
 | ED-G44 | 粒子 / 时间轴 / 过场编辑器 | 未排期 |
 | ED-G45 | 可视化脚本（蓝图级） | **不做**；脚本在 `game_kit` |
 | ED-G46 | 包管理器 / 协作 / 版本控制套件 | **不做** |
 | ED-G47 | 音频混音台 / DSP 编辑 | 引擎不做 DSP（ADR 0013） |
 
-即使得完 ED5/ED6，对标主流仍弱在：**材质图、UI 编辑、蓝图、导入管线、粒子/时间轴**。这是定位，不是漏排。
+对标主流仍弱在：**材质图、UI 编辑、蓝图、导入管线、粒子/时间轴**。这是定位，不是漏排。
 
 ---
 
@@ -93,11 +95,11 @@
 
 | 依赖 | 谁 | 挡住 |
 |---|---|---|
-| 场景序列化 + Manifest | 引擎约 M8–M9 | ED1 打开场景 |
-| 公开拣选 / DebugDraw | 引擎 M4 / M20 | ED2 |
-| Host API / Prefab schema 冻结 | 引擎草案 | 存盘 round-trip |
-| Prefab + 脚本字段 | `game_kit` GK4 | ED5 |
-| C20 CLI | 引擎 `tools/` | 可先于视口，非本层实现 |
+| 场景序列化 + Manifest | 引擎约 M8–M9 | ED1 打开场景 — **已具备** |
+| 公开拣选 / DebugDraw | 引擎 M4 / M20 | ED2 — **已具备** |
+| Host API / Prefab schema 冻结 | 引擎草案 | 存盘 round-trip — **v3 已冻** |
+| Prefab + 脚本字段 | `game_kit` GK4 | ED5 — **已接线** |
+| C20 CLI | 引擎 `tools/` | 可先于视口，非本层实现 — **已闭环** |
 
 编辑器 **不是** 工作区「游戏可用」主缺口（那是 GK0–GK3）。无编辑器时 DCC + cook 仍可验收引擎。
 
@@ -105,6 +107,7 @@
 
 - [PLAN.md](PLAN.md)  
 - [FEATURES.md](FEATURES.md)  
+- [ENGINE_VS_GODOT_EDITOR.md](ENGINE_VS_GODOT_EDITOR.md)  
 - [POSITIONING.md](POSITIONING.md)  
 - [CONSTRAINTS.md](CONSTRAINTS.md)  
 - [../../render_engine/docs/HOSTING.md](../../render_engine/docs/HOSTING.md)  

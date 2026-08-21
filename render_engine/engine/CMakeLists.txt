@@ -287,8 +287,24 @@ if(ENGINE_WITH_NGX)
   if(EXISTS "${ENGINE_NGX_DIR}")
     target_include_directories(engine_media PRIVATE "${ENGINE_NGX_DIR}" "${ENGINE_NGX_DIR}/include")
   endif()
+  # W25: link vendor .lib when present → ENGINE_NGX_EVALUATE_LINKED (ready_=true path).
+  find_library(ENGINE_NGX_LIB
+    NAMES nvsdk_ngx_d3d12 nvsdk_ngx
+    PATHS
+      "${ENGINE_NGX_DIR}/lib"
+      "${ENGINE_NGX_DIR}/lib/x64"
+      "${ENGINE_NGX_DIR}"
+    NO_DEFAULT_PATH)
+  if(ENGINE_NGX_LIB)
+    target_link_libraries(engine_media PRIVATE "${ENGINE_NGX_LIB}")
+    target_compile_definitions(engine_media PUBLIC ENGINE_NGX_EVALUATE_LINKED=1)
+    message(STATUS "NGX evaluate linked: ${ENGINE_NGX_LIB}")
+  else()
+    target_compile_definitions(engine_media PUBLIC ENGINE_NGX_EVALUATE_LINKED=0)
+  endif()
 else()
   target_compile_definitions(engine_media PUBLIC ENGINE_WITH_NGX=0)
+  target_compile_definitions(engine_media PUBLIC ENGINE_NGX_EVALUATE_LINKED=0)
 endif()
 
 add_library(engine_ui STATIC
@@ -365,8 +381,23 @@ if(ENGINE_WITH_RTXGI)
   if(EXISTS "${ENGINE_RTXGI_DIR}")
     target_include_directories(engine_gi PRIVATE "${ENGINE_RTXGI_DIR}" "${ENGINE_RTXGI_DIR}/include")
   endif()
+  find_library(ENGINE_RTXGI_LIB
+    NAMES rtxgi-d3d12 rtxgi DDGI
+    PATHS
+      "${ENGINE_RTXGI_DIR}/lib"
+      "${ENGINE_RTXGI_DIR}/lib/x64"
+      "${ENGINE_RTXGI_DIR}"
+    NO_DEFAULT_PATH)
+  if(ENGINE_RTXGI_LIB)
+    target_link_libraries(engine_gi PRIVATE "${ENGINE_RTXGI_LIB}")
+    target_compile_definitions(engine_gi PUBLIC ENGINE_RTXGI_EVALUATE_LINKED=1)
+    message(STATUS "RTXGI evaluate linked: ${ENGINE_RTXGI_LIB}")
+  else()
+    target_compile_definitions(engine_gi PUBLIC ENGINE_RTXGI_EVALUATE_LINKED=0)
+  endif()
 else()
   target_compile_definitions(engine_gi PUBLIC ENGINE_WITH_RTXGI=0)
+  target_compile_definitions(engine_gi PUBLIC ENGINE_RTXGI_EVALUATE_LINKED=0)
 endif()
 
 add_library(engine_terrain STATIC

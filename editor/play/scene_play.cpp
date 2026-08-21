@@ -5,6 +5,8 @@
 #include "game_kit/runtime.h"
 #include "game_kit/script_fields.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -443,8 +445,16 @@ void WriteInstanceOverride(const engine::scene::World& world, engine::scene::Nod
     return;
   }
   const auto t = world.local_transform(id);
+  float yaw = 0.f, pitch = 0.f, roll = 0.f;
+  {
+    const auto& q = t.rotation;
+    yaw = std::atan2(2.f * (q.w * q.y + q.x * q.z), 1.f - 2.f * (q.y * q.y + q.x * q.x));
+    pitch = std::asin(std::clamp(2.f * (q.w * q.x - q.z * q.y), -1.f, 1.f));
+    roll = std::atan2(2.f * (q.w * q.z + q.x * q.y), 1.f - 2.f * (q.x * q.x + q.z * q.z));
+  }
   std::ostringstream o;
   o << "{\"x\":" << t.position.x << ",\"y\":" << t.position.y << ",\"z\":" << t.position.z
+    << ",\"yaw\":" << yaw << ",\"pitch\":" << pitch << ",\"roll\":" << roll
     << ",\"sx\":" << t.scale.x << ",\"sy\":" << t.scale.y << ",\"sz\":" << t.scale.z
     << ",\"visible\":" << (world.visible(id) ? "true" : "false");
   if (!m->material_id.empty()) {

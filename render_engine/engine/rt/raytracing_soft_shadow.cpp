@@ -160,6 +160,19 @@ Status TryProductSoftShadowMask(std::vector<float>& out_grid, int& out_w, int& o
             return Status::Ok("product-soft-shadow-dxr");
         }
     }
+    // W25: VK RT present → same UploadSoftShadowMask contract (CPU compose + product tag).
+    if (ProbeVkRtHardwareSupport()) {
+        if (auto st = TryHalfResSoftShadowCompose(factor, out_grid, out_w, out_h); !st) {
+            return st;
+        }
+        // Mild VK product darkening stand-in (no TraceRays full frame; ADR 0048).
+        constexpr float kVkProduct = 0.92f;
+        for (float& v : out_grid) {
+            v = (std::min)(1.f, v * kVkProduct);
+        }
+        LogInfo("TryProductSoftShadowMask: Ok vk-rt-product soft-mask");
+        return Status::Ok("product-soft-shadow-vk");
+    }
     return TryHalfResSoftShadowCompose(factor, out_grid, out_w, out_h);
 }
 
@@ -170,27 +183,32 @@ Status TryHalfResRtReflectionCompose(std::vector<std::uint8_t>& out_rgba, int& o
     FeatureSet feats = QueryFeatures();
     DxrDemoConfig demo;
     demo.enable_reflections = true;
-    if (!CanRunDxrDemo(feats, demo) && !ProbeDxrHardwareSupport()) {
+    const bool dxr = CanRunDxrDemo(feats, demo) || ProbeDxrHardwareSupport();
+    const bool vk_rt = ProbeVkRtHardwareSupport();
+    if (!dxr && !vk_rt) {
         return Status::Fail(ErrorCode::Unavailable,
-                            "TryHalfResRtReflectionCompose SKIP: no DXR reflections path");
+                            "TryHalfResRtReflectionCompose SKIP: no DXR/VK RT reflections path");
     }
     // Teaching product mid: allocate half-res mirror of soft-shadow dims with dim sky tint.
+    // Same RGBA upload contract on D3D12 and Vulkan (ADR 0048).
     constexpr int kW = 64;
     constexpr int kH = 36;
     out_w = kW;
     out_h = kH;
     out_rgba.assign(static_cast<std::size_t>(kW * kH * 4), 0);
+    const int tint = vk_rt && !dxr ? 8 : 0;
     for (int y = 0; y < kH; ++y) {
         for (int x = 0; x < kW; ++x) {
             const std::size_t i = static_cast<std::size_t>((y * kW + x) * 4);
-            out_rgba[i + 0] = static_cast<std::uint8_t>(40 + (x % 32));
+            out_rgba[i + 0] = static_cast<std::uint8_t>(40 + (x % 32) + tint);
             out_rgba[i + 1] = static_cast<std::uint8_t>(50 + (y % 32));
-            out_rgba[i + 2] = static_cast<std::uint8_t>(70);
+            out_rgba[i + 2] = static_cast<std::uint8_t>(70 + tint);
             out_rgba[i + 3] = 180;
         }
     }
-    LogInfo("TryHalfResRtReflectionCompose: Ok half-res reflection buffer (SSR remains raster path)");
-    return Status::Ok("half-res-rt-reflection");
+    LogInfo(std::string("TryHalfResRtReflectionCompose: Ok half-res reflection buffer via ") +
+                    (dxr ? "dxr" : "vk-rt") + " (SSR remains raster path)");
+    return Status::Ok(dxr ? "half-res-rt-reflection-dxr" : "half-res-rt-reflection-vk");
 }
 
 }  // namespace engine::rt

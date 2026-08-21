@@ -49,6 +49,7 @@ NVIDIA NGX / DLSS vendor drop — ADR 0046 (Mega-W23).
 3. cmake: ENGINE_NGX_DIR / ENGINE_WITH_NGX (auto-ON when header present).
 4. Product chain: BindUpscalerGpuDevice → CreateUpscaler → DLSS→FSR→bilinear.
 5. Without evaluate/runtime → honest SKIP / builtin_bilinear.
+6. W25: place matching .lib under lib/ so CMake sets ENGINE_NGX_EVALUATE_LINKED → ready_=true.
 
 Fetch: tools/fetch_nvidia_ngx_rtxgi.ps1 -NgxSource <official_dir_or_zip>
 Do not commit proprietary .dll/.lib into git.
@@ -69,6 +70,7 @@ NVIDIA RTXGI (true DDGI) vendor drop — ADR 0046 (Mega-W23).
 3. Product: BindGiGpuDevice → TryCreateRtxgiVolume → irradiance atlas.
 4. Without SDK → SKIP; CascadeGi remains the default product GI.
 5. Never rename CascadeGi as DDGI.
+6. W25: place matching .lib so CMake sets ENGINE_RTXGI_EVALUATE_LINKED → Update writes atlas.
 
 Fetch: tools/fetch_nvidia_ngx_rtxgi.ps1 -RtxgiSource <official_dir_or_zip>
 Do not commit proprietary .dll/.lib into git.

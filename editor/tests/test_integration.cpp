@@ -1,10 +1,12 @@
 #include "cmd/session.h"
 #include "editing/light_bake.h"
+#include "editing/ops.h"
 #include "editing/sprite_view.h"
 #include "editing/terrain_edit.h"
 #include "editing/undo.h"
 #include "editing/viewport_layout.h"
 #include "io/content_browser.h"
+#include "io/scene_ext.h"
 #include "play/scene_play.h"
 
 #include "game_kit/prefab.h"
@@ -70,8 +72,25 @@ TEST_CASE("prefab override merge and apply to source", "[integration]") {
   REQUIRE(world.mesh(id)->material_id == "ground");
   REQUIRE(world.light(id) != nullptr);
   REQUIRE(std::fabs(world.light(id)->range - 9.f) < 0.01f);
-  game_kit::ApplyInstanceToSource(world, id, &prefab);
+  game_kit::MergeOverrideJson(world, id, R"({"yaw":1.2,"pitch":0,"roll":0})");
+  {
+    const auto q = world.local_transform(id).rotation;
+    const float yaw =
+        std::atan2(2.f * (q.w * q.y + q.x * q.z), 1.f - 2.f * (q.y * q.y + q.x * q.x));
+    REQUIRE(std::fabs(yaw - 1.2f) < 0.05f);
+  }
+  std::string fields;
+  game_kit::MergeOverrideJson(world, id, R"({"fields":{"speed":9}})", &fields);
+  REQUIRE(fields.find("speed") != std::string::npos);
+  game_kit::ApplyInstanceToSource(world, id, &prefab, &fields);
   REQUIRE(std::fabs(prefab.scene.nodes[0].transform.position.x - 5.f) < 0.01f);
+  bool has_fields = false;
+  for (const auto& c : prefab.scene.nodes[0].components) {
+    if (c.type == "Script" && c.fields_json.find("speed") != std::string::npos) {
+      has_fields = true;
+    }
+  }
+  REQUIRE(has_fields);
 }
 
 TEST_CASE("play clone does not dirty edit world", "[integration]") {
@@ -266,5 +285,53 @@ TEST_CASE("create sprite projects to screen rect larger than 2px", "[integration
   REQUIRE(out.front().size.x > 2.f);
   REQUIRE(out.front().size.y > 2.f);
   REQUIRE(ids.front() == id);
+}
+
+TEST_CASE("grid undo restores heights for mesh sync", "[integration]") {
+  editor::EditorHost host;
+  editor::EnsureHeights(&host.settings.heights);
+  auto before = host.settings.heights;
+  editor::RaiseHeight(&host.settings.heights, 8, 8, 1.f, 2.f);
+  REQUIRE(host.settings.heights[8 * 17 + 8] > before[8 * 17 + 8]);
+  auto after = host.settings.heights;
+  host.undo.PushGrid(before, host.settings.tiles, host.settings.anim, after, host.settings.tiles,
+                     host.settings.anim);
+  REQUIRE(host.undo.Undo(host.world, &host.meta, &host.settings));
+  REQUIRE(std::fabs(host.settings.heights[8 * 17 + 8] - before[8 * 17 + 8]) < 1e-4f);
+}
+
+TEST_CASE("node snap restores light and collider", "[integration]") {
+  editor::EditorHost host;
+  editor::EditorOp create;
+  create.kind = editor::EditorOp::Kind::Create;
+  create.create_kind = "light";
+  REQUIRE(editor::ApplyOp(host.Bind(), create).ok);
+  const auto id = host.sel.node;
+  REQUIRE(host.world.light(id) != nullptr);
+  engine::scene::ColliderComponent col;
+  col.hx = col.hy = col.hz = 0.4f;
+  host.world.set_collider(id, col);
+  std::vector<editor::NodeSnap> snaps;
+  editor::CaptureSubtree(host.world, id, host.meta, &snaps);
+  REQUIRE(!snaps.empty());
+  REQUIRE(snaps.front().has_light);
+  REQUIRE(snaps.front().has_collider);
+  (void)host.world.DestroyNode(id);
+  editor::RestoreSnaps(host.world, &snaps, &host.meta);
+  REQUIRE(host.world.valid(snaps.front().live));
+  REQUIRE(host.world.light(snaps.front().live) != nullptr);
+  REQUIRE(host.world.collider(snaps.front().live) != nullptr);
+}
+
+TEST_CASE("anim transitions pack unpack", "[integration]") {
+  editor::EditorSettings s;
+  s.anim.transitions = {{"a", "b"}, {"b", "c"}};
+  game_kit::SceneDocument doc;
+  editor::PackEditorExtensions(s, &doc);
+  editor::EditorSettings s2;
+  editor::UnpackEditorExtensions(doc, &s2);
+  REQUIRE(s2.anim.transitions.size() == 2);
+  REQUIRE(s2.anim.transitions[0].first == "a");
+  REQUIRE(s2.anim.transitions[1].second == "c");
 }
 

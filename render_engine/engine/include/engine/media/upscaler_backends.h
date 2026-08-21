@@ -20,4 +20,9 @@ void BindUpscalerGpuDevice(UpscalerGpuApi api, void* native_device_or_null);
 [[nodiscard]] std::unique_ptr<IUpscaler> TryCreateDlssUpscaler();
 [[nodiscard]] std::unique_ptr<IUpscaler> TryCreateFsr2Upscaler();
 
+// W25 / ADR 0048: true when CMake linked NGX .lib (ENGINE_NGX_EVALUATE_LINKED).
+[[nodiscard]] bool NgxEvaluateLinked();
+// Optional disk probe for tests/docs (does not alone enable ready_=true).
+[[nodiscard]] bool NgxLibPresentOnDisk();
+
 }  // namespace engine::media

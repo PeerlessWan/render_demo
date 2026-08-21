@@ -22,6 +22,15 @@ struct NodeSnap {
   bool visible = true;
   bool has_mesh = false;
   engine::scene::MeshRenderer mesh{};
+  bool has_light = false;
+  engine::scene::LightComponent light{};
+  bool has_camera = false;
+  engine::scene::CameraComponent camera{};
+  bool has_collider = false;
+  engine::scene::ColliderComponent collider{};
+  bool has_sprite = false;
+  engine::scene::SpriteComponent sprite{};
+  NodeMeta meta{};
   std::string prefab_id;
   std::string script_path;
 };

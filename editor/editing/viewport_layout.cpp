@@ -26,7 +26,7 @@ int PaneAt(const ViewportPane* panes, int count, float mx, float my) {
   }
   for (int i = 0; i < count; ++i) {
     if (mx >= panes[i].x0 && mx < panes[i].x1 && my >= panes[i].y0 && my < panes[i].y1) {
-      return i;
+      return panes[i].index;
     }
   }
   return 0;
@@ -38,26 +38,26 @@ void ApplyPaneCamera(int pane, engine::render::Camera* cam, const engine::render
   }
   if (pane <= 0) {
     *cam = persp;
+    cam->ortho = false;
     return;
   }
+  cam->ortho = true;
+  cam->ortho_height = 24.f;
   if (pane == 1) {
-    cam->position = {0.f, 18.f, 0.01f};
+    cam->position = {persp.position.x, 32.f, persp.position.z};
     cam->yaw = 0.f;
-    cam->pitch = -1.55f;
-    cam->fovy_rad = 0.6f;
+    cam->pitch = -1.5707963f;
     return;
   }
   if (pane == 2) {
-    cam->position = {0.f, 2.f, 16.f};
+    cam->position = {persp.position.x, persp.position.y, persp.position.z + 24.f};
     cam->yaw = 0.f;
     cam->pitch = 0.f;
-    cam->fovy_rad = 0.7f;
     return;
   }
-  cam->position = {16.f, 2.f, 0.f};
-  cam->yaw = -1.57f;
+  cam->position = {persp.position.x + 24.f, persp.position.y, persp.position.z};
+  cam->yaw = -1.5707963f;
   cam->pitch = 0.f;
-  cam->fovy_rad = 0.7f;
 }
 
 void ApplyOrtho2DCamera(engine::render::Camera* cam) {

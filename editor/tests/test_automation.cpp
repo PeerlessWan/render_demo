@@ -103,9 +103,9 @@ TEST_CASE("mcp bake_nav from colliders", "[automation]") {
   const auto bake = editor::HandleMcpLine(
       host,
       R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"editor_bake_nav","arguments":{}}})");
+#if defined(GAME_KIT_WITH_RECAST) && GAME_KIT_WITH_RECAST
   REQUIRE(bake.find("isError\":false") != std::string::npos);
   REQUIRE(bake.find("has_navmesh") != std::string::npos);
-#if defined(GAME_KIT_WITH_RECAST) && GAME_KIT_WITH_RECAST
   REQUIRE(host.rt.nav().has_navmesh());
   auto pts = host.rt.nav().FindPath({-3.f, 0.5f, 0.f}, {3.f, 0.5f, 0.f});
   if (!pts.empty()) {
@@ -117,6 +117,10 @@ TEST_CASE("mcp bake_nav from colliders", "[automation]") {
     }
     REQUIRE(!through_center);
   }
+#else
+  // Empty navmesh must Fail (no Recast / no mesh).
+  REQUIRE(bake.find("isError\":true") != std::string::npos);
+  REQUIRE(bake.find("empty") != std::string::npos);
 #endif
 }
 

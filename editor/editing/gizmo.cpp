@@ -76,6 +76,18 @@ void DrawGizmo(engine::debug::DebugDraw& draw, const engine::scene::World& world
   AddThickLine(draw, p, p + x, {0.f, thick, 0.f}, {1.f, 0.2f, 0.2f, 1.f});
   AddThickLine(draw, p, p + y, {thick, 0.f, 0.f}, {0.2f, 1.f, 0.2f, 1.f});
   AddThickLine(draw, p, p + z, {thick, 0.f, 0.f}, {0.3f, 0.5f, 1.f, 1.f});
+  if (mode == GizmoMode::Scale) {
+    const float hs = 0.12f * s;
+    auto tip_box = [&](const engine::Vec3& tip, const engine::ColorRgba& c) {
+      engine::Aabb b;
+      b.min = tip - engine::Vec3{hs, hs, hs};
+      b.max = tip + engine::Vec3{hs, hs, hs};
+      draw.AddAabb(b, c);
+    };
+    tip_box(p + x, {1.f, 0.35f, 0.35f, 1.f});
+    tip_box(p + y, {0.35f, 1.f, 0.35f, 1.f});
+    tip_box(p + z, {0.4f, 0.55f, 1.f, 1.f});
+  }
   if (mode == GizmoMode::Rotate) {
     AddRing(draw, p, GizmoAxisDir(Axis::X, t.rotation, local), kGizmoRingRadius * s,
             {1.f, 0.35f, 0.35f, 1.f});
@@ -83,6 +95,17 @@ void DrawGizmo(engine::debug::DebugDraw& draw, const engine::scene::World& world
             {0.35f, 1.f, 0.35f, 1.f});
     AddRing(draw, p, GizmoAxisDir(Axis::Z, t.rotation, local), kGizmoRingRadius * s,
             {0.4f, 0.55f, 1.f, 1.f});
+  } else if (mode == GizmoMode::Scale) {
+    const float hs = 0.12f * s;
+    auto tip = [&](const engine::Vec3& tip_p, const engine::ColorRgba& c) {
+      engine::Aabb box;
+      box.min = tip_p - engine::Vec3{hs, hs, hs};
+      box.max = tip_p + engine::Vec3{hs, hs, hs};
+      draw.AddAabb(box, c);
+    };
+    tip(p + x, {1.f, 0.35f, 0.35f, 1.f});
+    tip(p + y, {0.35f, 1.f, 0.35f, 1.f});
+    tip(p + z, {0.4f, 0.55f, 1.f, 1.f});
   }
 }
 

@@ -178,6 +178,45 @@ void UnpackEditorExtensions(const game_kit::SceneDocument& doc, EditorSettings* 
   if (!states.empty()) {
     settings->anim.states = std::move(states);
   }
+  {
+    settings->anim.transitions.clear();
+    const auto tr = doc.extensions_json.find("\"transitions\":[");
+    if (tr != std::string::npos) {
+      std::size_t i = tr + std::string("\"transitions\":[").size();
+      const auto& s = doc.extensions_json;
+      while (i < s.size() && s[i] != ']') {
+        if (s[i] != '[') {
+          ++i;
+          continue;
+        }
+        ++i;  // skip '['
+        auto q0 = s.find('"', i);
+        if (q0 == std::string::npos) {
+          break;
+        }
+        auto q1 = s.find('"', q0 + 1);
+        if (q1 == std::string::npos) {
+          break;
+        }
+        const std::string from = s.substr(q0 + 1, q1 - q0 - 1);
+        auto q2 = s.find('"', q1 + 1);
+        if (q2 == std::string::npos) {
+          break;
+        }
+        auto q3 = s.find('"', q2 + 1);
+        if (q3 == std::string::npos) {
+          break;
+        }
+        const std::string to = s.substr(q2 + 1, q3 - q2 - 1);
+        settings->anim.transitions.emplace_back(from, to);
+        i = s.find(']', q3);
+        if (i == std::string::npos) {
+          break;
+        }
+        ++i;  // past pair ']'
+      }
+    }
+  }
 }
 
 }  // namespace editor
