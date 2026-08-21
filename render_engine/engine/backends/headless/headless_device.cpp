@@ -209,6 +209,11 @@ class HeadlessDevice final : public IDevice {
         return Status::Ok();
     }
 
+    Status DrawTexturedQuads(std::span<const TexturedQuad> quads) override {
+        textured_quad_draws_ += static_cast<std::uint32_t>(quads.size());
+        return Status::Ok();
+    }
+
     Status DrawDebugLines(std::span<const DebugLineVertex> lines) override {
         (void)lines;
         return Status::Ok();
@@ -294,6 +299,7 @@ class HeadlessDevice final : public IDevice {
     std::uint32_t local_tile_binds_ = 0;
     std::uint32_t post_resolves_ = 0;
     std::uint32_t screen_quad_draws_ = 0;
+    std::uint32_t textured_quad_draws_ = 0;
     std::uint32_t albedo_uploads_ = 0;
     std::uint32_t orm_uploads_ = 0;
     std::uint32_t ui_verts_ = 0;

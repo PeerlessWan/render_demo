@@ -29,6 +29,7 @@ namespace engine {
 class Application;
 namespace physics {
 class IPhysicsWorld;
+class IPhysicsWorld2D;
 }
 namespace ui {
 class RetainedUi;
@@ -94,6 +95,8 @@ class GameRuntime {
 
   void set_physics(engine::physics::IPhysicsWorld* physics) { physics_ = physics; }
   [[nodiscard]] engine::physics::IPhysicsWorld* physics() { return physics_; }
+  void set_physics2d(engine::physics::IPhysicsWorld2D* physics) { physics2d_ = physics; }
+  [[nodiscard]] engine::physics::IPhysicsWorld2D* physics2d() { return physics2d_; }
   void set_ui(engine::ui::RetainedUi* ui) { ui_ = ui; }
   [[nodiscard]] engine::ui::RetainedUi* ui() { return ui_; }
   void set_audio(engine::media::IAudioDevice* audio) { audio_ = audio; }
@@ -136,6 +139,7 @@ class GameRuntime {
   engine::Application* app_ = nullptr;
   engine::scene::World* world_ = nullptr;
   engine::physics::IPhysicsWorld* physics_ = nullptr;
+  engine::physics::IPhysicsWorld2D* physics2d_ = nullptr;
   engine::ui::RetainedUi* ui_ = nullptr;
   engine::media::IAudioDevice* audio_ = nullptr;
   engine::input::InputSystem* input_ = nullptr;

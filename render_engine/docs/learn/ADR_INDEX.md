@@ -61,6 +61,7 @@ ADR 记录 **为什么这样设计**，是学习封装的核心（比 API 列表
 | 0046 | W23 Nanite-like + 真 DDGI | [0046-…](adr/0046-w23-nanite-ddgi-gaps.md) | — | Accepted |
 | 0047 | W24 分域 Godot（历史≈100%；已审计修订） | [0047-…](adr/0047-w24-godot-domain-100.md) | — | Accepted |
 | 0048 | W25 VK+NGX/RTXGI+VG+编辑器（合同收口） | [0048-…](adr/0048-w25-vk-ngx-vg-editor.md) | — | Accepted |
+| 0049 | Godot 2D API + Physics2D + 3D 加深 | [0049-…](adr/0049-godot-2d-physics-api.md) | — | Accepted |
 
 ## 模板
 

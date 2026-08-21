@@ -113,9 +113,9 @@ TEST_CASE("W22 Upscaler bind API", "[w22][media]") {
   engine::media::BindUpscalerGpuDevice(engine::media::UpscalerGpuApi::D3D12, &marker);
   REQUIRE(engine::media::UpscalerGpuDeviceBound());
   REQUIRE(engine::media::UpscalerBoundApi() == engine::media::UpscalerGpuApi::D3D12);
+  // Unbind before CreateUpscaler: a fake device pointer must not trip vendor DLL/NGX paths.
+  engine::media::BindUpscalerGpuDevice(engine::media::UpscalerGpuApi::None, nullptr);
   auto up = engine::media::CreateUpscaler();
   REQUIRE(up);
-  // Without NGX/FFX evaluate, smoke fails → still bilinear.
   REQUIRE(std::string(up->name()) == "builtin_bilinear");
-  engine::media::BindUpscalerGpuDevice(engine::media::UpscalerGpuApi::None, nullptr);
 }

@@ -232,6 +232,7 @@ endif()
 
 add_library(engine_physics STATIC
   physics/builtin_world.cpp
+  physics/builtin_world2d.cpp
   physics/physics_factory.cpp
   physics/buoyancy.cpp
 )
@@ -263,6 +264,8 @@ else()
   target_sources(engine_physics PRIVATE physics/jolt_world_stub.cpp)
   target_compile_definitions(engine_physics PUBLIC ENGINE_WITH_JOLT=0)
 endif()
+# ADR 0049: Box2D optional backend reserved (CreateBox2DPhysicsWorld2D → nullptr until FetchContent wired).
+target_compile_definitions(engine_physics PUBLIC ENGINE_WITH_BOX2D=0)
 
 add_library(engine_media STATIC
   media/media.cpp
@@ -356,9 +359,14 @@ add_library(engine_render2d STATIC
   render2d/path2d.cpp
   render2d/nineslice.cpp
   render2d/rich_text.cpp
+  render2d/canvas_item.cpp
+  render2d/camera2d.cpp
+  render2d/sprite_batch.cpp
+  render2d/animation_player2d.cpp
+  render2d/tile_draw.cpp
 )
 target_include_directories(engine_render2d PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(engine_render2d PUBLIC engine_core)
+target_link_libraries(engine_render2d PUBLIC engine_core engine_rhi)
 
 add_library(engine_mixed STATIC
   mixed/pick.cpp

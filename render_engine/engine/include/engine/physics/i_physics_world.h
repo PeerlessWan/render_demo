@@ -28,6 +28,12 @@ struct RigidBodyDesc {
   Vec3 half_extents{0.5f, 0.5f, 0.5f};
   float mass = 1.f;
   bool is_trigger = false;
+  // ADR 0049: Godot-like collision filtering (bitmasks; backends filter queries / contacts).
+  std::uint32_t collision_layer = 1u;
+  std::uint32_t collision_mask = 0xFFFFFFFFu;
+  float friction = 0.5f;
+  float restitution = 0.f;
+  bool ccd = false;
 };
 
 // Capsule standing on Y: total height ≈ 2*(half_height + radius); center at position.
@@ -84,8 +90,8 @@ class IPhysicsWorld {
   virtual void SetBodyTrigger(int /*body_id*/, bool /*is_trigger*/) {}
   [[nodiscard]] virtual bool IsBodyTrigger(int /*body_id*/) const { return false; }
 
-  // W23 / ADR 0046: joints / ragdoll / vehicle / destruction (defaults SKIP).
-  enum class JointType : std::uint8_t { Hinge = 0, BallSocket = 1 };
+  // W23 / ADR 0046 / ADR 0049: joints / ragdoll / vehicle / destruction (Vehicle/Shatter remain teaching).
+  enum class JointType : std::uint8_t { Hinge = 0, BallSocket = 1, Fixed = 2, Slider = 3 };
   struct JointDesc {
     int body_a = -1;
     int body_b = -1;
@@ -96,6 +102,36 @@ class IPhysicsWorld {
   };
   virtual int CreateJoint(const JointDesc& /*desc*/) { return -1; }
   virtual bool DestroyJoint(int /*joint_id*/) { return false; }
+  [[nodiscard]] virtual int joint_count() const { return 0; }
+  [[nodiscard]] virtual bool JointIsActive(int /*joint_id*/) const { return false; }
+
+  // ADR 0049: collision layers + ShapeCast + character floor + Area events
+  virtual void SetCollisionLayer(int /*body_id*/, std::uint32_t /*layer*/) {}
+  virtual void SetCollisionMask(int /*body_id*/, std::uint32_t /*mask*/) {}
+  [[nodiscard]] virtual std::uint32_t GetCollisionLayer(int /*body_id*/) const { return 1u; }
+  [[nodiscard]] virtual std::uint32_t GetCollisionMask(int /*body_id*/) const {
+    return 0xFFFFFFFFu;
+  }
+  [[nodiscard]] virtual RayHit ShapeCast(const Vec3& origin, const Vec3& half_extents,
+                                         const Vec3& motion,
+                                         std::uint32_t /*mask*/ = 0xFFFFFFFFu) const {
+    (void)half_extents;
+    const float len =
+        std::sqrt(motion.x * motion.x + motion.y * motion.y + motion.z * motion.z);
+    if (len < 1e-8f) {
+      return {};
+    }
+    return Raycast(origin, {motion.x / len, motion.y / len, motion.z / len}, len);
+  }
+  [[nodiscard]] virtual bool IsOnFloor(int /*body_id*/) const { return false; }
+  [[nodiscard]] virtual Vec3 GetFloorNormal(int /*body_id*/) const { return {0, 1, 0}; }
+
+  struct AreaEvent3D {
+    int area_id = -1;
+    int other_id = -1;
+    bool entered = true;
+  };
+  [[nodiscard]] virtual std::vector<AreaEvent3D> ConsumeAreaEvents() { return {}; }
 
   struct RagdollBoneDesc {
     int body_id = -1;

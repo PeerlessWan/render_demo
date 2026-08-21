@@ -226,6 +226,13 @@ struct ScreenQuad {
   ColorRgba color{1, 1, 1, 1};
 };
 
+// Textured 2D quads (ADR 0049 Sprite batch). UV in [0,1].
+struct TexturedQuad {
+  float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+  float u0 = 0, v0 = 0, u1 = 1, v1 = 1;
+  ColorRgba color{1, 1, 1, 1};
+};
+
 // Textured UI triangles (ImGui font atlas path). Positions are in pixels.
 struct UiVertex {
   float x = 0, y = 0;
@@ -313,6 +320,8 @@ class IDevice {
 
   // Screen-space UI/2D quads (NDC via pixel→viewport).
   virtual Status DrawScreenQuads(std::span<const ScreenQuad> quads) = 0;
+  // ADR 0049: textured sprite batch. Default: convert to UiVertex + DrawUiMesh when atlas ready.
+  virtual Status DrawTexturedQuads(std::span<const TexturedQuad> quads);
 
   // World-space debug lines (grid/axes). Call after SetupLitMesh with debug shaders set.
   virtual Status DrawDebugLines(std::span<const DebugLineVertex> lines_as_segments) = 0;

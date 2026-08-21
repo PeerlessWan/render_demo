@@ -7,6 +7,7 @@
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Body/BodyLockMulti.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
@@ -19,6 +20,10 @@
 #include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
 #include <Jolt/Physics/SoftBody/SoftBodyMotionProperties.h>
 #include <Jolt/Physics/SoftBody/SoftBodySharedSettings.h>
+#include <Jolt/Physics/Constraints/FixedConstraint.h>
+#include <Jolt/Physics/Constraints/HingeConstraint.h>
+#include <Jolt/Physics/Constraints/PointConstraint.h>
+#include <Jolt/Physics/Constraints/SliderConstraint.h>
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
@@ -126,13 +131,17 @@ void EnsureJoltTypesRegistered() {
 
 class ContactCollector final : public JPH::ContactListener {
  public:
-  void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold&,
+  void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold,
                       JPH::ContactSettings&) override {
-    Add(a, b);
+    Add(a, b, true, manifold);
   }
-  void OnContactPersisted(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold&,
+  void OnContactPersisted(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold,
                           JPH::ContactSettings&) override {
-    Add(a, b);
+    Add(a, b, false, manifold);
+  }
+  void OnContactRemoved(const JPH::SubShapeIDPair& pair) override {
+    (void)pair;
+    // Area exit tracked via Step pair diff when sensors used.
   }
 
   std::vector<ContactPair> Take() {
@@ -140,6 +149,22 @@ class ContactCollector final : public JPH::ContactListener {
     pairs_.clear();
     seen_.clear();
     return out;
+  }
+
+  std::vector<IPhysicsWorld::AreaEvent3D> TakeAreaEvents() {
+    auto out = std::move(area_events_);
+    area_events_.clear();
+    return out;
+  }
+
+  void NoteSensor(int body_index, bool is_sensor) {
+    if (body_index < 0) {
+      return;
+    }
+    if (static_cast<int>(sensor_flags_.size()) <= body_index) {
+      sensor_flags_.resize(static_cast<std::size_t>(body_index) + 1, false);
+    }
+    sensor_flags_[static_cast<std::size_t>(body_index)] = is_sensor;
   }
 
  private:
@@ -151,11 +176,23 @@ class ContactCollector final : public JPH::ContactListener {
     return static_cast<int>(user);
   }
 
-  void Add(const JPH::Body& a, const JPH::Body& b) {
+  void Add(const JPH::Body& a, const JPH::Body& b, bool added, const JPH::ContactManifold&) {
     int ia = BodyIndex(a);
     int ib = BodyIndex(b);
     if (ia < 0 || ib < 0) {
       return;
+    }
+    const bool a_sensor =
+        ia < static_cast<int>(sensor_flags_.size()) && sensor_flags_[static_cast<std::size_t>(ia)];
+    const bool b_sensor =
+        ib < static_cast<int>(sensor_flags_.size()) && sensor_flags_[static_cast<std::size_t>(ib)];
+    if (added && (a_sensor || b_sensor)) {
+      if (a_sensor) {
+        area_events_.push_back({ia, ib, true});
+      }
+      if (b_sensor) {
+        area_events_.push_back({ib, ia, true});
+      }
     }
     if (ia > ib) {
       std::swap(ia, ib);
@@ -173,6 +210,8 @@ class ContactCollector final : public JPH::ContactListener {
 
   std::vector<ContactPair> pairs_;
   std::vector<std::uint64_t> seen_;
+  std::vector<IPhysicsWorld::AreaEvent3D> area_events_;
+  std::vector<bool> sensor_flags_;
 };
 
 class JoltWorld final : public IPhysicsWorld {
@@ -205,6 +244,12 @@ class JoltWorld final : public IPhysicsWorld {
 
   ~JoltWorld() override {
     JPH::BodyInterface& bodies = physics_.GetBodyInterface();
+    for (auto* c : joint_ptrs_) {
+      if (c) {
+        physics_.RemoveConstraint(c);
+      }
+    }
+    joint_ptrs_.clear();
     for (JPH::BodyID id : soft_body_ids_) {
       if (!id.IsInvalid()) {
         bodies.RemoveBody(id);
@@ -259,6 +304,13 @@ class JoltWorld final : public IPhysicsWorld {
     body_ids_.push_back(id);
     half_extents_.push_back(desc.half_extents);
     body_is_trigger_.push_back(desc.is_trigger);
+    body_layers_.push_back(desc.collision_layer);
+    body_masks_.push_back(desc.collision_mask);
+    char_on_floor_.push_back(false);
+    char_floor_n_.push_back({0, 1, 0});
+    if (contacts_) {
+      contacts_->NoteSensor(index, desc.is_trigger);
+    }
     return index;
   }
 
@@ -292,6 +344,10 @@ class JoltWorld final : public IPhysicsWorld {
     // AABB half-extents approx for queries / ground snap.
     half_extents_.push_back({radius, half_h + radius, radius});
     body_is_trigger_.push_back(false);
+    body_layers_.push_back(1u);
+    body_masks_.push_back(0xFFFFFFFFu);
+    char_on_floor_.push_back(false);
+    char_floor_n_.push_back({0, 1, 0});
     return index;
   }
 
@@ -385,21 +441,35 @@ class JoltWorld final : public IPhysicsWorld {
     const JPH::RRayCast ray(ray_origin, JPH::Vec3(0, -1, 0) * snap_dist);
     JPH::RayCastResult hit;
     JPH::IgnoreSingleBodyFilter body_filter(id);
+    bool on_floor = false;
+    Vec3 floor_n{0, 1, 0};
     if (physics_.GetNarrowPhaseQuery().CastRay(ray, hit, {}, {}, body_filter)) {
       const JPH::RVec3 point = ray.GetPointOnRay(hit.mFraction);
       const float ground_y = static_cast<float>(point.GetY());
       const float feet = static_cast<float>(new_pos.GetY()) - he.y;
       if (feet <= ground_y + 0.4f) {
         new_pos.SetY(ground_y + he.y);
+        on_floor = true;
+        JPH::BodyLockRead lock(physics_.GetBodyLockInterface(), hit.mBodyID);
+        if (lock.Succeeded()) {
+          const JPH::Vec3 n =
+              lock.GetBody().GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, point);
+          floor_n = {n.GetX(), n.GetY(), n.GetZ()};
+        }
       }
     } else {
       const float floor_y = he.y;
       if (new_pos.GetY() < floor_y) {
         new_pos.SetY(floor_y);
+        on_floor = true;
       }
     }
 
     bodies.SetPosition(id, new_pos, JPH::EActivation::Activate);
+    if (body_id >= 0 && body_id < static_cast<int>(char_on_floor_.size())) {
+      char_on_floor_[static_cast<std::size_t>(body_id)] = on_floor;
+      char_floor_n_[static_cast<std::size_t>(body_id)] = floor_n;
+    }
     return Status::Ok();
   }
 
@@ -632,17 +702,165 @@ class JoltWorld final : public IPhysicsWorld {
         desc.body_b >= static_cast<int>(body_ids_.size())) {
       return -1;
     }
-    // Teaching stand-in: record joint without full Jolt constraint API surface.
+    const JPH::BodyID ids[2] = {body_ids_[static_cast<std::size_t>(desc.body_a)],
+                                body_ids_[static_cast<std::size_t>(desc.body_b)]};
+    JPH::BodyLockMultiWrite lock(physics_.GetBodyLockInterface(), ids, 2);
+    JPH::Body* body_a = lock.GetBody(0);
+    JPH::Body* body_b = lock.GetBody(1);
+    if (!body_a || !body_b) {
+      return -1;
+    }
+
+    JPH::TwoBodyConstraint* constraint = nullptr;
+    const JPH::RVec3 wa(desc.anchor_a.x, desc.anchor_a.y, desc.anchor_a.z);
+    const JPH::RVec3 wb(desc.anchor_b.x, desc.anchor_b.y, desc.anchor_b.z);
+    JPH::Vec3 axis(desc.axis.x, desc.axis.y, desc.axis.z);
+    if (axis.LengthSq() < 1e-8f) {
+      axis = JPH::Vec3(0, 1, 0);
+    } else {
+      axis = axis.Normalized();
+    }
+
+    if (desc.type == JointType::Fixed) {
+      JPH::FixedConstraintSettings settings;
+      settings.mAutoDetectPoint = false;
+      settings.mPoint1 = wa;
+      settings.mPoint2 = wb;
+      constraint = settings.Create(*body_a, *body_b);
+    } else if (desc.type == JointType::Slider) {
+      JPH::SliderConstraintSettings settings;
+      settings.mAutoDetectPoint = false;
+      settings.mPoint1 = wa;
+      settings.mPoint2 = wb;
+      settings.SetSliderAxis(axis);
+      constraint = settings.Create(*body_a, *body_b);
+    } else if (desc.type == JointType::BallSocket) {
+      JPH::PointConstraintSettings settings;
+      settings.mPoint1 = wa;
+      settings.mPoint2 = wb;
+      constraint = settings.Create(*body_a, *body_b);
+    } else {
+      JPH::HingeConstraintSettings settings;
+      settings.mPoint1 = wa;
+      settings.mPoint2 = wb;
+      settings.mHingeAxis1 = axis;
+      settings.mHingeAxis2 = axis;
+      constraint = settings.Create(*body_a, *body_b);
+    }
+    if (!constraint) {
+      return -1;
+    }
+    physics_.AddConstraint(constraint);
+    const int id = static_cast<int>(joint_ptrs_.size());
+    joint_ptrs_.push_back(constraint);
     joints_.push_back(desc);
-    return static_cast<int>(joints_.size() - 1);
+    return id;
   }
 
   bool DestroyJoint(int joint_id) override {
-    if (joint_id < 0 || joint_id >= static_cast<int>(joints_.size())) {
+    if (joint_id < 0 || joint_id >= static_cast<int>(joint_ptrs_.size())) {
       return false;
+    }
+    if (joint_ptrs_[static_cast<std::size_t>(joint_id)]) {
+      physics_.RemoveConstraint(joint_ptrs_[static_cast<std::size_t>(joint_id)]);
+      joint_ptrs_[static_cast<std::size_t>(joint_id)] = nullptr;
     }
     joints_[static_cast<std::size_t>(joint_id)].body_a = -1;
     return true;
+  }
+
+  int joint_count() const override {
+    int n = 0;
+    for (auto* p : joint_ptrs_) {
+      if (p) {
+        ++n;
+      }
+    }
+    return n;
+  }
+
+  bool JointIsActive(int joint_id) const override {
+    return joint_id >= 0 && joint_id < static_cast<int>(joint_ptrs_.size()) &&
+           joint_ptrs_[static_cast<std::size_t>(joint_id)] != nullptr;
+  }
+
+  void SetCollisionLayer(int body_id, std::uint32_t layer) override {
+    if (body_id >= 0 && body_id < static_cast<int>(body_layers_.size())) {
+      body_layers_[static_cast<std::size_t>(body_id)] = layer;
+    }
+  }
+  void SetCollisionMask(int body_id, std::uint32_t mask) override {
+    if (body_id >= 0 && body_id < static_cast<int>(body_masks_.size())) {
+      body_masks_[static_cast<std::size_t>(body_id)] = mask;
+    }
+  }
+  std::uint32_t GetCollisionLayer(int body_id) const override {
+    if (body_id >= 0 && body_id < static_cast<int>(body_layers_.size())) {
+      return body_layers_[static_cast<std::size_t>(body_id)];
+    }
+    return 1u;
+  }
+  std::uint32_t GetCollisionMask(int body_id) const override {
+    if (body_id >= 0 && body_id < static_cast<int>(body_masks_.size())) {
+      return body_masks_[static_cast<std::size_t>(body_id)];
+    }
+    return 0xFFFFFFFFu;
+  }
+
+  RayHit ShapeCast(const Vec3& origin, const Vec3& half_extents, const Vec3& motion,
+                   std::uint32_t mask) const override {
+    RayHit out;
+    JPH::RefConst<JPH::Shape> shape =
+        new JPH::BoxShape(JPH::Vec3(half_extents.x, half_extents.y, half_extents.z));
+    const JPH::RMat44 start = JPH::RMat44::sTranslation(JPH::RVec3(origin.x, origin.y, origin.z));
+    const JPH::RShapeCast shape_cast(shape, JPH::Vec3::sOne(), start,
+                                     JPH::Vec3(motion.x, motion.y, motion.z));
+    JPH::ShapeCastSettings settings;
+    JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
+    physics_.GetNarrowPhaseQuery().CastShape(shape_cast, settings,
+                                             JPH::RVec3(origin.x, origin.y, origin.z), collector);
+    if (!collector.HadHit()) {
+      return out;
+    }
+    out.hit = true;
+    const float motion_len = motion.length();
+    out.distance = collector.mHit.mFraction * motion_len;
+    out.point = {origin.x + motion.x * collector.mHit.mFraction,
+                 origin.y + motion.y * collector.mHit.mFraction,
+                 origin.z + motion.z * collector.mHit.mFraction};
+    out.normal = {0, 1, 0};
+    out.body_id = -1;
+    JPH::BodyLockRead lock(physics_.GetBodyLockInterface(), collector.mHit.mBodyID2);
+    if (lock.Succeeded()) {
+      const JPH::uint64 user = lock.GetBody().GetUserData();
+      if (user != static_cast<JPH::uint64>(-1) && user < body_ids_.size()) {
+        out.body_id = static_cast<int>(user);
+        if (out.body_id >= 0 && out.body_id < static_cast<int>(body_layers_.size())) {
+          if ((mask & body_layers_[static_cast<std::size_t>(out.body_id)]) == 0) {
+            return {};
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  bool IsOnFloor(int body_id) const override {
+    return body_id >= 0 && body_id < static_cast<int>(char_on_floor_.size()) &&
+           char_on_floor_[static_cast<std::size_t>(body_id)];
+  }
+  Vec3 GetFloorNormal(int body_id) const override {
+    if (body_id >= 0 && body_id < static_cast<int>(char_floor_n_.size())) {
+      return char_floor_n_[static_cast<std::size_t>(body_id)];
+    }
+    return {0, 1, 0};
+  }
+
+  std::vector<AreaEvent3D> ConsumeAreaEvents() override {
+    if (!contacts_) {
+      return {};
+    }
+    return contacts_->TakeAreaEvents();
   }
 
   int CreateRagdoll(const std::vector<RagdollBoneDesc>& bones) override {
@@ -740,6 +958,11 @@ class JoltWorld final : public IPhysicsWorld {
   JPH::BodyID floor_id_;
   std::unique_ptr<ContactCollector> contacts_;
   std::vector<JointDesc> joints_;
+  std::vector<JPH::TwoBodyConstraint*> joint_ptrs_;
+  std::vector<std::uint32_t> body_layers_;
+  std::vector<std::uint32_t> body_masks_;
+  std::vector<bool> char_on_floor_;
+  std::vector<Vec3> char_floor_n_;
   std::vector<VehicleState> vehicles_;
 };
 

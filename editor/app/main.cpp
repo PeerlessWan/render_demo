@@ -43,6 +43,8 @@
 #include "engine/input/input_system.h"
 #include "engine/mixed/pick.h"
 #include "engine/physics/i_physics_world.h"
+#include "engine/physics/i_physics_world2d.h"
+#include "engine/render2d/camera2d.h"
 #include "engine/platform/window.h"
 #include "engine/render/environment.h"
 #include "engine/render/local_lights.h"
@@ -282,6 +284,10 @@ int main(int argc, char** argv) {
   game_kit::ScriptHotReload hot;
   hot.SetRoot(std::filesystem::path("editor/scripts"));
   std::unique_ptr<engine::physics::IPhysicsWorld> phys;
+  std::unique_ptr<engine::physics::IPhysicsWorld2D> phys2d;
+  engine::render2d::Camera2D cam2d;
+  cam2d.design_size = {320.f, 180.f};
+  cam2d.integer_scale = true;
   engine::render::Camera edit_cam = a.camera();
   editor::VoxelEdit voxel;
   voxel.enabled = start_voxel;
@@ -919,6 +925,10 @@ int main(int argc, char** argv) {
         } else {
           editor::ApplyOrtho2DCamera(&app_ref.camera());
         }
+        // ADR 0049: keep Camera2D in sync with 2D ortho viewport (X/Z plane → Camera2D x/y).
+        cam2d.position = {app_ref.camera().position.x, app_ref.camera().position.z};
+        cam2d.design_size = {static_cast<float>(std::max(1, w)) / 2.f,
+                             static_cast<float>(std::max(1, h)) / 2.f};
         if (!playing && !app_ref.ui_want_capture()) {
           const float sp = app_ref.camera().ortho_height * app_ref.delta_time() * 0.55f;
           if (snap.keys['W']) {
@@ -1393,12 +1403,23 @@ int main(int argc, char** argv) {
           ++bi;
         }
       }
+      if (!phys2d) {
+        phys2d = engine::physics::CreateDefaultPhysicsWorld2D();
+        if (phys2d) {
+          rt.set_physics2d(phys2d.get());
+        }
+      }
       if (phys && !paused_play) {
         phys->Step(app_ref.delta_time());
       }
-    } else if (phys) {
+      if (phys2d && !paused_play) {
+        phys2d->Step(app_ref.delta_time());
+      }
+    } else if (phys || phys2d) {
       rt.set_physics(nullptr);
+      rt.set_physics2d(nullptr);
       phys.reset();
+      phys2d.reset();
     }
 
     if (settings.hot_reload) {

@@ -26,6 +26,7 @@ add_executable(engine_unit_tests
   unit/test_w23.cpp
   unit/test_w24.cpp
   unit/test_w25.cpp
+  unit/test_w26.cpp
   unit/test_product_wave_stubs.cpp
   unit/test_headless_integration.cpp
   unit/test_usable.cpp
